@@ -42,13 +42,31 @@ struct HyperDeckProtocolTests {
         #expect(!g.busy)
 
         var busyParser = HyperDeckResponseParser()
-        let busy = try #require(busyParser.feed(Array("120 connection rejected\r\n".utf8)).first)
+        let busy = try #require(busyParser.feed(Array("120 connection failed\r\n".utf8)).first)
         #expect(HyperDeckGreeting.recognise(busy)?.busy == true)
 
         var other = HyperDeckResponseParser()
         let ssh = other.feed(Array("SSH-2.0-OpenSSH_9.6\r\n".utf8))
         #expect(ssh.isEmpty || HyperDeckGreeting.recognise(ssh[0]) == nil)
         #expect(HyperDeckGreeting.recognise(HyperDeckResponse(code: 200, text: "ok")) == nil)
+    }
+
+    @Test func clipsVersion2WithSpacesAndCount() throws {
+        // As documented for clips get: version: 2 — id: in duration in out filename (spaces allowed).
+        var parser = HyperDeckResponseParser()
+        let wire = "205 clips info:\r\nclip count: 2\r\n1: 00:00:00:00 00:01:00:00 00:00:00:00 00:01:00:00 PGM take 1.mov\r\n2: 01:00:00:00 00:00:30:00 00:00:00:00 00:00:30:00 PGM_0002.mov\r\n\r\n"
+        let r = try #require(parser.feed(Array(wire.utf8)).first)
+        let clips = DeckClip.parse(r)
+        try #require(clips.count == 2)
+        #expect(clips[0].name == "PGM take 1.mov")
+        #expect(clips[1].start == Timecode("01:00:00:00"))
+        #expect(clips[1].duration == Timecode("00:00:30:00"))
+    }
+
+    @Test func hintsForFixableFailures() {
+        #expect(HyperDeckResponse(code: 122, text: "authentication required").hint?.contains("Enabled") == true)
+        #expect(HyperDeckResponse(code: 120, text: "connection failed").hint != nil)
+        #expect(HyperDeckResponse(code: 102, text: "syntax error").hint == nil)
     }
 
     @Test func commands() {

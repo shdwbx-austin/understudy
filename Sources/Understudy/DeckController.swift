@@ -116,7 +116,9 @@ final class DeckController: ObservableObject, Identifiable {
 
     func send(_ command: String, then: ((HyperDeckResponse) -> Void)? = nil) {
         client?.send(command) { [weak self] response, _, _ in
-            if response.isError { self?.lastError = "\(command) → \(response.code) \(response.text)" }
+            if response.isError {
+                self?.lastError = response.hint ?? "\(command) → \(response.code) \(response.text)"
+            }
             then?(response)
         }
     }

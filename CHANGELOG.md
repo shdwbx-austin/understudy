@@ -3,6 +3,7 @@
 ## 0.2.0 — unreleased
 
 - **Finds HyperDecks on the network**, by Bonjour and by a scan of the local subnets on port 9993 that keeps only hosts greeting like a HyperDeck. Found decks can be assigned to a slot or used to fill empty slots.
+- **HyperDeck Extreme 8K HDR checked against Blackmagic's protocol document.** PsF formats (e.g. 1080PsF2398) are now recognised, alongside 8K, DCI and dotted names. A deck at its client limit (`120 connection failed`) gets a clear message and a 10 s back-off instead of a 2 s retry loop. Decks with protocol security on (`122`), remote disabled (`111`) or rebooting (`213`) say what to do.
 - **Steady clock that shows lock.** Timecode is set in fixed-width cells, because Neue Haas Grotesk's figures are proportional, so digits no longer shift as they change. The show clock is grey when stopped, off-white while acquiring, green when locked, and amber when freewheeling.
 - **Redesigned in the Shdwbx house style**: Swiss grid, numbered sections, hairline rules, Neue Haas Grotesk and Space Mono, black / off-white / signal red. Decks sit side by side as columns; the main area scrolls on smaller screens.
 - **Renamed from cam4prog to Understudy.** The bundle ID is unchanged, so saved settings and macOS permissions carry over. Saved take maps move to the new folder on first launch.

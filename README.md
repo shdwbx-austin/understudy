@@ -70,6 +70,17 @@ Lock the LTC generator to house ref, like the decks. If the two clocks drift apa
 - Format SSDs. All four decks should use the same codec and the same video format.
 - Everything else is set by Understudy when you change mode: remote override, timecode input, record trigger, record prefix (deck name), preview/output, and timecode output = clip.
 
+### HyperDeck Extreme 8K HDR
+
+The Extreme uses the same Ethernet protocol as the Studio models, so Understudy controls it the same way. On each Extreme:
+
+- **Ethernet protocol access: Enabled**, not *Enabled with security*. Understudy doesn't send a password; a secured deck shows a message saying so.
+- **Video input: SDI.** 4xSDI mode records four separate channels into CH 1–4 folders, which Understudy doesn't support.
+- **Timecode input** is set by Understudy: Internal while recording continuously, External (the XLR LTC input) for *record only while show timecode runs*.
+- **Changing the file format reboots the deck**; Understudy reconnects on its own.
+- A deck at its client limit (other controllers, Companion, the Extreme's own web page) refuses another; Understudy says so and retries every 10 s.
+- 8K (4320p), UHD/DCI 4K, HD and PsF formats are all recognised.
+
 ## App setup
 
 1. Open **Settings** (`⌘,`) and pick the audio interface. Settings lists that device's input channels, by the device's own channel names, each with a live level meter. Click the one carrying LTC; it's marked **LTC** once code decodes. The show timecode rate is detected automatically (see below); you can fix it instead if you prefer. The main window's footer keeps a meter on the LTC channel.
@@ -98,6 +109,7 @@ This build is unit-tested on the timecode, LTC, protocol, take-map and chase log
 6. **Play latency.** Check Δ after a few rolls and calibrate.
 7. **Pass-through.** In STOP / REC, confirm the deck's SDI out passes the live input to disguise.
 8. **Local network permission (macOS 15+).** On first launch, allow Understudy when macOS asks.
+9. **HyperDeck Extreme 8K.** Repeat 1–4 on an Extreme at 4320p and 2160p, and confirm `clips get: version: 2` lists clips recorded to its cache or USB-C drive.
 
 ## Build
 

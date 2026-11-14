@@ -38,4 +38,15 @@ struct TimecodeTests {
         #expect(FrameRate.fromVideoFormat("1080p23976", dropFrame: false) == .fps23_976)
         #expect(FrameRate.fromVideoFormat("none", dropFrame: false) == nil)
     }
+
+    /// Names the HyperDeck Extreme 8K HDR can report: 8K, DCI 4K/8K and PsF variants.
+    @Test(arguments: [
+        ("4320p5994", FrameRate.fps59_94), ("4320p2398", .fps23_976), ("4320p50", .fps50), ("4320p60", .fps60),
+        ("8Kp5994", .fps59_94), ("8KDCIp24", .fps24), ("4KDCIp25", .fps25), ("4KDCIp2398", .fps23_976),
+        ("2160p2997", .fps29_97), ("1080PsF2398", .fps23_976), ("1080PsF25", .fps25), ("1080PsF2997", .fps29_97),
+        ("1080i50", .fps25), ("720p5994", .fps59_94),
+    ])
+    func extremeFormats(name: String, rate: FrameRate) {
+        #expect(FrameRate.fromVideoFormat(name, dropFrame: false) == rate, "\(name)")
+    }
 }

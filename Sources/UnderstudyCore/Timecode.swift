@@ -58,9 +58,13 @@ public enum FrameRate: String, CaseIterable, Codable, Sendable, Identifiable {
         return (nominal * 600 - dropPerMinute * 9) * 144
     }
 
-    /// Parses HyperDeck video format strings such as "1080p2997", "2160p59.94", "4Kp5994", "1080i50", "PAL".
+    /// Parses HyperDeck video format strings such as "1080p2997", "2160p59.94", "4Kp5994", "4320p5994",
+    /// "4KDCIp24", "1080PsF2398", "1080i50", "PAL".
     public static func fromVideoFormat(_ format: String, dropFrame: Bool) -> FrameRate? {
-        let f = format.lowercased().replacingOccurrences(of: ".", with: "")
+        // PsF (progressive segmented frame) is named by frame rate, like progressive.
+        let f = format.lowercased()
+            .replacingOccurrences(of: ".", with: "")
+            .replacingOccurrences(of: "psf", with: "p")
         if f.hasPrefix("ntsc") { return dropFrame ? .fps29_97DF : .fps29_97 }
         if f.hasPrefix("pal") { return .fps25 }
         var digits = ""

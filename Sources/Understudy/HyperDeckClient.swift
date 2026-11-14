@@ -25,6 +25,8 @@ final class HyperDeckClient: @unchecked Sendable {
     private var parser = HyperDeckResponseParser()
     private var pending: [(sentAt: Double, completion: Completion?)] = []
     private var stopped = true
+    /// The deck said `120 connection failed` (too many clients) on this connection.
+    private var refused = false
 
     init(host: String) {
         self.host = host
@@ -76,6 +78,7 @@ final class HyperDeckClient: @unchecked Sendable {
         )
         self.connection = connection
         parser = HyperDeckResponseParser()
+        refused = false
         emit(.connecting)
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             guard let self, let connection else { return }
@@ -107,6 +110,11 @@ final class HyperDeckClient: @unchecked Sendable {
     private func handle(_ bytes: [UInt8]) {
         let now = HostClock.now()
         for response in parser.feed(bytes) {
+            if response.code == 120 {
+                // Refused at connect; the deck hangs up next. Not a reply to any command.
+                refused = true
+                continue
+            }
             if response.isAsync {
                 if let onAsync { Self.onMain { onAsync(response) } }
                 continue
@@ -125,9 +133,11 @@ final class HyperDeckClient: @unchecked Sendable {
         dropped.cancel()
         connection = nil
         failPending()
-        emit(.failed(reason))
+        let refusedNow = refused
+        emit(.failed(refusedNow ? HyperDeckResponse(code: 120, text: "").hint ?? reason : reason))
         guard !stopped else { return }
-        queue.asyncAfter(deadline: .now() + 2) { [weak self] in
+        // A deck at its client limit won't free up in two seconds: back off.
+        queue.asyncAfter(deadline: .now() + (refusedNow ? 10 : 2)) { [weak self] in
             guard let self, !self.stopped, self.connection == nil else { return }
             self.open()
         }

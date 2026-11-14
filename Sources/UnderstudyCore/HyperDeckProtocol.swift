@@ -15,6 +15,18 @@ public struct HyperDeckResponse: Equatable, Sendable {
     }
 
     public var isAsync: Bool { (500...599).contains(code) }
+
+    /// What to do about a failure, for the codes an operator can fix at the deck.
+    public var hint: String? {
+        switch code {
+        case 111: return "Remote control is disabled on the deck."
+        case 120: return "The deck refused the connection: it already has its maximum number of clients."
+        case 122: return "The deck wants a password. On the deck, set Ethernet protocol access to Enabled (not Enabled with security)."
+        case 150: return "The deck has no media to record or play."
+        case 213: return "The deck is rebooting; Understudy will reconnect."
+        default: return nil
+        }
+    }
     public var isError: Bool { (100...199).contains(code) }
     public var isSuccess: Bool { (200...299).contains(code) }
 }
