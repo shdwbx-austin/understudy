@@ -33,6 +33,11 @@ final class HyperDeckClient: @unchecked Sendable {
     private static let pingInterval = 2.0
     private var watchdog: DispatchSourceTimer?
     private var lastSent = 0.0
+    /// The deck has spoken on this connection. A hung deck's network stack can still accept the
+    /// TCP connection, so the socket opening alone doesn't count as connected: the deck's
+    /// greeting does.
+    private var greeted = false
+    private var openedAt = 0.0
 
     /// Internal failures, never confused with the deck's own `120 connection failed`.
     static let connectionLostCode = 190
@@ -86,7 +91,9 @@ final class HyperDeckClient: @unchecked Sendable {
         timer.setEventHandler { [weak self, weak connection] in
             guard let self, let connection, connection === self.connection else { return }
             let now = HostClock.now()
-            if let oldest = self.pending.first?.sentAt, now - oldest > Self.replyTimeout {
+            if !self.greeted {
+                if now - self.openedAt > Self.replyTimeout { self.drop(connection, reason: "The deck isn't answering") }
+            } else if let oldest = self.pending.first?.sentAt, now - oldest > Self.replyTimeout {
                 self.drop(connection, reason: "No reply from the deck")
             } else if self.pending.isEmpty, now - self.lastSent > Self.pingInterval {
                 self.write("ping", on: connection, completion: nil)
@@ -121,8 +128,10 @@ final class HyperDeckClient: @unchecked Sendable {
             guard let self, let connection else { return }
             switch state {
             case .ready:
-                self.emit(.connected)
-                self.lastSent = HostClock.now()
+                // Still `.connecting` until the deck sends its greeting (see `handle`).
+                self.greeted = false
+                self.openedAt = HostClock.now()
+                self.lastSent = self.openedAt
                 self.startWatchdog(connection)
                 self.receive(on: connection)
             case .failed(let error), .waiting(let error):
@@ -149,6 +158,10 @@ final class HyperDeckClient: @unchecked Sendable {
     private func handle(_ bytes: [UInt8]) {
         let now = HostClock.now()
         for response in parser.feed(bytes) {
+            if !greeted, response.code != 120 {
+                greeted = true
+                emit(.connected)
+            }
             if response.code == 120 {
                 // Refused at connect; the deck hangs up next. Not a reply to any command.
                 refused = true

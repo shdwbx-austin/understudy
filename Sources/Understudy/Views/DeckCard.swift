@@ -1,8 +1,9 @@
 import SwiftUI
 import UnderstudyCore
 
-/// One deck as a read-only grid column, built to be read from across the room: connection bar
-/// and number, one large status word, then health rows. Editing lives in Assign decks and Setup.
+/// One deck as a full-width row, after Calendario: health dots and the status word on the left,
+/// a compact data table in the middle, the deck number huge on the right. A lost deck inverts to
+/// a solid red row so it can't be missed. Editing lives in Assign decks and Setup.
 struct DeckCard: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var deck: DeckController
@@ -11,124 +12,172 @@ struct DeckCard: View {
     @State private var showSetup = false
 
     private var assigned: Bool { config.enabled && !config.host.trimmingCharacters(in: .whitespaces).isEmpty }
+    /// The inverted state: everything on the row is drawn in ink on red.
+    private var inverted: Bool { deck.isLost }
+    private var ink: Color { inverted ? Theme.ink : Theme.paper }
+    private var soft: Color { inverted ? Theme.ink.opacity(0.7) : Theme.grey }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Connection bar: green connected, red lost, amber connecting, grey empty/off.
-            Rectangle()
-                .fill(connectionColor)
-                .frame(height: deck.isConnected || deck.isLost ? 4 : 1)
-                .padding(.bottom, 10)
-                .animation(.easeInOut(duration: 0.2), value: status.text)
-
-            HStack(alignment: .firstTextBaseline) {
-                Text(String(format: "%02d", deck.id + 1))
-                    .font(Theme.grotesk(44, .light))
-                    .tracking(-1)
-                    .foregroundStyle(assigned ? connectionColor : Theme.quiet)
-                Spacer()
-                if deck.isConnected {
-                    TextButton(title: "Setup", color: Theme.grey) { showSetup = true }
-                        .help("Codec, input, reference, media and play offset for this deck")
-                }
-            }
-
-            if assigned {
-                Text(status.text)
-                    .font(Theme.grotesk(24, .medium))
-                    .foregroundStyle(status.color)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .padding(.top, 2)
-                Text(config.name)
-                    .font(Theme.grotesk(16, .regular))
-                    .lineLimit(1)
-                    .padding(.top, 8)
-                Text([config.host, deck.model].compactMap { $0 }.joined(separator: " · "))
-                    .font(Theme.mono(10))
-                    .foregroundStyle(Theme.grey)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .padding(.top, 2)
-                if let twin = sharedAddress {
-                    Text("SAME ADDRESS AS \(String(format: "%02d", twin + 1))")
-                        .font(Theme.mono(9, bold: true)).tracking(1.2)
-                        .foregroundStyle(Theme.amber)
-                        .padding(.top, 4)
-                }
-
-                if model.settings.confidenceEnabled {
-                    ConfidencePicture(deck: deck, monitor: model.confidence)
-                        .padding(.top, 14)
-                }
-
-                TimecodeText(text: deck.transport.displayTimecode?.description ?? "--:--:--:--", size: 24)
-                    .foregroundStyle(deck.isConnected ? Theme.paper : Theme.quiet)
-                    .padding(.top, 14)
-
-                VStack(spacing: 0) {
-                    Row(label: "Input", value: inputText, color: inputColor)
-                    Row(label: "Reference", value: refText, color: refColor)
-                    Row(label: "Media left", value: deck.isConnected ? MediaTime.text(deck.mediaSecondsLeft) : "—", color: mediaColor)
-                    if model.mode == .playback {
-                        Row(label: "Error Δ", value: errorText, color: errorColor)
-                    }
-                }
-                .padding(.top, 10)
-
-                if let error = deck.lastError {
-                    Text(error)
-                        .font(Theme.mono(10))
-                        .foregroundStyle(Theme.amber)
-                        .lineLimit(4)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 10)
-                        .onTapGesture { deck.lastError = nil }
-                        .help("Click to dismiss")
-                }
-            } else {
-                Text(config.host.isEmpty ? "Not assigned" : "Switched off")
-                    .font(Theme.grotesk(16, .light))
-                    .foregroundStyle(Theme.grey)
-                    .padding(.top, 6)
-                if !model.setupLocked {
-                    TextButton(title: "Assign", color: Theme.grey, action: assign)
-                        .padding(.top, 8)
-                }
-            }
+        ColumnGrid {
+            identity
+            middle
+            table
+            number
         }
+        .padding(.vertical, 10)
+        .padding(.horizontal, inverted ? 12 : 0)
+        .frame(minHeight: 104)
+        .background(inverted ? Theme.signal : .clear)
+        .animation(.easeInOut(duration: 0.2), value: inverted)
         .sheet(isPresented: $showSetup) {
             DeckSetupView(deck: deck).environmentObject(model)
         }
+    }
+
+    // MARK: Columns
+
+    /// Column 1: connection bar, health dots, status word, name and address.
+    private var identity: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Rectangle()
+                .fill(inverted ? Theme.ink : connectionColor)
+                .frame(width: assigned ? 4 : 1)
+            VStack(alignment: .leading, spacing: 0) {
+                if assigned {
+                    HStack(spacing: 6) {
+                        ForEach(Array(dots.enumerated()), id: \.offset) { _, dot in
+                            Circle().fill(inverted ? Theme.ink : dot.color).frame(width: 7, height: 7).help(dot.help)
+                        }
+                    }
+                    Text(status.text)
+                        .font(Theme.grotesk(22, .medium))
+                        .foregroundStyle(inverted ? Theme.ink : status.color)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .padding(.top, 6)
+                    Spacer(minLength: 8)
+                    Text(config.name).font(Theme.grotesk(16, .regular)).foregroundStyle(ink).lineLimit(1)
+                    Text([config.host, deck.model].compactMap { $0 }.joined(separator: " · "))
+                        .font(Theme.mono(10)).foregroundStyle(soft).lineLimit(1)
+                    if let twin = sharedAddress {
+                        Text("SAME ADDRESS AS \(String(format: "%02d", twin + 1))")
+                            .font(Theme.mono(9, bold: true)).tracking(1.2).foregroundStyle(inverted ? Theme.ink : Theme.amber)
+                            .padding(.top, 3)
+                    }
+                } else {
+                    Text(config.host.isEmpty ? "Not assigned" : "Switched off")
+                        .font(Theme.grotesk(18, .light)).foregroundStyle(Theme.grey)
+                    Spacer(minLength: 8)
+                    if !model.setupLocked {
+                        TextButton(title: "Assign", color: Theme.grey, action: assign)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Column 2: the confidence picture when it's on, otherwise the deck's own timecode.
+    @ViewBuilder private var middle: some View {
+        if assigned, model.settings.confidenceEnabled {
+            ConfidencePicture(deck: deck, monitor: model.confidence)
+        } else if assigned {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("DECK TIMECODE").font(Theme.mono(10)).tracking(1.2).foregroundStyle(soft)
+                TimecodeText(text: deck.transport.displayTimecode?.description ?? "--:--:--:--", size: 26)
+                    .foregroundStyle(deck.isConnected ? ink : (inverted ? Theme.ink.opacity(0.6) : Theme.quiet))
+            }
+        } else {
+            Color.clear
+        }
+    }
+
+    /// Column 3: a compact table on hairlines, after the UTS poster.
+    @ViewBuilder private var table: some View {
+        if assigned {
+            VStack(spacing: 0) {
+                if model.settings.confidenceEnabled {
+                    MetaRow(label: "Timecode", value: deck.transport.displayTimecode?.description ?? "—", color: ink, inverted: inverted)
+                }
+                MetaRow(label: "Input", value: inputText, color: inputColor, inverted: inverted)
+                MetaRow(label: "Reference", value: refText, color: refColor, inverted: inverted)
+                MetaRow(label: "Media left", value: deck.isConnected ? MediaTime.text(deck.mediaSecondsLeft) : "—",
+                        color: mediaColor, inverted: inverted)
+                if model.mode == .playback {
+                    MetaRow(label: "Error Δ", value: errorText, color: errorColor, inverted: inverted)
+                }
+            }
+            if let error = deck.lastError {
+                Text(error)
+                    .font(Theme.mono(10)).foregroundStyle(inverted ? Theme.ink : Theme.amber)
+                    .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 6)
+                    .onTapGesture { deck.lastError = nil }
+                    .help("Click to dismiss")
+            }
+        } else {
+            Color.clear
+        }
+    }
+
+    /// Column 4: the deck number, huge and set right; Setup above it.
+    private var number: some View {
+        VStack(alignment: .trailing, spacing: 0) {
+            if deck.isConnected {
+                TextButton(title: "Setup", color: soft) { showSetup = true }
+                    .help("Codec, input, reference, media and play offset for this deck")
+            }
+            Spacer(minLength: 0)
+            Text(String(format: "%02d", deck.id + 1))
+                .font(Theme.grotesk(80, .light))
+                .tracking(-3)
+                .foregroundStyle(inverted ? Theme.ink : (assigned ? connectionColor : Theme.quiet))
+                .padding(.bottom, -15)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     // MARK: Status
 
     /// The one word that matters most right now.
     private var status: (text: String, color: Color) {
-        if deck.isLost { return ("LOST", Theme.signal) }
+        if deck.isLost { return ("Lost", Theme.signal) }
         guard deck.isConnected else {
             switch deck.connection {
-            case .connecting, .failed: return ("CONNECTING", Theme.amber)
-            default: return ("OFFLINE", Theme.quiet)
+            case .connecting, .failed: return ("Connecting", Theme.amber)
+            default: return ("Offline", Theme.quiet)
             }
         }
-        if deck.transport.status == .record { return ("● REC", Theme.signal) }
+        if deck.transport.status == .record { return ("● Rec", Theme.signal) }
         if model.mode == .playback {
             switch deck.chase.phase {
-            case .playing: return ("CHASING", Theme.lock)
-            case .cueing, .armed: return ("CUEING", Theme.paper)
-            case .outOfRange: return ("NO MEDIA AT TC", Theme.amber)
-            case .idle: return (model.ltcRolling ? "WAITING" : "WAITING FOR LTC", Theme.grey)
+            case .playing: return ("Chasing", Theme.lock)
+            case .cueing, .armed: return ("Cueing", Theme.paper)
+            case .outOfRange: return ("No media at TC", Theme.amber)
+            case .idle: return (model.ltcRolling ? "Waiting" : "Waiting for LTC", Theme.grey)
             }
         }
         switch deck.transport.status {
-        case .preview: return ("LIVE", Theme.paper)
-        case .play: return ("PLAYING", Theme.paper)
-        case .stopped: return ("STOPPED", Theme.grey)
+        case .preview: return ("Live", Theme.paper)
+        case .play: return ("Playing", Theme.paper)
+        case .stopped: return ("Stopped", Theme.grey)
         case .unknown: return ("—", Theme.quiet)
-        default: return (deck.transport.status.rawValue.uppercased(), Theme.paper)
+        default: return (deck.transport.status.rawValue.capitalized, Theme.paper)
         }
+    }
+
+    /// Health at a glance: connection, input signal, reference, media.
+    private var dots: [(color: Color, help: String)] {
+        guard deck.isConnected else { return [(connectionColor, "Not connected")] }
+        let input: Color = !deck.transport.reportsInput ? Theme.quiet : (deck.transport.inputVideoFormat == nil ? Theme.signal : Theme.lock)
+        let ref: Color = deck.transport.referenceLocked == nil ? Theme.quiet : (deck.transport.referenceLocked == true ? Theme.lock : Theme.signal)
+        let media: Color = {
+            switch MediaTime.level(deck.mediaSecondsLeft) {
+            case .ok: return deck.mediaSecondsLeft == nil ? Theme.quiet : Theme.lock
+            case .low: return Theme.amber
+            case .critical, .none: return Theme.signal
+            }
+        }()
+        return [(Theme.lock, "Connected"), (input, "Input signal"), (ref, "Reference"), (media, "Media left")]
     }
 
     /// Another slot with the same address (two slots driving one deck).
@@ -197,24 +246,27 @@ struct DeckCard: View {
     }
 }
 
-/// A label/value line in a deck column.
-private struct Row: View {
+/// A label/value line in a deck row's table.
+private struct MetaRow: View {
     let label: String
     let value: String
     var color: Color = Theme.paper
+    var inverted = false
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Label8(text: label)
+            Text(label.uppercased())
+                .font(Theme.mono(10)).tracking(1.2)
+                .foregroundStyle(inverted ? Theme.ink.opacity(0.7) : Theme.grey)
             Spacer(minLength: 8)
             Text(value)
                 .font(Theme.mono(12))
-                .foregroundStyle(color)
+                .foregroundStyle(inverted ? Theme.ink : color)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-        .padding(.vertical, 6)
-        .overlay(alignment: .bottom) { Rule(color: Theme.rule.opacity(0.6)) }
+        .padding(.vertical, 4)
+        .overlay(alignment: .bottom) { Rectangle().fill(inverted ? Theme.ink.opacity(0.35) : Theme.rule.opacity(0.6)).frame(height: 1) }
     }
 }
 

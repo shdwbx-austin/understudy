@@ -255,3 +255,82 @@ struct TimecodeText: View {
         ch.isNumber || ch == "-" ? size * 0.6 : size * 0.26
     }
 }
+
+// MARK: - Grid
+
+/// The show screen's grid, after Neue Grafik: a narrow label column on the left, then four equal
+/// columns. Every edge on the screen lands on one of these lines.
+enum ShowGrid {
+    static let labelWidth: CGFloat = 150
+    static let columns = 4
+}
+
+/// How many grid columns a view spans inside `ColumnGrid`.
+private struct Span: LayoutValueKey {
+    static let defaultValue = 1
+}
+
+extension View {
+    /// Spans `n` columns of the enclosing `ColumnGrid`.
+    func span(_ n: Int) -> some View { layoutValue(key: Span.self, value: n) }
+}
+
+/// One row of the four-column grid. Children sit left to right, each `span` columns wide,
+/// all as tall as the tallest, so columns line up from row to row.
+struct ColumnGrid: Layout {
+    var columns = ShowGrid.columns
+    var spacing: CGFloat = Theme.gutter
+
+    private func width(_ span: Int, total: CGFloat) -> CGFloat {
+        let column = (total - spacing * CGFloat(columns - 1)) / CGFloat(columns)
+        let s = CGFloat(max(1, min(columns, span)))
+        return column * s + spacing * (s - 1)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let total = proposal.width ?? 800
+        let height = subviews.map { $0.sizeThatFits(ProposedViewSize(width: width($0[Span.self], total: total), height: nil)).height }.max() ?? 0
+        return CGSize(width: total, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        for view in subviews {
+            let w = width(view[Span.self], total: bounds.width)
+            view.place(at: CGPoint(x: x, y: bounds.minY), anchor: .topLeading,
+                       proposal: ProposedViewSize(width: w, height: bounds.height))
+            x += w + spacing
+        }
+    }
+}
+
+/// A row of the show screen: its label in the left column, content across the four columns,
+/// a hairline above.
+struct GridRow<Label: View, Content: View>: View {
+    var rule = true
+    @ViewBuilder var label: Label
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if rule { Rule().padding(.bottom, 14) }
+            HStack(alignment: .top, spacing: Theme.gutter) {
+                label.frame(width: ShowGrid.labelWidth, alignment: .topLeading)
+                content.frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+    }
+}
+
+/// A row label: small section number over a sentence-case name.
+struct RowLabel: View {
+    let index: Int
+    let title: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(String(format: "%02d", index)).font(Theme.mono(10)).foregroundStyle(Theme.quiet)
+            Text(title).font(Theme.grotesk(15, .medium))
+        }
+    }
+}
