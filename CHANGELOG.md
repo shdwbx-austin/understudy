@@ -3,6 +3,8 @@
 ## 0.2.0 — unreleased
 
 - **Finds HyperDecks on the network**, by Bonjour and by a scan of the local subnets on port 9993 that keeps only hosts greeting like a HyperDeck. Found decks can be assigned to a slot or used to fill empty slots.
+- **Deck setup from the Mac**: a per-deck panel for codec, audio, cache/USB spill, video input, reference and genlock, with media status, Identify, All decks and mismatch flags. Settings Understudy manages are shown locked; restart-causing changes ask first; locked while recording.
+- **Input signal per deck**: each column shows the arriving format or NO SIGNAL. Fixed: a lost input kept showing its last format.
 - **Separate playback timecode input** (optional): Stop and Record read show timecode, Play to code reads a local review source, with no repatching. Same interface or two.
 - **Show machine mode** for a dedicated Mac: keep the Mac awake (and never App Nap), start at login and relaunch after a crash (bundled launch agent), optionally resume Record or Play after a restart with a banner, and one copy at a time.
 - **Pick the network interface** discovery looks on (listed by macOS port name and subnet).

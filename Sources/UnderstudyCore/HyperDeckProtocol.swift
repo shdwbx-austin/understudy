@@ -123,6 +123,8 @@ public struct TransportInfo: Equatable, Sendable {
     public var timecode: Timecode?
     public var videoFormat: String?
     public var inputVideoFormat: String?
+    /// The deck has reported its input format at least once (so a missing one means no signal).
+    public var reportsInput = false
     public var referenceLocked: Bool?
 
     public init() {}
@@ -133,8 +135,12 @@ public struct TransportInfo: Equatable, Sendable {
         if let c = fields["clip id"] { clipID = Int(c) }
         if let d = fields["display timecode"] { displayTimecode = Timecode(d) }
         if let t = fields["timecode"] { timecode = Timecode(t) }
-        if let v = fields["video format"], v != "none" { videoFormat = v }
-        if let v = fields["input video format"], v != "none" { inputVideoFormat = v }
+        // "none" means none: clear the old value rather than keep showing it.
+        if let v = fields["video format"] { videoFormat = v == "none" ? nil : v }
+        if let v = fields["input video format"] {
+            inputVideoFormat = v == "none" ? nil : v
+            reportsInput = true
+        }
         if let r = fields["reference locked"] { referenceLocked = r == "true" }
     }
 }

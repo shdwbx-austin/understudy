@@ -7,6 +7,7 @@ struct DeckCard: View {
     @ObservedObject var deck: DeckController
     @ObservedObject var discovery: DeckDiscovery
     @Binding var config: DeckConfig
+    @State private var showSetup = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -60,11 +61,18 @@ struct DeckCard: View {
             .overlay(alignment: .bottom) { Rule() }
             .padding(.top, 8)
 
-            Text(deck.model ?? connectionDetail)
-                .font(Theme.grotesk(12, .light))
-                .foregroundStyle(Theme.grey)
-                .lineLimit(1)
-                .padding(.top, 6)
+            HStack(alignment: .firstTextBaseline) {
+                Text(deck.model ?? connectionDetail)
+                    .font(Theme.grotesk(12, .light))
+                    .foregroundStyle(Theme.grey)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                if deck.isConnected {
+                    TextButton(title: "Setup", color: Theme.grey) { showSetup = true }
+                        .help("Codec, input, reference and media for this deck")
+                }
+            }
+            .padding(.top, 6)
 
             // Readouts
             TimecodeText(text: deck.transport.displayTimecode?.description ?? "--:--:--:--", size: 26)
@@ -73,7 +81,8 @@ struct DeckCard: View {
 
             VStack(spacing: 0) {
                 Row(label: "Transport", value: deck.transport.status.rawValue.uppercased(), color: statusColor)
-                Row(label: "Format", value: deck.transport.videoFormat ?? deck.transport.inputVideoFormat ?? "—")
+                Row(label: "Input", value: inputText, color: inputColor)
+                Row(label: "Format", value: deck.transport.videoFormat ?? "—")
                 Row(label: "Reference", value: refText, color: refColor)
                 if deck.isLoggingTake {
                     Row(label: "Show code",
@@ -117,6 +126,21 @@ struct DeckCard: View {
             }
         }
         .opacity(config.enabled ? 1 : 0.4)
+        .sheet(isPresented: $showSetup) {
+            DeckSetupView(deck: deck).environmentObject(model)
+        }
+    }
+
+    /// What's arriving at the deck's input: its format, or NO SIGNAL.
+    private var inputText: String {
+        guard deck.isConnected else { return "—" }
+        guard deck.transport.reportsInput else { return "—" }
+        guard let input = deck.transport.inputVideoFormat else { return "NO SIGNAL" }
+        return input
+    }
+
+    private var inputColor: Color {
+        inputText == "NO SIGNAL" ? Theme.signal : Theme.paper
     }
 
     // MARK: Text and colour

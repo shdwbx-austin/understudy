@@ -16,6 +16,10 @@ final class DeckController: ObservableObject, Identifiable {
     @Published var smoothedError: Double?
     /// Seconds of show code logged against the recording in progress.
     @Published private(set) var loggedSeconds: Double?
+    /// The deck's configuration (`211`), kept current by `511` notifications.
+    @Published private(set) var config: [String: String] = [:]
+    @Published private(set) var deviceInfo: DeckDeviceInfo?
+    @Published private(set) var slots: [DeckSlotInfo] = []
 
     /// Called when a recording on this deck ends (status left `record`).
     var onRecordingFinished: (() -> Void)?
@@ -83,15 +87,74 @@ final class DeckController: ObservableObject, Identifiable {
         lastError = nil
         send(HyperDeckCommand.remoteOverride)
         send(HyperDeckCommand.notify)
+        sendQuietly(DeckSetupCommand.notifySetup)
         refreshTransport { [weak self] in self?.onReady?() }
         refreshClips()
+        refreshSetup()
     }
 
     private func handleAsync(_ response: HyperDeckResponse) {
         if response.code == 500, let m = response.fields["model"] { model = m }
+        switch response.code {
+        case 511:
+            config.merge(response.fields) { _, new in new }
+            return
+        case 502:
+            if let slot = DeckSlotInfo(fields: response.fields) { mergeSlot(slot) }
+            return
+        default:
+            break
+        }
         if response.fields["status"] != nil || response.fields["display timecode"] != nil {
             mergeTransport(response.fields)
         }
+    }
+
+    // MARK: Setup
+
+    /// Reads configuration, device info and every media slot.
+    func refreshSetup() {
+        sendQuietly(DeckSetupCommand.readConfiguration) { [weak self] r in
+            if r.code == 211 { self?.config = r.fields }
+        }
+        sendQuietly(DeckSetupCommand.deviceInfo) { [weak self] r in
+            guard let self, r.code == 204 else { return }
+            self.deviceInfo = DeckDeviceInfo(fields: r.fields)
+            for id in 1...max(1, self.deviceInfo?.slotCount ?? 2) {
+                self.sendQuietly(DeckSetupCommand.slotInfo(id)) { [weak self] r in
+                    if r.code == 202, let slot = DeckSlotInfo(fields: r.fields) { self?.mergeSlot(slot) }
+                }
+            }
+        }
+    }
+
+    private func mergeSlot(_ slot: DeckSlotInfo) {
+        if let i = slots.firstIndex(where: { $0.slotID == slot.slotID }) { slots[i] = slot } else { slots.append(slot) }
+        slots.sort { $0.slotID < $1.slotID }
+    }
+
+    /// Sets one configuration value. `done` gets nil on success, or what went wrong.
+    func apply(_ key: String, _ value: String, done: @escaping (String?) -> Void) {
+        guard let client else { done("Not connected."); return }
+        client.send(DeckSetupCommand.set(key, value)) { [weak self] r, _, _ in
+            guard let self else { return }
+            if r.isSuccess {
+                self.config[key] = value
+                done(nil)
+            } else if r.code == 213 {
+                done(nil)   // rebooting to apply it; the client reconnects and re-reads
+            } else {
+                done(r.hint ?? "The deck didn't accept \(key): \(value) (\(r.code) \(r.text)).")
+            }
+        }
+    }
+
+    /// Flashes the deck's front-panel button so it can be found in the rack.
+    func identify() { sendQuietly(DeckSetupCommand.identify) }
+
+    /// For optional commands: a deck that doesn't know one shouldn't show an error.
+    private func sendQuietly(_ command: String, then: ((HyperDeckResponse) -> Void)? = nil) {
+        client?.send(command) { response, _, _ in then?(response) }
     }
 
     /// Every transport update goes through here so record start/stop is never missed,

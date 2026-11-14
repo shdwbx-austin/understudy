@@ -99,12 +99,26 @@ Lock the LTC generator to house ref, like the decks. If the two clocks drift apa
 - Format SSDs. All four decks should use the same codec and the same video format.
 - Everything else is set by Understudy when you change mode: remote override, timecode input, record trigger, record prefix (deck name), preview/output, and timecode output = clip.
 
+### Deck setup from the Mac
+
+Each connected deck has **Setup**, a panel that reads the deck's own settings and keeps them current:
+
+- **Media:** each slot's volume, status, recording time left and how full it is.
+- **Recording:** codec, audio codec, record to cache, spill over to USB, time stamp in file names.
+- **Input and reference:** video input, audio input, reference source, genlock input resync; default standard (read-only).
+- **Managed by Understudy:** timecode input, drop-frame, timecode output, record trigger and file name prefix are shown but locked, because Understudy sets them on every mode change.
+- **All decks** sets a value on every connected deck. A setting that differs between decks is flagged in amber; all decks should match.
+- **Identify** flashes the deck's front-panel button.
+- Changing codec or video input restarts the deck, so the panel asks first; Understudy reconnects on its own. Setup is locked while recording.
+
+Recording resolution and frame rate always follow the deck's input, and playback output follows the clip: the HyperDeck protocol can't set either. Each deck column shows its **Input** (the format arriving, or **NO SIGNAL** in red).
+
 ### HyperDeck Extreme 8K HDR
 
 The Extreme uses the same Ethernet protocol as the Studio models, so Understudy controls it the same way. On each Extreme:
 
 - **Ethernet protocol access: Enabled**, not *Enabled with security*. Understudy doesn't send a password; a secured deck shows a message saying so.
-- **Video input: SDI.** 4xSDI mode records four separate channels into CH 1–4 folders, which Understudy doesn't support.
+- **Video input: SDI.** 4xSDI mode records four separate channels into CH 1–4 folders, which Understudy doesn't support. Blackmagic documents 4xSDI playback as the channels playing one after another, not as four synced outputs, so one Extreme can't stand in for four decks.
 - **Timecode input** is set by Understudy: Internal while recording continuously, External (the XLR LTC input) for *record only while show timecode runs*.
 - **Changing the file format reboots the deck**; Understudy reconnects on its own.
 - A deck at its client limit (other controllers, Companion, the Extreme's own web page) refuses another; Understudy says so and retries every 10 s.

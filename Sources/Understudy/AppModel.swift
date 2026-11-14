@@ -193,6 +193,32 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: Deck setup
+
+    /// Deck settings can't change while recording.
+    var setupLocked: Bool { mode == .record }
+
+    /// Editable settings that differ between connected decks, by key, with each deck's value.
+    var settingMismatches: [String: [Int: String]] {
+        deckSettingMismatches(Dictionary(uniqueKeysWithValues: activeDecks.map { ($0.id, $0.config) }))
+    }
+
+    /// Applies one setting to every connected deck. `done` gets the problems, by deck name.
+    func applyToAll(_ key: String, _ value: String, done: @escaping ([String]) -> Void) {
+        guard !setupLocked else { done(["Stop recording first."]); return }
+        let targets = activeDecks
+        guard !targets.isEmpty else { done([]); return }
+        var remaining = targets.count
+        var problems: [String] = []
+        for deck in targets {
+            deck.apply(key, value) { [weak self] problem in
+                if let problem, let self { problems.append("\(self.settings.decks[deck.id].name): \(problem)") }
+                remaining -= 1
+                if remaining == 0 { done(problems) }
+            }
+        }
+    }
+
     // MARK: Backup
 
     /// Copies the selected take's clip from every connected deck into the backup folder.

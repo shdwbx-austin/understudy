@@ -69,6 +69,19 @@ struct HyperDeckProtocolTests {
         #expect(HyperDeckResponse(code: 102, text: "syntax error").hint == nil)
     }
 
+    @Test func lostInputClearsFormat() {
+        var info = TransportInfo()
+        info.merge(["input video format": "2160p5994", "video format": "2160p5994"])
+        #expect(info.inputVideoFormat == "2160p5994")
+        #expect(info.reportsInput)
+        info.merge(["status": "preview"])                 // async update without the field: keep it
+        #expect(info.inputVideoFormat == "2160p5994")
+        info.merge(["input video format": "none"])         // signal lost
+        #expect(info.inputVideoFormat == nil)
+        #expect(info.reportsInput)
+        #expect(!TransportInfo().reportsInput)
+    }
+
     @Test func commands() {
         #expect(HyperDeckCommand.gotoClip(id: 4, frame: 1200) == "goto: clip id: 4 clip: 1200")
         #expect(HyperDeckCommand.recordPrefix("ME 1/PGM") == "configuration: record prefix: ME_1_PGM")
