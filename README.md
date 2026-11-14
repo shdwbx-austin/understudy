@@ -67,10 +67,10 @@ This build is unit-tested on the timecode, LTC, protocol and chase logic. It has
 
 ## Build
 
-Requires macOS 13+. The universal app build needs Xcode.
+Runs on macOS 13+. Building needs Swift 6 (Xcode 16 or its Command Line Tools); the universal app build needs full Xcode.
 
 ```sh
-swift test                 # core logic tests
+./scripts/test.sh           # core logic tests (Swift Testing; works without Xcode)
 swift run Cam4Prog         # run unbundled while developing
 ./scripts/build-app.sh     # dist/cam4prog.app + zip (ad-hoc signed)
 ```

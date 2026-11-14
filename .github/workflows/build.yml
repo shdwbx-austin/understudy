@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     permissions:
       contents: write
     steps:
@@ -17,7 +17,7 @@ jobs:
           fetch-depth: 0
 
       - name: Test core
-        run: swift test
+        run: ./scripts/test.sh
 
       - name: Build app
         run: |
