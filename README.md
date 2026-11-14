@@ -1,4 +1,4 @@
-# Understudy
+# understudy
 
 **Stands in for the cameras between run-throughs.**
 
