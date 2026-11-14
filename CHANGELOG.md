@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **App icon** for the Dock and Finder: a lowercase u in Neue Haas Grotesk with the green the clock turns on lock, drawn by `scripts/make-icon.swift`.
+
 ## 0.2.0 — 2026-11-14
 
 - **Finds HyperDecks on the network**, by Bonjour and by a scan of the local subnets on port 9993 that keeps only hosts greeting like a HyperDeck. Found decks can be assigned to a slot or used to fill empty slots.
