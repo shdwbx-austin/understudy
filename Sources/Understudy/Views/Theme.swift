@@ -162,9 +162,9 @@ struct Label8: View {
     let text: String
     var body: some View {
         Text(text.uppercased())
-            .font(Theme.mono(9))
+            .font(Theme.mono(10))
             .tracking(1.2)
-            .foregroundStyle(Theme.quiet)
+            .foregroundStyle(Theme.grey)
     }
 }
 
@@ -201,7 +201,8 @@ struct TextButton: View {
     }
 }
 
-/// Horizontal peak meter, −60…0 dBFS: off-white, amber above −12, red above −3.
+/// Horizontal peak meter, −60…0 dBFS. LTC is a full-level signal, so only clipping (above −1) is red;
+/// barely-there signal (below −40) is grey.
 struct LevelMeter: View {
     let db: Float
 
@@ -218,8 +219,8 @@ struct LevelMeter: View {
     }
 
     private var color: Color {
-        if db > -3 { return Theme.signal }
-        if db > -12 { return Theme.amber }
+        if db > -1 { return Theme.signal }
+        if db < -40 { return Theme.quiet }
         return Theme.paper
     }
 

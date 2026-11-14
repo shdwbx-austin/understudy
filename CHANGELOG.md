@@ -3,6 +3,9 @@
 ## 0.2.0 — unreleased
 
 - **Finds HyperDecks on the network**, by Bonjour and by a scan of the local subnets on port 9993 that keeps only hosts greeting like a HyperDeck. Found decks can be assigned to a slot or used to fill empty slots.
+- **Show-critical polish**: green/red deck connection state (red only for a deck that was connected and dropped), recording time left per deck with warnings, one large status word per deck, timecode NO LTC in red during Record/Play, equal deck columns, a fixed layout that doesn't jump between modes.
+- **Safer controls**: re-pressing the current mode does nothing (it used to split takes / re-cue decks); leaving Record asks first; deck assignment is a draft applied with Apply and locked while recording; a deck leaving its slot mid-take is told to stop; backup has its own take choice; picking an older take turns off Follow latest; single main window.
+- **Calmer show screen**: Assign decks and Backup moved to sheets; play offset and Calibrate moved to each deck's Setup; LTC meter no longer shows normal levels in amber.
 - **Confidence monitor**: deck pictures from a capture device (quad multiviewer or one deck), with BLACK / STILL / NO FEED checks that ignore multiviewer borders and labels. Off by default.
 - **Deck setup from the Mac**: a per-deck panel for codec, audio, cache/USB spill, video input, reference and genlock, with media status, Identify, All decks and mismatch flags. Settings Understudy manages are shown locked; restart-causing changes ask first; locked while recording.
 - **Input signal per deck**: each column shows the arriving format or NO SIGNAL. Fixed: a lost input kept showing its last format.

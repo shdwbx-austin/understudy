@@ -12,7 +12,7 @@ struct UnderstudyApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("understudy") {
+        Window("understudy", id: "main") {
             ContentView()
                 .environmentObject(model)
                 .onAppear {
@@ -23,11 +23,20 @@ struct UnderstudyApp: App {
         }
         .commands {
             CommandMenu("Mode") {
-                Button("Stop") { model.setMode(.stop) }.keyboardShortcut("1", modifiers: .command)
-                Button("Record") { model.setMode(.record) }.keyboardShortcut("2", modifiers: .command)
-                Button("Play to Code") { model.setMode(.playback) }.keyboardShortcut("3", modifiers: .command)
+                // Toggles show a tick on the current mode; leaving Record asks first.
+                Toggle("Stop", isOn: modeBinding(.stop)).keyboardShortcut("1", modifiers: .command)
+                Toggle("Record", isOn: modeBinding(.record)).keyboardShortcut("2", modifiers: .command)
+                Toggle("Play to code", isOn: modeBinding(.playback)).keyboardShortcut("3", modifiers: .command)
                 Divider()
                 Button("Refresh Takes") { model.refreshTakes() }.keyboardShortcut("r", modifiers: .command)
+                Button("Back Up a Take…") {
+                    NotificationCenter.default.post(name: .understudyOpenBackup, object: nil)
+                }.keyboardShortcut("b", modifiers: .command)
+                Button("Assign Decks…") {
+                    NotificationCenter.default.post(name: .understudyOpenAssign, object: nil)
+                }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
+                .disabled(model.setupLocked)
             }
         }
 
@@ -35,5 +44,9 @@ struct UnderstudyApp: App {
             SettingsView()
                 .environmentObject(model)
         }
+    }
+
+    private func modeBinding(_ mode: AppModel.Mode) -> Binding<Bool> {
+        Binding(get: { model.mode == mode }, set: { _ in model.requestMode(mode) })
     }
 }

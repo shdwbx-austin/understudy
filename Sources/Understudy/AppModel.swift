@@ -138,7 +138,24 @@ final class AppModel: ObservableObject {
 
     // MARK: Modes
 
+    /// A mode change waiting for the operator to confirm (leaving Record ends the take).
+    @Published var pendingMode: Mode?
+
+    /// Mode change from the UI: leaving Record asks first; the current mode again does nothing.
+    func requestMode(_ newMode: Mode) {
+        guard newMode != mode else { return }
+        if mode == .record { pendingMode = newMode } else { setMode(newMode) }
+    }
+
+    func confirmPendingMode() {
+        if let next = pendingMode { setMode(next) }
+        pendingMode = nil
+    }
+
     func setMode(_ newMode: Mode) {
+        // Re-sending the current mode would split a recording or re-cue every deck.
+        guard newMode != mode || newMode == .stop else { return }
+        pendingMode = nil
         // Never copy files off the decks while they record.
         if newMode == .record, backup.isRunning { backup.cancel() }
         mode = newMode
@@ -189,6 +206,8 @@ final class AppModel: ObservableObject {
 
     func applyHost(_ id: Int) {
         let config = settings.decks[id]
+        // A deck leaving its slot mid-take must not keep recording on its own.
+        if decks[id].transport.status == .record { decks[id].stopTransport() }
         if config.enabled {
             decks[id].connect(host: config.host)
         } else {
@@ -244,11 +263,18 @@ final class AppModel: ObservableObject {
 
     // MARK: Backup
 
-    /// Copies the selected take's clip from every connected deck into the backup folder.
-    func backUpSelectedTake() {
+    /// The take to play, chosen by the operator. Choosing an older take stops following the latest.
+    func chooseTake(_ offset: Int) {
+        selectedTake = offset
+        if offset != 0 { settings.followLatestTake = false }
+    }
+
+    /// Copies one take's clip (by offset, 0 = latest) from every connected deck into the backup folder.
+    /// Independent of the playback take, so backing up never changes what's playing.
+    func backUpTake(_ offset: Int) {
         guard mode != .record, let folder = settings.backupFolder else { return }
         let items = activeDecks.compactMap { deck -> TakeBackup.Item? in
-            guard let clip = deck.clip(takeOffset: selectedTake) else { return nil }
+            guard let clip = deck.clip(takeOffset: offset) else { return nil }
             let config = settings.decks[deck.id]
             return TakeBackup.Item(
                 deckName: config.name,
@@ -262,30 +288,6 @@ final class AppModel: ObservableObject {
     func chooseBackupFolder() {
         if let path = TakeBackup.chooseFolder(startingAt: settings.backupFolder) {
             settings.backupFolder = path
-        }
-    }
-
-    /// The slot a host is assigned to, if any.
-    func slot(for host: String) -> Int? {
-        settings.decks.firstIndex { $0.host.trimmingCharacters(in: .whitespaces) == host }
-    }
-
-    /// Puts a found deck in a slot and connects it. A deck already in another slot moves.
-    func assign(_ found: FoundDeck, to id: Int) {
-        if let previous = slot(for: found.host), previous != id {
-            settings.decks[previous].host = ""
-            applyHost(previous)
-        }
-        settings.decks[id].host = found.host
-        settings.decks[id].enabled = true
-        applyHost(id)
-    }
-
-    /// Assigns found decks that aren't in a slot yet to the empty slots, in address order.
-    func fillEmptySlots() {
-        for found in discovery.found where slot(for: found.host) == nil {
-            guard let empty = settings.decks.firstIndex(where: { $0.host.trimmingCharacters(in: .whitespaces).isEmpty }) else { return }
-            assign(found, to: empty)
         }
     }
 

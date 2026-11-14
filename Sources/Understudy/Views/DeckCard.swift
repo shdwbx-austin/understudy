@@ -1,217 +1,166 @@
 import SwiftUI
 import UnderstudyCore
 
-/// One deck as a grid column: index, name, address, then a label/value table.
+/// One deck as a read-only grid column, built to be read from across the room: connection bar
+/// and number, one large status word, then health rows. Editing lives in Assign decks and Setup.
 struct DeckCard: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var deck: DeckController
-    @ObservedObject var discovery: DeckDiscovery
-    @Binding var config: DeckConfig
+    let config: DeckConfig
+    let assign: () -> Void
     @State private var showSetup = false
+
+    private var assigned: Bool { config.enabled && !config.host.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Connection bar: green connected, red lost, grey empty/off — readable across the room.
+            // Connection bar: green connected, red lost, amber connecting, grey empty/off.
             Rectangle()
                 .fill(connectionColor)
                 .frame(height: deck.isConnected || deck.isLost ? 4 : 1)
                 .padding(.bottom, 10)
-                .animation(.easeInOut(duration: 0.2), value: connectionWord)
+                .animation(.easeInOut(duration: 0.2), value: status.text)
 
-            // Index and status
             HStack(alignment: .firstTextBaseline) {
                 Text(String(format: "%02d", deck.id + 1))
                     .font(Theme.grotesk(44, .light))
                     .tracking(-1)
-                    .foregroundStyle(deck.isConnected || deck.isLost ? connectionColor : Theme.paper)
-                if deck.transport.status == .record {
-                    Text("● REC")
-                        .font(Theme.mono(10, bold: true))
-                        .tracking(1.2)
-                        .foregroundStyle(Theme.signal)
-                }
+                    .foregroundStyle(assigned ? connectionColor : Theme.quiet)
                 Spacer()
-                HStack(spacing: 6) {
-                    StatusDot(color: connectionColor, filled: deck.isConnected)
-                    Text(connectionWord)
-                        .font(Theme.mono(9))
-                        .tracking(1.2)
-                        .foregroundStyle(connectionColor)
-                }
-                Toggle("", isOn: $config.enabled)
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
-                    .onChange(of: config.enabled) { _ in model.applyHost(deck.id) }
-            }
-
-            TextField("Name", text: $config.name)
-                .textFieldStyle(.plain)
-                .font(Theme.grotesk(20, .medium))
-                .padding(.top, 2)
-
-            // Address
-            HStack(spacing: 6) {
-                TextField("IP address", text: $config.host)
-                    .textFieldStyle(.plain)
-                    .font(Theme.mono(12))
-                    .onSubmit { model.applyHost(deck.id) }
-                if !discovery.found.isEmpty {
-                    Menu {
-                        ForEach(discovery.found) { found in
-                            Button("\(found.host) — \(found.title)") { model.assign(found, to: deck.id) }
-                        }
-                    } label: {
-                        Text("▾").font(Theme.mono(11))
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .help("Pick a HyperDeck found on the network")
-                }
-            }
-            .padding(.vertical, 6)
-            .overlay(alignment: .bottom) { Rule() }
-            .padding(.top, 8)
-
-            HStack(alignment: .firstTextBaseline) {
-                Text(deck.model ?? connectionDetail)
-                    .font(Theme.grotesk(12, .light))
-                    .foregroundStyle(Theme.grey)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
                 if deck.isConnected {
                     TextButton(title: "Setup", color: Theme.grey) { showSetup = true }
-                        .help("Codec, input, reference and media for this deck")
+                        .help("Codec, input, reference, media and play offset for this deck")
                 }
             }
-            .padding(.top, 6)
 
-            if model.settings.confidenceEnabled {
-                ConfidencePicture(deck: deck, monitor: model.confidence)
-                    .padding(.top, 14)
-            }
-
-            // Readouts
-            TimecodeText(text: deck.transport.displayTimecode?.description ?? "--:--:--:--", size: 26)
-                .foregroundStyle(deck.isConnected ? Theme.paper : Theme.quiet)
-                .padding(.top, 18)
-
-            VStack(spacing: 0) {
-                // Nothing stale: a deck that isn't connected shows dashes, not its last known state.
-                Row(label: "Transport", value: deck.isConnected ? deck.transport.status.rawValue.uppercased() : "—",
-                    color: deck.isConnected ? statusColor : Theme.quiet)
-                Row(label: "Input", value: inputText, color: inputColor)
-                Row(label: "Format", value: deck.isConnected ? deck.transport.videoFormat ?? "—" : "—",
-                    color: deck.isConnected ? Theme.paper : Theme.quiet)
-                Row(label: "Reference", value: refText, color: refColor)
-                Row(label: "Media left", value: deck.isConnected ? MediaTime.text(deck.mediaSecondsLeft) : "—", color: mediaColor)
-                if deck.isLoggingTake {
-                    Row(label: "Show code",
-                        value: model.ltcRolling ? loggedText : "WAITING FOR LTC",
-                        color: model.ltcRolling ? Theme.paper : Theme.amber)
-                }
-                if model.mode == .playback {
-                    Row(label: "Chase", value: deck.chase.phase.label, color: phaseColor)
-                    Row(label: "Error Δ", value: errorText, color: errorColor)
-                    HStack {
-                        Label8(text: "Play offset")
-                        Spacer()
-                        Stepper(value: $config.playOffsetFrames, in: -30...30, step: 0.5) {
-                            Text(String(format: "%+.1f f", config.playOffsetFrames)).font(Theme.mono(11))
-                        }
-                        .controlSize(.small)
-                    }
-                    .padding(.vertical, 6)
-                    .overlay(alignment: .bottom) { Rule(color: Theme.rule.opacity(0.6)) }
-                    HStack {
-                        Spacer()
-                        TextButton(title: "Calibrate", color: deck.smoothedError == nil ? Theme.quiet : Theme.paper) {
-                            model.calibrate(deck.id)
-                        }
-                        .disabled(deck.smoothedError == nil)
-                        .help("Fold the measured error into the play offset")
-                    }
+            if assigned {
+                Text(status.text)
+                    .font(Theme.grotesk(24, .medium))
+                    .foregroundStyle(status.color)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .padding(.top, 2)
+                Text(config.name)
+                    .font(Theme.grotesk(16, .regular))
+                    .lineLimit(1)
                     .padding(.top, 8)
-                }
-            }
-            .padding(.top, 10)
-
-            if let error = deck.lastError {
-                Text(error)
+                Text([config.host, deck.model].compactMap { $0 }.joined(separator: " · "))
                     .font(Theme.mono(10))
-                    .foregroundStyle(Theme.amber)
-                    .lineLimit(3)
-                    .padding(.top, 10)
-                    .onTapGesture { deck.lastError = nil }
-                    .help("Click to dismiss")
+                    .foregroundStyle(Theme.grey)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.top, 2)
+                if let twin = sharedAddress {
+                    Text("SAME ADDRESS AS \(String(format: "%02d", twin + 1))")
+                        .font(Theme.mono(9, bold: true)).tracking(1.2)
+                        .foregroundStyle(Theme.amber)
+                        .padding(.top, 4)
+                }
+
+                if model.settings.confidenceEnabled {
+                    ConfidencePicture(deck: deck, monitor: model.confidence)
+                        .padding(.top, 14)
+                }
+
+                TimecodeText(text: deck.transport.displayTimecode?.description ?? "--:--:--:--", size: 24)
+                    .foregroundStyle(deck.isConnected ? Theme.paper : Theme.quiet)
+                    .padding(.top, 14)
+
+                VStack(spacing: 0) {
+                    Row(label: "Input", value: inputText, color: inputColor)
+                    Row(label: "Reference", value: refText, color: refColor)
+                    Row(label: "Media left", value: deck.isConnected ? MediaTime.text(deck.mediaSecondsLeft) : "—", color: mediaColor)
+                    if model.mode == .playback {
+                        Row(label: "Error Δ", value: errorText, color: errorColor)
+                    }
+                }
+                .padding(.top, 10)
+
+                if let error = deck.lastError {
+                    Text(error)
+                        .font(Theme.mono(10))
+                        .foregroundStyle(Theme.amber)
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 10)
+                        .onTapGesture { deck.lastError = nil }
+                        .help("Click to dismiss")
+                }
+            } else {
+                Text(config.host.isEmpty ? "Not assigned" : "Switched off")
+                    .font(Theme.grotesk(16, .light))
+                    .foregroundStyle(Theme.grey)
+                    .padding(.top, 6)
+                if !model.setupLocked {
+                    TextButton(title: "Assign", color: Theme.grey, action: assign)
+                        .padding(.top, 8)
+                }
             }
         }
-        .opacity(config.enabled ? 1 : 0.4)
         .sheet(isPresented: $showSetup) {
             DeckSetupView(deck: deck).environmentObject(model)
         }
     }
 
-    /// What's arriving at the deck's input: its format, or NO SIGNAL.
-    private var inputText: String {
-        guard deck.isConnected else { return "—" }
-        guard deck.transport.reportsInput else { return "—" }
-        guard let input = deck.transport.inputVideoFormat else { return "NO SIGNAL" }
-        return input
+    // MARK: Status
+
+    /// The one word that matters most right now.
+    private var status: (text: String, color: Color) {
+        if deck.isLost { return ("LOST", Theme.signal) }
+        guard deck.isConnected else {
+            switch deck.connection {
+            case .connecting, .failed: return ("CONNECTING", Theme.amber)
+            default: return ("OFFLINE", Theme.quiet)
+            }
+        }
+        if deck.transport.status == .record { return ("● REC", Theme.signal) }
+        if model.mode == .playback {
+            switch deck.chase.phase {
+            case .playing: return ("CHASING", Theme.lock)
+            case .cueing, .armed: return ("CUEING", Theme.paper)
+            case .outOfRange: return ("NO MEDIA AT TC", Theme.amber)
+            case .idle: return (model.ltcRolling ? "WAITING" : "WAITING FOR LTC", Theme.grey)
+            }
+        }
+        switch deck.transport.status {
+        case .preview: return ("LIVE", Theme.paper)
+        case .play: return ("PLAYING", Theme.paper)
+        case .stopped: return ("STOPPED", Theme.grey)
+        case .unknown: return ("—", Theme.quiet)
+        default: return (deck.transport.status.rawValue.uppercased(), Theme.paper)
+        }
     }
 
-    private var inputColor: Color {
-        inputText == "NO SIGNAL" ? Theme.signal : Theme.paper
+    /// Another slot with the same address (two slots driving one deck).
+    private var sharedAddress: Int? {
+        let host = config.host.trimmingCharacters(in: .whitespaces)
+        guard !host.isEmpty else { return nil }
+        return model.settings.decks.firstIndex { $0.id != deck.id && $0.enabled && $0.host.trimmingCharacters(in: .whitespaces) == host }
     }
 
     // MARK: Text and colour
 
-    private var connectionWord: String {
-        if deck.isConnected { return "CONNECTED" }
-        if deck.isLost { return "LOST · RETRYING" }
-        switch deck.connection {
-        case .connecting: return "CONNECTING"
-        case .failed: return "NOT REACHABLE"
-        case .connected, .disconnected: return config.host.isEmpty ? "EMPTY" : (config.enabled ? "OFFLINE" : "OFF")
-        }
-    }
-
-    private var mediaColor: Color {
-        guard deck.isConnected else { return Theme.quiet }
-        switch MediaTime.level(deck.mediaSecondsLeft) {
-        case .ok: return Theme.paper
-        case .low: return Theme.amber
-        case .critical, .none: return Theme.signal
-        }
-    }
-
-    private var connectionDetail: String {
-        switch deck.connection {
-        case .disconnected: return config.host.isEmpty ? "Enter an address or pick one found below." : "Not connected."
-        case .connecting: return "Connecting to \(config.host):9993…"
-        case .connected: return "Connected"
-        case .failed(let reason): return reason
-        }
-    }
-
-    /// Green connected, red lost after having connected, amber while first connecting, grey otherwise.
+    /// Green connected, red lost after having connected, amber while connecting, grey otherwise.
     private var connectionColor: Color {
         if deck.isConnected { return Theme.lock }
         if deck.isLost { return Theme.signal }
         switch deck.connection {
-        case .connecting: return Theme.amber
-        case .failed: return Theme.amber
-        case .connected, .disconnected: return Theme.quiet
+        case .connecting, .failed: return Theme.amber
+        default: return Theme.quiet
         }
     }
 
-    private var statusColor: Color {
-        switch deck.transport.status {
-        case .record: return Theme.signal
-        case .unknown: return Theme.quiet
-        default: return Theme.paper
-        }
+    /// What's arriving at the deck's input: its format, or NO SIGNAL. Format shown only if different.
+    private var inputText: String {
+        guard deck.isConnected, deck.transport.reportsInput else { return "—" }
+        guard let input = deck.transport.inputVideoFormat else { return "NO SIGNAL" }
+        if let format = deck.transport.videoFormat, format != input { return "\(input) → \(format)" }
+        return input
+    }
+
+    private var inputColor: Color {
+        guard deck.isConnected else { return Theme.quiet }
+        return inputText == "NO SIGNAL" ? Theme.signal : Theme.paper
     }
 
     private var refText: String {
@@ -228,17 +177,12 @@ struct DeckCard: View {
         return deck.transport.referenceLocked == false ? Theme.signal : Theme.paper
     }
 
-    private var loggedText: String {
-        guard let s = deck.loggedSeconds else { return "LOGGING" }
-        return String(format: "LOGGING · %.0f S", s)
-    }
-
-    private var phaseColor: Color {
-        switch deck.chase.phase {
-        case .playing: return Theme.paper
-        case .cueing, .armed: return Theme.amber
-        case .outOfRange: return Theme.signal
-        case .idle: return Theme.grey
+    private var mediaColor: Color {
+        guard deck.isConnected else { return Theme.quiet }
+        switch MediaTime.level(deck.mediaSecondsLeft) {
+        case .ok: return Theme.paper
+        case .low: return Theme.amber
+        case .critical, .none: return Theme.signal
         }
     }
 
@@ -264,7 +208,7 @@ private struct Row: View {
             Label8(text: label)
             Spacer(minLength: 8)
             Text(value)
-                .font(Theme.mono(11))
+                .font(Theme.mono(12))
                 .foregroundStyle(color)
                 .lineLimit(1)
                 .truncationMode(.middle)

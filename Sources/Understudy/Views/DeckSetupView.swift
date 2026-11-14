@@ -33,6 +33,7 @@ struct DeckSetupView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
                     media
+                    playback
                     group(.recording)
                     group(.input)
                     group(.managed)
@@ -116,7 +117,7 @@ struct DeckSetupView: View {
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
                                 Rectangle().fill(Theme.rule)
-                                Rectangle().fill(used > 0.9 ? Theme.signal : Theme.paper).frame(width: geo.size.width * used)
+                                Rectangle().fill(used > 0.9 ? Theme.amber : Theme.paper).frame(width: geo.size.width * used)
                             }
                         }
                         .frame(height: 4)
@@ -133,10 +134,38 @@ struct DeckSetupView: View {
         }
     }
 
+    // MARK: Playback
+
+    /// How early this deck is told to play, and folding its measured error into that.
+    private var playback: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionHead(index: 2, title: "Playback")
+            HStack(alignment: .firstTextBaseline, spacing: Theme.gutter) {
+                Text("Play offset").font(Theme.grotesk(14, .regular)).frame(width: 200, alignment: .leading)
+                Stepper(value: $model.settings.decks[deck.id].playOffsetFrames, in: -30...30, step: 0.5) {
+                    Text(String(format: "%+.1f frames", model.settings.decks[deck.id].playOffsetFrames)).font(Theme.mono(12))
+                }
+                Spacer()
+                Text(deck.smoothedError.map { String(format: "MEASURED Δ %+.1f F", $0) } ?? "MEASURED Δ —")
+                    .font(Theme.mono(10)).tracking(1.2).foregroundStyle(Theme.grey)
+                TextButton(title: "Calibrate", color: deck.smoothedError == nil ? Theme.quiet : Theme.paper) {
+                    model.calibrate(deck.id)
+                }
+                .disabled(deck.smoothedError == nil)
+                .help("Fold the measured error into the play offset (while chasing)")
+            }
+            .padding(.vertical, 10)
+            .overlay(alignment: .bottom) { Rule(color: Theme.rule.opacity(0.6)) }
+            Text("Fires play this many frames early to cover the deck's start-up time. Calibrate while the deck is chasing.")
+                .font(Theme.grotesk(11, .light)).foregroundStyle(Theme.grey)
+                .padding(.top, 4)
+        }
+    }
+
     // MARK: Settings
 
     private func group(_ group: DeckParameter.Group) -> some View {
-        let index = DeckParameter.Group.allCases.firstIndex(of: group)! + 2
+        let index = DeckParameter.Group.allCases.firstIndex(of: group)! + 3
         let mismatches = model.settingMismatches
         return VStack(alignment: .leading, spacing: 0) {
             SectionHead(index: index, title: group.rawValue)

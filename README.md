@@ -144,9 +144,11 @@ The Extreme uses the same Ethernet protocol as the Studio models, so Understudy 
 
 ## Operating
 
-- **REC** before the run. A card's border turns red while that deck records, and the card reads **LOGGING SHOW CODE** (or **WAITING FOR LTC** while code is absent).
-- **STOP** or **PLAY TC** after the run ends the take.
-- **PLAY TC**: roll code (or let the show roll it), and each card goes WAITING → CUEING → ARMED → CHASING.
+- **Record** (⌘2) before the run. Each recording deck reads **● REC**.
+- **Stop** (⌘1) or **Play to code** (⌘3) after the run ends the take; leaving Record always asks first. Pressing the current mode again does nothing.
+- **Play to code**: roll code (or let the show roll it), and each deck goes WAITING → CUEING → CHASING.
+- **Deck health at a glance:** each column's bar and number are **green** when connected and **red** when a deck that was connected drops; **Media left** turns amber under 30 minutes and red under 10. The Decks header names lost decks and the lowest media.
+- **Assign decks** (⇧⌘D) sets addresses and names and lists HyperDecks found on the network; changes apply only when you press Apply, and it's locked while recording. **Back up** (⌘B) and each deck's **Setup** (including play offset and Calibrate) are sheets, so the show screen stays calm.
 - **Δ** shows the measured deck error in LTC frames. If a deck sits consistently early or late, press **Calibrate** to fold that error into its play offset.
 - **TAKE** lets you pick an older run. Takes are matched across decks by position (latest, second latest, and so on). Each take says **SHOW CODE LOGGED**, **NO SHOW CODE LOGGED** (recorded with no LTC at all, so nothing to chase), or **CLIP TC** (no map; played from clip timecode).
 - **NO MEDIA AT TC** means that code isn't in the selected take. The deck holds until code comes back into a recorded stretch.

@@ -1,70 +1,95 @@
 import SwiftUI
 import UnderstudyCore
 
-/// Copy a take off the decks (FTP) into a folder on this Mac, e.g. in Dropbox.
-struct BackupSection: View {
+/// Copy a take off the decks (FTP) into a folder on this Mac, e.g. in Dropbox. A sheet, so the
+/// show screen stays calm; the footer shows progress while it runs.
+struct BackupView: View {
     @EnvironmentObject private var model: AppModel
-    let index: Int
     @ObservedObject var backup: TakeBackup
+    @Environment(\.dismiss) private var dismiss
+    /// Its own choice of take: backing up never changes what's playing.
+    @State private var take = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionHead(index: index, title: "Backup") {
-                HStack(spacing: 18) {
-                    Text(folderText)
-                        .font(Theme.mono(10))
-                        .foregroundStyle(Theme.quiet)
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                    TextButton(title: model.settings.backupFolder == nil ? "Choose folder" : "Change") {
-                        model.chooseBackupFolder()
-                    }
-                    if backup.lastFolder != nil, !backup.isRunning {
-                        TextButton(title: "Show") { backup.revealFolder() }
-                    }
+            HStack(alignment: .firstTextBaseline) {
+                Text("Back up a take").font(Theme.grotesk(26, .medium))
+                Spacer()
+                TextButton(title: "Done") { dismiss() }
+            }
+            .padding(.bottom, 20)
+
+            SectionHead(index: 1, title: "Destination") {
+                TextButton(title: model.settings.backupFolder == nil ? "Choose folder" : "Change") { model.chooseBackupFolder() }
+            }
+            HStack {
+                Text(folderText)
+                    .font(Theme.mono(11))
+                    .foregroundStyle(model.settings.backupFolder == nil ? Theme.amber : Theme.paper)
+                    .lineLimit(2)
+                    .truncationMode(.head)
+                Spacer()
+                if backup.lastFolder != nil, !backup.isRunning {
+                    TextButton(title: "Show in Finder", color: Theme.grey) { backup.revealFolder() }
                 }
             }
+            .padding(.vertical, 12)
+            Text("Files go into <folder>/<date>/<deck name>/. A folder inside Dropbox syncs them.")
+                .font(Theme.grotesk(12, .light)).foregroundStyle(Theme.grey)
+                .padding(.bottom, 24)
 
+            SectionHead(index: 2, title: "Take")
             HStack(alignment: .firstTextBaseline, spacing: Theme.gutter) {
                 if model.mode == .record {
                     Text("Stop recording to back up. Copying off a deck while it records isn't safe.")
-                        .font(Theme.grotesk(13, .light))
-                        .foregroundStyle(Theme.grey)
+                        .font(Theme.grotesk(14, .light)).foregroundStyle(Theme.amber)
                 } else if model.takes.isEmpty {
-                    Text("No takes on the decks yet.")
-                        .font(Theme.grotesk(13, .light))
-                        .foregroundStyle(Theme.grey)
+                    Text("No takes on the decks yet.").font(Theme.grotesk(14, .light)).foregroundStyle(Theme.grey)
                 } else {
-                    Picker("", selection: $model.selectedTake) {
-                        ForEach(model.takes) { take in
-                            Text("\(take.offset == 0 ? "Latest — " : "")#\(take.clipID)  \(take.name)").tag(take.offset)
+                    Menu {
+                        ForEach(model.takes) { t in
+                            Button("\(t.offset == 0 ? "Latest — " : "")#\(t.clipID)  \(t.name)  \(t.duration.description)") { take = t.offset }
                         }
+                    } label: {
+                        Text(takeLabel).font(Theme.grotesk(16, .regular)).lineLimit(1).truncationMode(.middle)
                     }
-                    .labelsHidden()
-                    .fixedSize()
+                    .menuStyle(.borderlessButton)
+                    .frame(maxWidth: 440, alignment: .leading)
                     .disabled(backup.isRunning)
                     Text("FROM \(model.activeDecks.count) DECK\(model.activeDecks.count == 1 ? "" : "S")")
-                        .font(Theme.mono(10))
-                        .tracking(1)
-                        .foregroundStyle(Theme.quiet)
+                        .font(Theme.mono(10)).tracking(1.2).foregroundStyle(Theme.grey)
                 }
                 Spacer()
                 if backup.isRunning {
-                    TextButton(title: "Cancel", color: Theme.amber) { backup.cancel() }
+                    TextButton(title: "Cancel", color: Theme.paper) { backup.cancel() }
                 } else {
-                    TextButton(title: "Back up take", color: canStart ? Theme.paper : Theme.quiet) {
-                        model.backUpSelectedTake()
-                    }
-                    .disabled(!canStart)
+                    TextButton(title: "Back up", color: canStart ? Theme.paper : Theme.quiet) { model.backUpTake(take) }
+                        .disabled(!canStart)
+                        .keyboardShortcut(.defaultAction)
                 }
             }
             .padding(.vertical, 12)
 
-            ForEach(backup.jobs) { job in
-                JobRow(job: job)
-                Rule(color: Theme.rule.opacity(0.6))
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(backup.jobs) { job in
+                        JobRow(job: job)
+                        Rule(color: Theme.rule.opacity(0.6))
+                    }
+                }
             }
         }
+        .padding(28)
+        .frame(width: 820, height: 520, alignment: .topLeading)
+        .background(Theme.ink)
+        .foregroundStyle(Theme.paper)
+        .preferredColorScheme(.dark)
+        .onAppear { if !model.takes.indices.contains(take) { take = 0 } }
+    }
+
+    private var takeLabel: String {
+        guard let t = model.takes.first(where: { $0.offset == take }) else { return "Choose a take" }
+        return "\(t.offset == 0 ? "Latest — " : "")#\(t.clipID)  \(t.name)"
     }
 
     private var canStart: Bool {
@@ -72,7 +97,7 @@ struct BackupSection: View {
     }
 
     private var folderText: String {
-        guard let path = model.settings.backupFolder else { return "NO FOLDER CHOSEN" }
+        guard let path = model.settings.backupFolder else { return "No folder chosen" }
         return (path as NSString).abbreviatingWithTildeInPath
     }
 }
@@ -100,7 +125,8 @@ private struct JobRow: View {
                 .font(Theme.mono(10))
                 .tracking(1)
                 .foregroundStyle(stateColor)
-                .lineLimit(1)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
                 .frame(width: 210, alignment: .leading)
         }
         .padding(.vertical, 8)
