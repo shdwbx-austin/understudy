@@ -2,7 +2,7 @@
 
 What to buy to run Understudy with three or four camera feeds, each recorded and played back at UHD 2160p59.94 (or 2160p60) over 12G-SDI, with show LTC from the timecode system.
 
-Prices are US list from Blackmagic and Apple as of 14 November 2026, unless marked **est.** (a retailer snapshot or estimate). Sources are at the end.
+Specs are from Blackmagic's and Apple's pages as of 14 November 2026; figures marked **est.** are estimates. Sources are at the end.
 
 ## The short version
 
@@ -17,7 +17,6 @@ Prices are US list from Blackmagic and Apple as of 14 November 2026, unless mark
 | LTC into the Mac | Focusrite Scarlett Solo 4th Gen (one input) or a 2-input interface if you use a separate playback LTC | same |
 | Confidence monitor (optional) | MultiView 4 HD + USB SDI capture (one quarter unused) | same, all four quarters |
 | Backup of one 1-hour run (ProRes 422) | 1.6 TB | 2.1 TB |
-| Deck hardware total | **$6,375** | **$8,500** |
 
 Use one deck per camera. The HyperDeck Extreme 8K HDR has four SDI inputs, but in 4×SDI mode it records into separate channel folders and plays them back one after another, not as four synced outputs, so it can't stand in for four decks (see the README).
 
@@ -33,7 +32,6 @@ Use one deck per camera. The HyperDeck Extreme 8K HDR has four SDI inputs, but i
 | Ethernet | 10G | 10G | 10G |
 | Power | Two internal AC supplies, plus 12 V XLR | One internal AC, plus 12 V XLR | 12 V DC barrel only |
 | Size | 1 RU | 3 RU half rack | Desktop |
-| Price | **$2,125** | $3,415 | $1,695 |
 
 **Why the Studio 4K Pro:** it has two internal power supplies on IEC, takes cheap SATA SSDs, and is 1 RU. It's also the deck Understudy has been built and tested against. The Shuttle 4K Pro is cheaper, but it has a single DC barrel and one SD slot, which isn't the right risk for a show. The Extreme costs more and gains nothing for this job.
 
@@ -58,14 +56,14 @@ Use one deck per camera. The HyperDeck Extreme 8K HDR has four SDI inputs, but i
 
 ## 3. Reference and timecode
 
-**Reference.** Lock every deck to the same sync as the switcher and disguise. Use house sync if the venue has it. If not, use a **Blackmagic Mini Converter Sync Generator ($265)**: 6 outputs, tri-level or black burst. The HyperDecks take tri-sync or black burst. Locking a 2160p59.94 deck from 1080i59.94 tri-level is standard practice, but Blackmagic's pages don't say it in so many words, so confirm the deck shows reference locked on the bench (Understudy shows REFERENCE per deck).
+**Reference.** Lock every deck to the same sync as the switcher and disguise. Use house sync if the venue has it. If not, use a **Blackmagic Mini Converter Sync Generator**: 6 outputs, tri-level or black burst. The HyperDecks take tri-sync or black burst. Locking a 2160p59.94 deck from 1080i59.94 tri-level is standard practice, but Blackmagic's pages don't say it in so many words, so confirm the deck shows reference locked on the bench (Understudy shows REFERENCE per deck).
 
 **Show LTC into the Mac.** The Mac needs show timecode. The decks don't, because they record with their own clock and Understudy maps show code onto each take.
-- **One LTC source:** Focusrite Scarlett Solo 4th Gen (**est. $130–180**). It is class compliant, so it needs no driver; use its line input.
-- **Separate show and playback LTC** (Settings › Timecode input): use an interface with two line inputs, such as a Scarlett 2i2 (price not checked), or two interfaces.
+- **One LTC source:** Focusrite Scarlett Solo 4th Gen. It is class compliant, so it needs no driver; use its line input.
+- **Separate show and playback LTC** (Settings › Timecode input): use an interface with two line inputs, such as a Scarlett 2i2, or two interfaces.
 - Feed it from an LTC distribution output, not a split cable off another device's input.
 
-**Optional regenerator.** If the show's LTC comes from far away or is flaky, put a jam-sync box in line, for example the **Tentacle Sync E mkII (est. $219–229)**: under one frame of drift in 24 hours. Understudy already freewheels through short dropouts (2 s by default), so this is a nice-to-have.
+**Optional regenerator.** If the show's LTC comes from far away or is flaky, put a jam-sync box in line, for example the **Tentacle Sync E mkII**: under one frame of drift in 24 hours. Understudy already freewheels through short dropouts (2 s by default), so this is a nice-to-have.
 
 ## 4. Video routing
 
@@ -73,14 +71,14 @@ Each feed runs **camera / switcher output → HyperDeck SDI in → HyperDeck 12G
 
 - **disguise:** check that the server has one 12G-SDI capture input per deck, set to 2160p59.94: three or four inputs.
 - **The decks' second 12G output** is free for a monitor or a backup path.
-- **Distribution amps**, if a feed also has to go elsewhere: **Teranex Mini SDI Distribution 12G ($635)**, with 8 × 12G outputs up to 2160p60. Don't use the Mini Converter SDI Distribution 4K: it is 6G and stops at 2160p30.
+- **Distribution amps**, if a feed also has to go elsewhere: **Teranex Mini SDI Distribution 12G**, with 8 × 12G outputs up to 2160p60. Don't use the Mini Converter SDI Distribution 4K: it is 6G and stops at 2160p30.
 - **Cable:** 12G-rated coax, with short runs. For long runs use fibre or a reclocking DA.
 
 ## 5. Confidence monitor (optional)
 
 No Blackmagic MultiView accepts 2160p60 inputs: the MultiView 4 and 16 stop at 2160p30. Use each deck's HD monitor output instead:
 
-**Each deck's monitor out (HD, 3G) → Blackmagic MultiView 4 HD ($239, 3G inputs, HD out) → USB SDI capture into the Mac.**
+**Each deck's monitor out (HD, 3G) → Blackmagic MultiView 4 HD (3G inputs, HD out) → USB SDI capture into the Mac.**
 
 - **Capture:** a Magewell USB Capture SDI Gen 2 (3G, up to 2048×1080) matches the MultiView 4 HD's output. Magewell says it needs no driver on Mac, but neither maker says "UVC" outright, so test the unit with Understudy before buying several.
 - **Turn the monitor outputs' overlays off** if the deck allows it. A running timecode overlay would make a frozen picture look like it's moving.
@@ -88,10 +86,10 @@ No Blackmagic MultiView accepts 2160p60 inputs: the MultiView 4 and 16 stop at 2
 
 ## 6. Control Mac
 
-**Mac mini M6, 16 GB / 256 GB ($899).** Understudy is light: one audio input, a few TCP connections and, optionally, a small capture stream. The base model is plenty.
+**Mac mini M6, 16 GB / 256 GB.** Understudy is light: one audio input, a few TCP connections and, optionally, a small capture stream. The base model is plenty.
 
 - It has 2.5 GbE built in, 3 × Thunderbolt 4, HDMI and two front USB-C ports.
-- The **10 GbE option** is worth it only if you back up ProRes over the network (see below). Apple's page doesn't show the upgrade price, so check at order.
+- The **10 GbE option** is worth it only if you back up ProRes over the network (see below). It's a build-to-order option, so choose it when ordering.
 - Run it as a show machine (Settings › Show machine): start at login, relaunch after a crash, keep awake.
 - Give it its own monitor or the HDMI output of a KVM, and a UPS.
 
@@ -111,7 +109,7 @@ These are times to copy one 1-hour run off all the decks by FTP. Practical speed
 | **ProRes 422** | **1.6 / 2.1 TB** | 4.4 / 5.9 h | 1.8 / 2.4 h | 33 / 44 min |
 | H.265 High (est.) | ~135 / 180 GB | 23 / 30 min | ~9 / 12 min | ~3 / 4 min |
 
-**Where backups go.** A day of ProRes runs is several terabytes, so back up to a **local Thunderbolt drive or RAID of 8–16 TB** on the Mac (price not checked), not straight into a syncing Dropbox folder. Dropbox would then upload terabytes over the venue's internet: 2 TB over a 100 Mb/s uplink takes about 44 hours. Put only selects, or H.265 copies, into Dropbox.
+**Where backups go.** A day of ProRes runs is several terabytes, so back up to a **local Thunderbolt drive or RAID of 8–16 TB** on the Mac, not straight into a syncing Dropbox folder. Dropbox would then upload terabytes over the venue's internet: 2 TB over a 100 Mb/s uplink takes about 44 hours. Put only selects, or H.265 copies, into Dropbox.
 
 ## 9. Rack, power, spares
 
@@ -127,21 +125,20 @@ These are times to copy one 1-hour run off all the decks by FTP. Practical speed
   - Strongly recommended: one spare deck (Understudy reassigns a slot in seconds) and two spare SSDs.
   - Also worth having: a spare LTC interface and a spare SDI cable for every length used.
 
-## Budget
+## Parts list
 
 | Item | 3 records | 4 records |
 |---|---|---|
-| HyperDeck Studio 4K Pro ($2,125 each) | $6,375 | $8,500 |
-| Spare deck (recommended) | $2,125 | $2,125 |
-| 2 TB SATA SSDs, two per deck plus two spares | 8 (price not checked) | 10 (price not checked) |
-| Mini Converter Sync Generator (skip with house sync) | $265 | $265 |
-| Mac mini M6 16 GB / 256 GB | $899 | $899 |
-| Scarlett Solo 4th Gen | est. $130–180 | est. $130–180 |
-| MultiView 4 HD (confidence, optional) | $239 | $239 |
-| USB SDI capture (confidence, optional) | price not checked | price not checked |
-| Teranex Mini SDI Distribution 12G (only if needed) | $635 each | $635 each |
-| Switch, backup RAID, UPS, cables, rack shelves | not priced | not priced |
-| **Priced items** (decks, spare, sync, Mac, audio and confidence; no DA) | **≈ $10,050** | **≈ $12,180** |
+| HyperDeck Studio 4K Pro | 3 | 4 |
+| Spare deck (recommended) | 1 | 1 |
+| 2 TB SATA SSD (two per deck, plus two spares) | 8 | 10 |
+| Mini Converter Sync Generator (skip with house sync) | 1 | 1 |
+| Mac mini M6, 16 GB / 256 GB | 1 | 1 |
+| Scarlett Solo 4th Gen (or a 2-input interface) | 1 | 1 |
+| MultiView 4 HD (confidence, optional) | 1 | 1 |
+| USB SDI capture (confidence, optional) | 1 | 1 |
+| Teranex Mini SDI Distribution 12G (only if needed) | as needed | as needed |
+| Switch, backup RAID, UPS, cables, rack shelves | 1 set | 1 set |
 
 ## Check on the bench before the show
 
