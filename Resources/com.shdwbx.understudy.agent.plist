@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Understudy's login agent, registered from the app with SMAppService (Settings › Show machine).
+  Starts Understudy at login and relaunches it if it exits unexpectedly (a crash). A normal Quit
+  exits with status 0 and is not relaunched.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.shdwbx.understudy.agent</string>
+    <key>BundleProgram</key>
+    <string>Contents/MacOS/Understudy</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
+    <key>ProcessType</key>
+    <string>Interactive</string>
+    <key>LimitLoadToSessionType</key>
+    <string>Aqua</string>
+</dict>
+</plist>

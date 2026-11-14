@@ -1,6 +1,6 @@
 import Foundation
 import Network
-import Cam4ProgCore
+import UnderstudyCore
 
 /// One TCP session to a HyperDeck on port 9993. Responses to commands arrive in order,
 /// so completions are matched FIFO; 5xx messages are routed to `onAsync`.
@@ -25,10 +25,26 @@ final class HyperDeckClient: @unchecked Sendable {
     private var parser = HyperDeckResponseParser()
     private var pending: [(sentAt: Double, completion: Completion?)] = []
     private var stopped = true
+    /// The deck said `120 connection failed` (too many clients) on this connection.
+    private var refused = false
+    /// Liveness: a reply overdue this long means the link is dead (pulled cable, deck froze),
+    /// which TCP alone can take minutes to notice. Idle connections are pinged to keep it honest.
+    private static let replyTimeout = 6.0
+    private static let pingInterval = 2.0
+    private var watchdog: DispatchSourceTimer?
+    private var lastSent = 0.0
+    /// The deck has spoken on this connection. A hung deck's network stack can still accept the
+    /// TCP connection, so the socket opening alone doesn't count as connected: the deck's
+    /// greeting does.
+    private var greeted = false
+    private var openedAt = 0.0
+
+    /// Internal failures, never confused with the deck's own `120 connection failed`.
+    static let connectionLostCode = 190
 
     init(host: String) {
         self.host = host
-        queue = DispatchQueue(label: "cam4prog.hyperdeck.\(host)", qos: .userInteractive)
+        queue = DispatchQueue(label: "understudy.hyperdeck.\(host)", qos: .userInteractive)
     }
 
     func connect() {
@@ -41,6 +57,7 @@ final class HyperDeckClient: @unchecked Sendable {
     func disconnect() {
         queue.async { [self] in
             stopped = true
+            stopWatchdog()
             connection?.cancel()
             connection = nil
             failPending()
@@ -53,13 +70,42 @@ final class HyperDeckClient: @unchecked Sendable {
             guard let connection else {
                 if let completion {
                     let now = HostClock.now()
-                    Self.onMain { completion(HyperDeckResponse(code: 120, text: "not connected"), now, now) }
+                    Self.onMain { completion(HyperDeckResponse(code: Self.connectionLostCode, text: "not connected"), now, now) }
                 }
                 return
             }
-            pending.append((HostClock.now(), completion))
-            connection.send(content: Data((command + "\r\n").utf8), completion: .contentProcessed { _ in })
+            write(command, on: connection, completion: completion)
         }
+    }
+
+    private func write(_ command: String, on connection: NWConnection, completion: Completion?) {
+        lastSent = HostClock.now()
+        pending.append((lastSent, completion))
+        connection.send(content: Data((command + "\r\n").utf8), completion: .contentProcessed { _ in })
+    }
+
+    private func startWatchdog(_ connection: NWConnection) {
+        stopWatchdog()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + 1, repeating: 1)
+        timer.setEventHandler { [weak self, weak connection] in
+            guard let self, let connection, connection === self.connection else { return }
+            let now = HostClock.now()
+            if !self.greeted {
+                if now - self.openedAt > Self.replyTimeout { self.drop(connection, reason: "The deck isn't answering") }
+            } else if let oldest = self.pending.first?.sentAt, now - oldest > Self.replyTimeout {
+                self.drop(connection, reason: "No reply from the deck")
+            } else if self.pending.isEmpty, now - self.lastSent > Self.pingInterval {
+                self.write("ping", on: connection, completion: nil)
+            }
+        }
+        timer.resume()
+        watchdog = timer
+    }
+
+    private func stopWatchdog() {
+        watchdog?.cancel()
+        watchdog = nil
     }
 
     // MARK: - Queue-confined
@@ -76,12 +122,17 @@ final class HyperDeckClient: @unchecked Sendable {
         )
         self.connection = connection
         parser = HyperDeckResponseParser()
+        refused = false
         emit(.connecting)
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             guard let self, let connection else { return }
             switch state {
             case .ready:
-                self.emit(.connected)
+                // Still `.connecting` until the deck sends its greeting (see `handle`).
+                self.greeted = false
+                self.openedAt = HostClock.now()
+                self.lastSent = self.openedAt
+                self.startWatchdog(connection)
                 self.receive(on: connection)
             case .failed(let error), .waiting(let error):
                 self.drop(connection, reason: error.localizedDescription)
@@ -107,6 +158,15 @@ final class HyperDeckClient: @unchecked Sendable {
     private func handle(_ bytes: [UInt8]) {
         let now = HostClock.now()
         for response in parser.feed(bytes) {
+            if !greeted, response.code != 120 {
+                greeted = true
+                emit(.connected)
+            }
+            if response.code == 120 {
+                // Refused at connect; the deck hangs up next. Not a reply to any command.
+                refused = true
+                continue
+            }
             if response.isAsync {
                 if let onAsync { Self.onMain { onAsync(response) } }
                 continue
@@ -122,12 +182,15 @@ final class HyperDeckClient: @unchecked Sendable {
 
     private func drop(_ dropped: NWConnection, reason: String) {
         guard dropped === connection else { return }
+        stopWatchdog()
         dropped.cancel()
         connection = nil
         failPending()
-        emit(.failed(reason))
+        let refusedNow = refused
+        emit(.failed(refusedNow ? HyperDeckResponse(code: 120, text: "").hint ?? reason : reason))
         guard !stopped else { return }
-        queue.asyncAfter(deadline: .now() + 2) { [weak self] in
+        // A deck at its client limit won't free up in two seconds: back off.
+        queue.asyncAfter(deadline: .now() + (refusedNow ? 10 : 2)) { [weak self] in
             guard let self, !self.stopped, self.connection == nil else { return }
             self.open()
         }
@@ -140,7 +203,7 @@ final class HyperDeckClient: @unchecked Sendable {
         for item in items {
             if let completion = item.completion {
                 let sentAt = item.sentAt
-                Self.onMain { completion(HyperDeckResponse(code: 120, text: "connection lost"), sentAt, now) }
+                Self.onMain { completion(HyperDeckResponse(code: Self.connectionLostCode, text: "connection lost"), sentAt, now) }
             }
         }
     }

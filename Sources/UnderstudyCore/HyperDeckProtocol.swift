@@ -15,6 +15,18 @@ public struct HyperDeckResponse: Equatable, Sendable {
     }
 
     public var isAsync: Bool { (500...599).contains(code) }
+
+    /// What to do about a failure, for the codes an operator can fix at the deck.
+    public var hint: String? {
+        switch code {
+        case 111: return "Remote control is disabled on the deck."
+        case 120: return "The deck refused the connection: it already has its maximum number of clients."
+        case 122: return "The deck wants a password. On the deck, set Ethernet protocol access to Enabled (not Enabled with security)."
+        case 150: return "The deck has no media to record or play."
+        case 213: return "The deck is rebooting; Understudy will reconnect."
+        default: return nil
+        }
+    }
     public var isError: Bool { (100...199).contains(code) }
     public var isSuccess: Bool { (200...299).contains(code) }
 }
@@ -72,9 +84,17 @@ public enum HyperDeckCommand {
     public static let stop = "stop"
     public static let playSingleClip = "play: single clip: true"
     public static let timecodeInputExternal = "configuration: timecode input: external"
+    /// Deck stamps recordings from its own clock, independent of LTC.
+    public static let timecodeInputInternal = "configuration: timecode input: internal"
+    public static let record = "record"
     public static let timecodeOutputClip = "configuration: timecode output: clip"
 
     public static func preview(_ enable: Bool) -> String { "preview: enable: \(enable)" }
+
+    /// Whether the deck's own timecode counts drop-frame (fractional rates only).
+    public static func timecodePreference(dropFrame: Bool) -> String {
+        "configuration: timecode preference: \(dropFrame ? "dropframe" : "nondropframe")"
+    }
 
     public static func recordTrigger(timecodeRun: Bool) -> String {
         "configuration: record trigger: \(timecodeRun ? "timecoderun" : "none")"
@@ -83,7 +103,7 @@ public enum HyperDeckCommand {
     public static func recordPrefix(_ name: String) -> String {
         let safe = name.unicodeScalars
             .map { CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_" ? Character($0) : "_" }
-        return "configuration: record prefix: \(String(safe).isEmpty ? "cam4prog" : String(safe))"
+        return "configuration: record prefix: \(String(safe).isEmpty ? "understudy" : String(safe))"
     }
 
     /// Go to clip `id`, offset `frame` frames from its start.
@@ -103,6 +123,8 @@ public struct TransportInfo: Equatable, Sendable {
     public var timecode: Timecode?
     public var videoFormat: String?
     public var inputVideoFormat: String?
+    /// The deck has reported its input format at least once (so a missing one means no signal).
+    public var reportsInput = false
     public var referenceLocked: Bool?
 
     public init() {}
@@ -113,8 +135,12 @@ public struct TransportInfo: Equatable, Sendable {
         if let c = fields["clip id"] { clipID = Int(c) }
         if let d = fields["display timecode"] { displayTimecode = Timecode(d) }
         if let t = fields["timecode"] { timecode = Timecode(t) }
-        if let v = fields["video format"], v != "none" { videoFormat = v }
-        if let v = fields["input video format"], v != "none" { inputVideoFormat = v }
+        // "none" means none: clear the old value rather than keep showing it.
+        if let v = fields["video format"] { videoFormat = v == "none" ? nil : v }
+        if let v = fields["input video format"] {
+            inputVideoFormat = v == "none" ? nil : v
+            reportsInput = true
+        }
         if let r = fields["reference locked"] { referenceLocked = r == "true" }
     }
 }
@@ -147,5 +173,30 @@ public struct DeckClip: Equatable, Sendable, Identifiable {
             guard codes.count >= 2 else { return nil }
             return DeckClip(id: id, start: codes[0], duration: codes[1], name: nameParts.joined(separator: " "))
         }
+    }
+}
+
+/// What a HyperDeck says about itself when a client connects:
+/// `500 connection info:` with `protocol version` and `model`, or `120 connection rejected`
+/// when it's already serving its maximum number of clients.
+public struct HyperDeckGreeting: Equatable, Sendable {
+    public var model: String?
+    public var protocolVersion: String?
+    /// The deck answered but refused another client (it's a HyperDeck, just busy).
+    public var busy: Bool
+
+    public init(model: String? = nil, protocolVersion: String? = nil, busy: Bool = false) {
+        self.model = model
+        self.protocolVersion = protocolVersion
+        self.busy = busy
+    }
+
+    /// Recognises a HyperDeck from the first response on port 9993, or nil if it isn't one.
+    public static func recognise(_ response: HyperDeckResponse) -> HyperDeckGreeting? {
+        if response.code == 500, response.text.lowercased().hasPrefix("connection info") {
+            return HyperDeckGreeting(model: response.fields["model"], protocolVersion: response.fields["protocol version"])
+        }
+        if response.code == 120 { return HyperDeckGreeting(busy: true) }
+        return nil
     }
 }

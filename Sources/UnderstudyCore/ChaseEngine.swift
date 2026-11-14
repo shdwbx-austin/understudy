@@ -31,6 +31,18 @@ public struct ChaseSettings: Codable, Equatable, Sendable {
     public var playGraceSeconds: Double = 0.75
 
     public init() {}
+
+    /// Missing fields fall back to defaults, so older saved settings keep loading.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = ChaseSettings()
+        prerollSeconds = (try? c.decodeIfPresent(Double.self, forKey: .prerollSeconds)) ?? d.prerollSeconds
+        cueSettleSeconds = (try? c.decodeIfPresent(Double.self, forKey: .cueSettleSeconds)) ?? d.cueSettleSeconds
+        toleranceFrames = (try? c.decodeIfPresent(Double.self, forKey: .toleranceFrames)) ?? d.toleranceFrames
+        driftStrikes = (try? c.decodeIfPresent(Int.self, forKey: .driftStrikes)) ?? d.driftStrikes
+        recueCooldownSeconds = (try? c.decodeIfPresent(Double.self, forKey: .recueCooldownSeconds)) ?? d.recueCooldownSeconds
+        playGraceSeconds = (try? c.decodeIfPresent(Double.self, forKey: .playGraceSeconds)) ?? d.playGraceSeconds
+    }
 }
 
 public enum ChasePhase: Equatable, Sendable {
@@ -38,7 +50,8 @@ public enum ChasePhase: Equatable, Sendable {
     case outOfRange
     case cueing(target: Int, since: Double)
     case armed(target: Int)
-    case playing(since: Double)
+    /// `segment` is the coverage entry being played, nil when coverage is unbounded.
+    case playing(since: Double, segment: Int?)
 
     public var label: String {
         switch self {
@@ -63,6 +76,9 @@ public struct DeckChaseState: Equatable, Sendable {
     public var strikes = 0
     public var lastCueTime = -Double.infinity
     public var lastErrorFrames: Double?
+    /// Drift re-locks in a row; each doubles the wait before the next cue (a persistent error,
+    /// e.g. a wrong deck timecode setting, must not re-cue every few seconds forever).
+    public var relocks = 0
 
     public init() {}
 }
@@ -70,15 +86,16 @@ public struct DeckChaseState: Equatable, Sendable {
 public struct DeckChaseInput: Sendable {
     /// Frames to fire `play` early to absorb the deck's start latency.
     public var startLatencyFrames: Double
-    /// LTC frames covered by the selected take on this deck. nil = unbounded.
-    public var range: ClosedRange<Double>?
+    /// Stretches of show code (LTC frames) recorded in the selected take, non-overlapping.
+    /// nil = unbounded.
+    public var coverage: [Range<Double>]?
     /// Fresh deck error since the last step (deck minus LTC, LTC frames), if any.
     public var observedError: Double?
     public var deckIsPlaying: Bool
 
-    public init(startLatencyFrames: Double, range: ClosedRange<Double>?, observedError: Double?, deckIsPlaying: Bool) {
+    public init(startLatencyFrames: Double, coverage: [Range<Double>]?, observedError: Double?, deckIsPlaying: Bool) {
         self.startLatencyFrames = startLatencyFrames
-        self.range = range
+        self.coverage = coverage
         self.observedError = observedError
         self.deckIsPlaying = deckIsPlaying
     }
@@ -94,6 +111,9 @@ public enum ChaseEngine {
         now: Double,
         settings: ChaseSettings
     ) -> [ChaseAction] {
+        func segment(at x: Double) -> Int? { input.coverage?.firstIndex { $0.contains(x) } }
+        func covered(_ x: Double) -> Bool { input.coverage == nil || segment(at: x) != nil }
+
         guard ltc.rolling, let pos = ltc.position else {
             switch s.phase {
             case .idle:
@@ -117,12 +137,13 @@ public enum ChaseEngine {
         switch s.phase {
         case .idle, .outOfRange:
             let target = Int(pos.rounded(.down) + (settings.prerollSeconds * ltc.fps).rounded())
-            if let range = input.range, !range.contains(Double(target)) {
+            if !covered(Double(target)) {
                 let wasOut = s.phase == .outOfRange
                 s.phase = .outOfRange
                 return (!wasOut && input.deckIsPlaying) ? [.stop] : []
             }
-            guard now - s.lastCueTime >= settings.recueCooldownSeconds else { return [] }
+            let cooldown = settings.recueCooldownSeconds * pow(2, Double(min(s.relocks, 4)))
+            guard now - s.lastCueTime >= cooldown else { return [] }
             s.phase = .cueing(target: target, since: now)
             s.lastCueTime = now
             s.strikes = 0
@@ -146,20 +167,32 @@ public enum ChaseEngine {
                 s.phase = .idle
                 return []
             }
-            s.phase = .playing(since: now)
+            s.phase = .playing(since: now, segment: segment(at: Double(target)))
             return [.play]
 
-        case let .playing(since):
-            if let range = input.range, pos > range.upperBound {
-                s.phase = .outOfRange
-                return [.stop]
+        case let .playing(since, index):
+            if let coverage = input.coverage {
+                // Ran past the end of the recorded stretch being played.
+                let ranOff = index.map { !coverage.indices.contains($0) || pos >= coverage[$0].upperBound } ?? true
+                if ranOff {
+                    if covered(pos) {
+                        // Show code continues into a different recorded stretch: park there.
+                        s.phase = .idle
+                        s.strikes = 0
+                        return []
+                    }
+                    s.phase = .outOfRange
+                    return [.stop]
+                }
             }
             guard let error = input.observedError, now - since >= settings.playGraceSeconds else { return [] }
             s.lastErrorFrames = error
             s.strikes = abs(error) > settings.toleranceFrames ? s.strikes + 1 : 0
+            if s.strikes == 0, now - since > 10 { s.relocks = 0 }   // holding fine: forgive past re-locks
             if s.strikes >= settings.driftStrikes {
                 s.phase = .idle
                 s.strikes = 0
+                s.relocks += 1
             }
             return []
         }

@@ -185,9 +185,16 @@ public enum LTCEncoder {
 }
 
 /// Turns decoded LTC frames into a continuously readable show clock.
+///
+/// When frames stop arriving the clock keeps counting (freewheels) for `freewheel` seconds, so a
+/// brief LTC dropout doesn't stop recording logs or playback. A held (repeating) frame still stops
+/// it at once, since that's how most generators signal a deliberate stop.
 public struct LTCClock: Sendable {
     public var rate: FrameRate
-    public var dropoutTimeout: Double = 0.25
+    /// LTC is considered present if a frame arrived within this time.
+    public var signalTimeout: Double = 0.25
+    /// How long to keep counting after the last frame. Values below `signalTimeout` mean no freewheel.
+    public var freewheel: Double = 2.0
     public private(set) var lastTimecode: Timecode?
     public private(set) var lastDropFrameFlag = false
 
@@ -195,20 +202,41 @@ public struct LTCClock: Sendable {
     private var anchorTime: Double = 0
     private var stationary = false
     private var pendingJump = false
+    /// A frame that disagreed with the running code, waiting for the next to confirm it.
+    private var jumpCandidate: (frame: Int, time: Double)?
 
-    public init(rate: FrameRate) { self.rate = rate }
+    public init(rate: FrameRate, freewheel: Double = 2.0) {
+        self.rate = rate
+        self.freewheel = freewheel
+    }
+
+    private var rollWindow: Double { max(signalTimeout, freewheel) }
 
     /// - Parameters:
     ///   - timecode: the decoded frame label.
     ///   - boundaryTime: host time (seconds) at which that frame ended.
     public mutating func ingest(_ timecode: Timecode, dropFrameFlag: Bool, boundaryTime: Double) {
         let next = timecode.frameIndex(at: rate) + 1
-        if let anchor = anchorFrame, boundaryTime - anchorTime < dropoutTimeout {
-            stationary = next == anchor
+        if let anchor = anchorFrame, boundaryTime - anchorTime < rollWindow {
             let expected = Double(anchor) + (boundaryTime - anchorTime) * rate.exact
-            if !stationary && abs(Double(next) - expected) > 2.5 { pendingJump = true }
+            if next != anchor, abs(Double(next) - expected) > 2.5 {
+                // A jump, or one corrupt frame. Only a second frame continuing from it makes it real;
+                // until then keep counting from the old code.
+                if let c = jumpCandidate,
+                   abs(Double(next) - (Double(c.frame) + (boundaryTime - c.time) * rate.exact)) <= 2.5 {
+                    pendingJump = true
+                    jumpCandidate = nil
+                } else {
+                    jumpCandidate = (next, boundaryTime)
+                    return
+                }
+            } else {
+                jumpCandidate = nil
+            }
+            stationary = next == anchor
         } else {
             stationary = false
+            jumpCandidate = nil
         }
         anchorFrame = next
         anchorTime = boundaryTime
@@ -217,7 +245,12 @@ public struct LTCClock: Sendable {
     }
 
     public func isRolling(at now: Double) -> Bool {
-        anchorFrame != nil && !stationary && now - anchorTime < dropoutTimeout
+        anchorFrame != nil && !stationary && now - anchorTime < rollWindow
+    }
+
+    /// Rolling on the clock's own count because LTC has gone missing.
+    public func isFreewheeling(at now: Double) -> Bool {
+        isRolling(at: now) && now - anchorTime >= signalTimeout
     }
 
     /// Fractional LTC frame index at `now`, or nil when code is not rolling.

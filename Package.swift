@@ -2,17 +2,17 @@
 import PackageDescription
 
 let package = Package(
-    name: "cam4prog",
+    name: "understudy",
     platforms: [.macOS(.v13)],
     products: [
-        .executable(name: "Cam4Prog", targets: ["Cam4Prog"]),
-        .library(name: "Cam4ProgCore", targets: ["Cam4ProgCore"]),
+        .executable(name: "Understudy", targets: ["Understudy"]),
+        .library(name: "UnderstudyCore", targets: ["UnderstudyCore"]),
     ],
     targets: [
         // Pure logic: timecode math, LTC decode/encode, HyperDeck protocol, chase engine. Foundation only.
-        .target(name: "Cam4ProgCore"),
+        .target(name: "UnderstudyCore"),
         // macOS app: SwiftUI, Core Audio LTC input, Network.framework deck control.
-        .executableTarget(name: "Cam4Prog", dependencies: ["Cam4ProgCore"]),
-        .testTarget(name: "Cam4ProgCoreTests", dependencies: ["Cam4ProgCore"]),
+        .executableTarget(name: "Understudy", dependencies: ["UnderstudyCore"]),
+        .testTarget(name: "UnderstudyCoreTests", dependencies: ["UnderstudyCore"]),
     ]
 )
