@@ -79,6 +79,8 @@ On the Mac itself: System Settings › Energy › *Start up automatically after 
 
 ## Signal flow
 
+What to buy for three or four records at 2160p59.94 is in [docs/HARDWARE.md](docs/HARDWARE.md).
+
 ```
 ME n ─SDI─▶ HyperDeck n SDI IN        HyperDeck n SDI OUT ─SDI─▶ disguise capture n
 Show LTC ─DA─▶ Mac audio input  (+ HyperDeck TC IN, only needed for "record only while code runs")
