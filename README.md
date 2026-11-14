@@ -30,6 +30,14 @@ Maps live in `~/Library/Application Support/Understudy/takemaps/`. The map in pr
 
 If you'd rather have the decks record only while code runs and stamp clips with show code (v0.1.0 behaviour), choose **Settings › Recording › Only while show timecode runs**. A dropout then stops the recording. Takes without a map are played back from their clip timecode, so recordings made that way, or with 0.1.0, still work.
 
+### Separate show and playback timecode inputs
+
+To review against a local timecode source without repatching, turn on **Settings › Timecode input › Use a separate input for Play to code** and pick its device and channel. Stop and Record read **Show timecode**; Play to code reads **Playback timecode**. The header and footer say which is in use.
+
+- Both inputs can be channels on one interface (the switch is instant) or on two interfaces (the input reopens).
+- The playback source must carry the **same timecode values** as the show (e.g. a local playback of the show's timecode track), because takes are mapped against show code.
+- Each input's rate is measured afresh when it's switched in, so chasing starts about 2 seconds after entering Play.
+
 ### Timecode rate is detected automatically
 
 Understudy works out the show timecode rate from the incoming LTC and follows it, including drop-frame. It can tell 23.976 from 24 and 29.97 from 30, timing frames on the audio sample clock, within about 2 seconds of code. The header shows **AUTO 29.97 DF** (or whatever it found) and the measured rate.

@@ -152,6 +152,8 @@ struct SettingsTests {
         #expect(s.keepAwake == true)
         #expect(s.resumeLastMode == false)
         #expect(s.ltcRateAuto == true)
+        #expect(s.separatePlaybackInput == false)
+        #expect(s.audioChannel == 2)
     }
 
     @Test func repairsWrongDeckCount() throws {

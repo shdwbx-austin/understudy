@@ -45,8 +45,13 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var ltcRate: FrameRate = .fps29_97DF
     /// Work the rate out from incoming LTC.
     public var ltcRateAuto = true
+    /// Show timecode input: used in Stop and Record (and in Play unless a playback input is set).
     public var audioDeviceUID: String?
     public var audioChannel: Int = 0
+    /// Take LTC for Play to code from its own input (a local review source), so nothing is repatched.
+    public var separatePlaybackInput = false
+    public var playbackAudioDeviceUID: String?
+    public var playbackAudioChannel: Int = 1
     public var chase = ChaseSettings()
     public var followLatestTake = true
     /// HyperDeck timecode labels count at the video rate (e.g. 0–59 at 59.94). Turn off if your decks count at LTC rate.
@@ -75,6 +80,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
         ltcRateAuto = (try? c.decodeIfPresent(Bool.self, forKey: .ltcRateAuto)) ?? d.ltcRateAuto
         audioDeviceUID = (try? c.decodeIfPresent(String.self, forKey: .audioDeviceUID)) ?? d.audioDeviceUID
         audioChannel = (try? c.decodeIfPresent(Int.self, forKey: .audioChannel)) ?? d.audioChannel
+        separatePlaybackInput = (try? c.decodeIfPresent(Bool.self, forKey: .separatePlaybackInput)) ?? d.separatePlaybackInput
+        playbackAudioDeviceUID = (try? c.decodeIfPresent(String.self, forKey: .playbackAudioDeviceUID)) ?? d.playbackAudioDeviceUID
+        playbackAudioChannel = (try? c.decodeIfPresent(Int.self, forKey: .playbackAudioChannel)) ?? d.playbackAudioChannel
         chase = (try? c.decodeIfPresent(ChaseSettings.self, forKey: .chase)) ?? d.chase
         followLatestTake = (try? c.decodeIfPresent(Bool.self, forKey: .followLatestTake)) ?? d.followLatestTake
         deckTimecodeAtVideoRate = (try? c.decodeIfPresent(Bool.self, forKey: .deckTimecodeAtVideoRate)) ?? d.deckTimecodeAtVideoRate

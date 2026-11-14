@@ -83,6 +83,10 @@ private struct Header: View {
                         Text(clockState).foregroundStyle(clockColor)
                     }
                     .animation(.easeInOut(duration: 0.25), value: clockState)
+                    if model.settings.separatePlaybackInput {
+                        Text(model.inputRole == .playback ? "PLAYBACK CODE" : "SHOW CODE")
+                            .foregroundStyle(model.inputRole == .playback ? Theme.amber : Theme.paper)
+                    }
                     Text(model.rateLabel)
                     Text(model.ltcInfo).foregroundStyle(Theme.grey)
                 }
@@ -414,11 +418,12 @@ private struct Footer: View {
                 if let error = model.audioError {
                     Text(error).foregroundStyle(Theme.amber)
                 } else {
-                    let name = model.audioDevices.first { $0.uid == model.settings.audioDeviceUID }?.name ?? "System default input"
-                    let channel = model.settings.audioChannel
+                    let name = model.activeInputName
+                    let channel = model.activeChannel
                     let channelName = model.inputChannelNames.indices.contains(channel) ? model.inputChannelNames[channel] : ""
                     let db = model.inputLevels.indices.contains(channel) ? model.inputLevels[channel] : -60
-                    Label8(text: "LTC in")
+                    Label8(text: model.settings.separatePlaybackInput
+                           ? (model.inputRole == .playback ? "Playback LTC" : "Show LTC") : "LTC in")
                     Text("\(name) · Ch \(channel + 1)\(channelName.isEmpty ? "" : " \(channelName)")")
                         .foregroundStyle(Theme.grey)
                     LevelMeter(db: db).frame(width: 140)

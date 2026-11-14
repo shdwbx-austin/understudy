@@ -62,6 +62,8 @@ final class AppModel: ObservableObject {
     private var lastInfoUpdate = 0.0
     private var takeRefreshScheduled = false
     private var lastAudioRestart = -Double.infinity
+    /// The device and channel the audio input is reading now.
+    private var openInput: (uid: String?, channel: Int)?
 
     init() {
         let loaded = AppSettings.load()
@@ -137,6 +139,7 @@ final class AppModel: ObservableObject {
         // Never copy files off the decks while they record.
         if newMode == .record, backup.isRunning { backup.cancel() }
         mode = newMode
+        syncInput()
         UserDefaults.standard.set(newMode.rawValue, forKey: Self.lastModeKey)
         if newMode != resumedMode { resumedMode = nil }
         let active = activeDecks
@@ -334,13 +337,70 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: LTC inputs
+
+    enum InputRole { case show, playback }
+
+    /// Play to code reads the playback input when one is set; everything else reads show timecode.
+    var inputRole: InputRole {
+        mode == .playback && settings.separatePlaybackInput ? .playback : .show
+    }
+
+    private func wantedInput() -> (uid: String?, channel: Int) {
+        inputRole == .playback
+            ? (settings.playbackAudioDeviceUID, settings.playbackAudioChannel)
+            : (settings.audioDeviceUID, settings.audioChannel)
+    }
+
+    var activeInputName: String {
+        let uid = wantedInput().uid
+        return audioDevices.first { $0.uid == uid }?.name ?? "System default input"
+    }
+
+    var activeChannel: Int { wantedInput().channel }
+
+    /// Channel names for a device: live from the open input, otherwise from Core Audio.
+    func channelNames(forDeviceUID uid: String?) -> [String] {
+        if let open = openInput, open.uid == uid, !inputChannelNames.isEmpty { return inputChannelNames }
+        let device = audioDevices.first { $0.uid == uid }
+        guard let id = device?.id ?? AudioDeviceCatalog.defaultInputDeviceID() else { return [] }
+        let count = device?.channels ?? audioDevices.first { $0.id == id }?.channels ?? 0
+        return count > 0 ? AudioDeviceCatalog.inputChannelNames(id, count: count) : []
+    }
+
+    /// Whether `uid` is the device being metered now.
+    func isOpen(_ uid: String?) -> Bool { openInput?.uid == uid }
+
+    /// Points the audio input at the right device and channel for the current mode. Same device:
+    /// a live channel switch. Different device: the input is reopened. Either way it's a new
+    /// signal, so the clock and rate detection start fresh.
+    private func syncInput() {
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return }
+        let wanted = wantedInput()
+        guard let open = openInput else { openAudio(); return }
+        if wanted.uid != open.uid {
+            openAudio()
+        } else if wanted.channel != open.channel {
+            audio.setChannel(wanted.channel)
+            openInput = wanted
+            restartTimecode()
+        }
+    }
+
+    private func restartTimecode() {
+        rateDetector = LTCRateDetector()
+        clock = LTCClock(rate: ltcRate, freewheel: settings.freewheelSeconds)
+        decks.forEach { $0.resetChase() }
+    }
+
     private func openAudio() {
-        let device = audioDevices.first { $0.uid == settings.audioDeviceUID }
+        let wanted = wantedInput()
+        let device = audioDevices.first { $0.uid == wanted.uid }
         do {
-            rateDetector = LTCRateDetector()
+            restartTimecode()
             try audio.start(
                 deviceID: device?.id,
-                channel: settings.audioChannel,
+                channel: wanted.channel,
                 onFrame: { [weak self] event in
                     // The main queue keeps frames in order; separate Tasks don't guarantee that.
                     DispatchQueue.main.async { [self] in MainActor.assumeIsolated { self?.ingest(event) } }
@@ -358,9 +418,10 @@ final class AppModel: ObservableObject {
         inputChannelNames = deviceID.map { AudioDeviceCatalog.inputChannelNames($0, count: count) }
             ?? Array(repeating: "", count: count)
         inputLevels = Array(repeating: -60, count: count)
+        openInput = audio.isRunning ? wanted : nil
         // The chosen channel doesn't exist on this device: fall back to its first channel.
-        if count > 0, settings.audioChannel >= count {
-            settings.audioChannel = 0
+        if count > 0, wanted.channel >= count {
+            if inputRole == .playback { settings.playbackAudioChannel = 0 } else { settings.audioChannel = 0 }
         }
     }
 
@@ -416,12 +477,11 @@ final class AppModel: ObservableObject {
         if settings.recordMode != old.recordMode {
             decks.forEach { $0.buildsTakeMaps = settings.recordMode == .continuous }
         }
-        if settings.audioDeviceUID != old.audioDeviceUID {
-            openAudio()
-        } else if settings.audioChannel != old.audioChannel {
-            // Same device: just read a different channel. A new signal, so measure its rate afresh.
-            audio.setChannel(settings.audioChannel)
-            rateDetector = LTCRateDetector()
+        if settings.audioDeviceUID != old.audioDeviceUID || settings.audioChannel != old.audioChannel
+            || settings.separatePlaybackInput != old.separatePlaybackInput
+            || settings.playbackAudioDeviceUID != old.playbackAudioDeviceUID
+            || settings.playbackAudioChannel != old.playbackAudioChannel {
+            syncInput()
         }
         if settings.chase != old.chase || settings.deckTimecodeAtVideoRate != old.deckTimecodeAtVideoRate {
             decks.forEach { $0.resetChase() }

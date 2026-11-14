@@ -21,28 +21,23 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("LTC input") {
-                Picker("Audio device", selection: $model.settings.audioDeviceUID) {
-                    Text("System default").tag(String?.none)
-                    ForEach(model.audioDevices) { device in
-                        Text("\(device.name) (\(device.channels) ch)").tag(Optional(device.uid))
-                    }
-                }
-                if model.inputChannelNames.isEmpty {
-                    Text("No input open.").foregroundStyle(.secondary)
-                } else {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("LTC channel — click to choose").font(.caption).foregroundStyle(.secondary)
-                        ForEach(model.inputChannelNames.indices, id: \.self) { index in
-                            ChannelRow(
-                                index: index,
-                                name: model.inputChannelNames[index],
-                                db: model.inputLevels.indices.contains(index) ? model.inputLevels[index] : -60,
-                                selected: index == model.settings.audioChannel,
-                                ltc: index == model.settings.audioChannel && model.ltcInfo != "NO LTC"
-                            ) { model.settings.audioChannel = index }
-                        }
-                    }
+            Section("Timecode input") {
+                LTCInputPicker(
+                    title: "Show timecode",
+                    detail: model.settings.separatePlaybackInput ? "Used in Stop and Record." : "Used in every mode.",
+                    deviceUID: $model.settings.audioDeviceUID,
+                    channel: $model.settings.audioChannel,
+                    inUse: model.inputRole == .show
+                )
+                Toggle("Use a separate input for Play to code", isOn: $model.settings.separatePlaybackInput)
+                if model.settings.separatePlaybackInput {
+                    LTCInputPicker(
+                        title: "Playback timecode",
+                        detail: "Used in Play to code, e.g. a local review source. It must carry the same timecode as the show, so takes line up.",
+                        deviceUID: $model.settings.playbackAudioDeviceUID,
+                        channel: $model.settings.playbackAudioChannel,
+                        inUse: model.inputRole == .playback
+                    )
                 }
                 Picker("Show timecode rate", selection: rateChoice) {
                     Text("Auto-detect").tag("auto")
@@ -52,7 +47,7 @@ struct SettingsView: View {
                     }
                 }
                 Text(model.settings.ltcRateAuto
-                     ? "Understudy measures the incoming LTC (\(model.rateLabel.replacingOccurrences(of: "AUTO", with: "now").trimmingCharacters(in: .whitespaces))) and follows it, including drop-frame. Recording logs and playback wait the first couple of seconds of code until the rate is known."
+                     ? "Understudy measures the incoming LTC (\(model.rateLabel.hasSuffix("DETECTING") ? "waiting for code" : "now " + model.ltcRate.rawValue)) and follows it, including drop-frame. Recording logs and playback wait the first couple of seconds of code until the rate is known. Each input is measured afresh when it's switched in."
                      : "Fixed rate. The header warns if incoming LTC doesn't match.")
                     .font(.caption).foregroundStyle(.secondary)
                 Button("Rescan devices") { model.refreshAudioDevices() }
@@ -162,5 +157,52 @@ private struct ShowMachineAgent: View {
             }
         }
         .onAppear { machine.refresh() }
+    }
+}
+
+/// One LTC source: device, then its channels (with live meters when it's the device open now).
+private struct LTCInputPicker: View {
+    @EnvironmentObject private var model: AppModel
+    let title: String
+    let detail: String
+    @Binding var deviceUID: String?
+    @Binding var channel: Int
+    let inUse: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(title).font(Theme.grotesk(14, .medium))
+                if inUse {
+                    Text("IN USE").font(Theme.mono(9, bold: true)).tracking(1.2).foregroundStyle(Theme.lock)
+                }
+                Spacer()
+            }
+            Text(detail).font(.caption).foregroundStyle(.secondary)
+            Picker("Audio device", selection: $deviceUID) {
+                Text("System default").tag(String?.none)
+                ForEach(model.audioDevices) { device in
+                    Text("\(device.name) (\(device.channels) ch)").tag(Optional(device.uid))
+                }
+            }
+            let names = model.channelNames(forDeviceUID: deviceUID)
+            let live = model.isOpen(deviceUID)
+            if names.isEmpty {
+                Text("No channels on this device.").foregroundStyle(.secondary)
+            } else {
+                Text(live ? "Channel — click to choose" : "Channel — click to choose (meters show for the device in use)")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(names.indices, id: \.self) { index in
+                    ChannelRow(
+                        index: index,
+                        name: names[index],
+                        db: live && model.inputLevels.indices.contains(index) ? model.inputLevels[index] : -60,
+                        selected: index == channel,
+                        ltc: inUse && index == channel && model.ltcInfo != "NO LTC"
+                    ) { channel = index }
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
