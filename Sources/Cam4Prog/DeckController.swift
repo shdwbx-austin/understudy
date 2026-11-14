@@ -4,6 +4,7 @@ import Cam4ProgCore
 @MainActor
 final class DeckController: ObservableObject, Identifiable {
     let id: Int
+    let maps: TakeMapStore
 
     @Published private(set) var connection: HyperDeckClient.State = .disconnected
     @Published private(set) var model: String?
@@ -13,18 +14,34 @@ final class DeckController: ObservableObject, Identifiable {
     @Published var chase = DeckChaseState()
     /// Smoothed deck-minus-LTC error in LTC frames (positive = deck ahead).
     @Published var smoothedError: Double?
+    /// Seconds of show code logged against the recording in progress.
+    @Published private(set) var loggedSeconds: Double?
 
     /// Called when a recording on this deck ends (status left `record`).
     var onRecordingFinished: (() -> Void)?
+    /// Called after connecting, once the deck's transport state is known.
+    var onReady: (() -> Void)?
+    /// Called after every clip list refresh.
+    var onClipsRefreshed: (() -> Void)?
+    /// Log show code against recordings (continuous record mode).
+    var buildsTakeMaps = false
 
     private var client: HyperDeckClient?
     private var pollInFlight = false
     /// Newest drift reading not yet consumed by the chase engine.
     private var freshError: Double?
+    private var mapBuilder: TakeMapBuilder?
+    private var lastMapSave = 0.0
+    /// A real transport status has been seen since launch.
+    private var sawStatus = false
 
-    init(id: Int) { self.id = id }
+    init(id: Int) {
+        self.id = id
+        maps = TakeMapStore(deckID: id)
+    }
 
     var isConnected: Bool { connection == .connected }
+    var isLoggingTake: Bool { mapBuilder != nil }
 
     // MARK: Connection
 
@@ -66,18 +83,32 @@ final class DeckController: ObservableObject, Identifiable {
         lastError = nil
         send(HyperDeckCommand.remoteOverride)
         send(HyperDeckCommand.notify)
-        refreshTransport()
+        refreshTransport { [weak self] in self?.onReady?() }
         refreshClips()
     }
 
     private func handleAsync(_ response: HyperDeckResponse) {
         if response.code == 500, let m = response.fields["model"] { model = m }
-        let wasRecording = transport.status == .record
         if response.fields["status"] != nil || response.fields["display timecode"] != nil {
-            transport.merge(response.fields)
+            mergeTransport(response.fields)
         }
-        if wasRecording && transport.status != .record {
-            onRecordingFinished?()
+    }
+
+    /// Every transport update goes through here so record start/stop is never missed,
+    /// including across reconnects and app restarts.
+    private func mergeTransport(_ fields: [String: String]) {
+        let wasRecording = transport.status == .record
+        transport.merge(fields)
+        guard transport.status != .unknown else { return }
+        let isRecording = transport.status == .record
+        let firstStatus = !sawStatus
+        sawStatus = true
+        if isRecording {
+            // Keep a live builder through a reconnect; otherwise start (or resume) one.
+            if mapBuilder == nil && (!wasRecording || firstStatus) { recordingStarted() }
+        } else if wasRecording || mapBuilder != nil || (firstStatus && maps.contents.inProgress != nil) {
+            // Stopped, possibly while we were disconnected or not running.
+            recordingFinished()
         }
     }
 
@@ -90,30 +121,44 @@ final class DeckController: ObservableObject, Identifiable {
         }
     }
 
-    func refreshTransport() {
+    func refreshTransport(_ done: (() -> Void)? = nil) {
         client?.send(HyperDeckCommand.transportInfo) { [weak self] response, _, _ in
-            if response.isSuccess { self?.transport.merge(response.fields) }
+            if response.isSuccess { self?.mergeTransport(response.fields) }
+            done?()
         }
     }
 
     func refreshClips(_ done: (() -> Void)? = nil) {
         client?.send(HyperDeckCommand.clipsGet) { [weak self] response, _, _ in
-            if response.isSuccess { self?.clips = DeckClip.parse(response) }
+            if response.isSuccess, let self {
+                self.clips = DeckClip.parse(response)
+                self.onClipsRefreshed?()
+            }
             done?()
         }
     }
 
-    /// REC ARM: park in preview (live input passes through) and record whenever show code runs.
-    func arm(prefix: String, nativeTrigger: Bool) {
+    /// REC. Continuous: start recording now, stamped from the deck's own clock, and keep going
+    /// until STOP whatever LTC does. Timecode run: arm the deck's trigger so it records while
+    /// show code runs. Either way the deck stays in preview, so the live input passes through.
+    func arm(prefix: String, mode: RecordMode, dropFrame: Bool) {
         resetChase()
         send(HyperDeckCommand.stop)
-        send(HyperDeckCommand.timecodeInputExternal)
         send(HyperDeckCommand.recordPrefix(prefix))
-        send(HyperDeckCommand.recordTrigger(timecodeRun: nativeTrigger))
-        send(HyperDeckCommand.preview(true))
+        switch mode {
+        case .continuous:
+            send(HyperDeckCommand.recordTrigger(timecodeRun: false))
+            send(HyperDeckCommand.timecodeInputInternal)
+            // The deck's clock must count the same way as show code (cam4prog reads both with the show rate's drop-frame setting).
+            send(HyperDeckCommand.timecodePreference(dropFrame: dropFrame))
+            send(HyperDeckCommand.preview(true))
+            send(HyperDeckCommand.record)
+        case .timecodeRun:
+            send(HyperDeckCommand.timecodeInputExternal)
+            send(HyperDeckCommand.recordTrigger(timecodeRun: true))
+            send(HyperDeckCommand.preview(true))
+        }
     }
-
-    func record() { send("record") }
 
     /// STOP: halt transport, disarm, leave the deck in preview so the live feed passes through.
     func stopAll() {
@@ -152,7 +197,40 @@ final class DeckController: ObservableObject, Identifiable {
         smoothedError = nil
     }
 
-    // MARK: Drift monitoring
+    // MARK: Take maps
+
+    private func recordingStarted() {
+        // A saved in-progress map means the app restarted mid-take: carry on with it.
+        let resume = maps.contents.inProgress
+        guard buildsTakeMaps || resume != nil else { return }
+        if resume == nil { maps.startRecording(existingClips: clips) }
+        mapBuilder = TakeMapBuilder(resuming: resume)
+        loggedSeconds = nil
+    }
+
+    private func recordingFinished() {
+        if mapBuilder != nil || maps.contents.inProgress != nil {
+            maps.finishRecording(mapBuilder?.map)
+        }
+        mapBuilder = nil
+        loggedSeconds = nil
+        onRecordingFinished?()
+    }
+
+    /// One reading while recording: show code and the deck's own timecode at the same instant.
+    func logTakeReading(ltcSeconds: Double, deckSeconds: Double, now: Double) {
+        guard var builder = mapBuilder else { return }
+        builder.add(ltc: ltcSeconds, deck: deckSeconds)
+        mapBuilder = builder
+        if now - lastMapSave >= 5 {
+            lastMapSave = now
+            let map = builder.map
+            maps.saveInProgress(map)
+            loggedSeconds = map.segments.reduce(0) { $0 + ($1.ltcEnd - $1.ltcStart) }
+        }
+    }
+
+    // MARK: Polling
 
     /// Polls transport and hands back the deck timecode with the host time it was valid at.
     func poll(_ result: @escaping (Timecode, Double) -> Void) {
@@ -162,7 +240,7 @@ final class DeckController: ObservableObject, Identifiable {
             guard let self else { return }
             self.pollInFlight = false
             guard response.isSuccess else { return }
-            self.transport.merge(response.fields)
+            self.mergeTransport(response.fields)
             if let tc = self.transport.displayTimecode {
                 result(tc, (sentAt + receivedAt) / 2)
             }

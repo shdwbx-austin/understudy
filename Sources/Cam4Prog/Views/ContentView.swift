@@ -47,10 +47,11 @@ private struct Header: View {
                 Text(model.ltcText)
                     .font(Theme.mono(46, bold: true))
                     .monospacedDigit()
-                    .foregroundStyle(model.ltcRolling ? Theme.paper : Theme.dim)
+                    .foregroundStyle(model.ltcRolling ? (model.ltcFreewheeling ? Theme.caution : Theme.paper) : Theme.dim)
                 HStack(spacing: 8) {
-                    StatusDot(color: model.ltcRolling ? Theme.live : Theme.dim)
-                    Text(model.ltcRolling ? "ROLLING" : "STOPPED")
+                    StatusDot(color: clockColor)
+                    Text(clockState)
+                        .foregroundStyle(model.ltcFreewheeling ? Theme.caution : Theme.paper)
                     Text("·").foregroundStyle(Theme.dim)
                     Text(model.ltcInfo)
                     Text("·").foregroundStyle(Theme.dim)
@@ -65,15 +66,29 @@ private struct Header: View {
     }
 }
 
+extension Header {
+    private var clockState: String {
+        if !model.ltcRolling { return "STOPPED" }
+        return model.ltcFreewheeling ? "FREEWHEEL · NO LTC" : "ROLLING"
+    }
+
+    private var clockColor: Color {
+        if !model.ltcRolling { return Theme.dim }
+        return model.ltcFreewheeling ? Theme.caution : Theme.live
+    }
+}
+
 private struct ModeBar: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
+        let continuous = model.settings.recordMode == .continuous
         HStack(spacing: 12) {
             ModeButton(title: "STOP", detail: "Decks idle · live feed passes through", key: "⌘1",
                        tint: Theme.paper, active: model.mode == .stop) { model.setMode(.stop) }
-            ModeButton(title: "REC ARM", detail: "Decks record whenever show code runs", key: "⌘2",
-                       tint: Theme.record, active: model.mode == .record) { model.setMode(.record) }
+            ModeButton(title: continuous ? "REC" : "REC ARM",
+                       detail: continuous ? "Decks record until STOP · show code is logged" : "Decks record whenever show code runs",
+                       key: "⌘2", tint: Theme.record, active: model.mode == .record) { model.setMode(.record) }
             ModeButton(title: "PLAY TC", detail: "Decks chase show LTC from the selected take", key: "⌘3",
                        tint: Theme.live, active: model.mode == .playback) { model.setMode(.playback) }
         }
@@ -137,7 +152,13 @@ private struct TakeBar: View {
 
     private func label(for take: Take) -> String {
         let latest = take.offset == 0 ? "LATEST · " : ""
-        return "\(latest)#\(take.clipID)  \(take.start.description)  +\(take.duration.description)  \(take.name)"
+        let sync: String
+        switch take.logged {
+        case true?: sync = "SHOW CODE LOGGED"
+        case false?: sync = "NO SHOW CODE LOGGED"
+        case nil: sync = "CLIP TC"
+        }
+        return "\(latest)#\(take.clipID)  +\(take.duration.description)  \(take.name)  · \(sync)"
     }
 }
 

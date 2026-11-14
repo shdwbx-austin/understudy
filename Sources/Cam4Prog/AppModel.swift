@@ -9,6 +9,8 @@ struct Take: Identifiable, Hashable {
     let start: Timecode
     let duration: Timecode
     let name: String
+    /// nil: no map, played from clip timecode. Otherwise whether any show code was logged.
+    let logged: Bool?
     var id: Int { offset }
 }
 
@@ -28,6 +30,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var mode: Mode = .stop
     @Published private(set) var ltcText = "--:--:--:--"
     @Published private(set) var ltcRolling = false
+    @Published private(set) var ltcFreewheeling = false
     @Published private(set) var ltcInfo = "NO LTC"
     @Published private(set) var ltcWarning: String?
     @Published private(set) var audioDevices: [AudioInputDevice] = []
@@ -46,17 +49,24 @@ final class AppModel: ObservableObject {
     private var lastInfoUpdate = 0.0
     private var detectedFPS: Double?
     private var detectedDF = false
-    private var appRecordRolling = false
-    private var appRecordStopAt: Double?
     private var takeRefreshScheduled = false
 
     init() {
         let loaded = AppSettings.load()
         settings = loaded
-        clock = LTCClock(rate: loaded.ltcRate)
+        clock = LTCClock(rate: loaded.ltcRate, freewheel: loaded.freewheelSeconds)
         decks = loaded.decks.map { DeckController(id: $0.id) }
         for deck in decks {
+            deck.buildsTakeMaps = loaded.recordMode == .continuous
             deck.onRecordingFinished = { [weak self] in self?.scheduleTakeRefresh() }
+            deck.onClipsRefreshed = { [weak self, weak deck] in
+                guard let self, let deck else { return }
+                self.fileTakeMaps(deck)
+            }
+            deck.onReady = { [weak self, weak deck] in
+                guard let self, let deck else { return }
+                self.deckReady(deck)
+            }
         }
         for config in loaded.decks where config.enabled {
             decks[config.id].connect(host: config.host)
@@ -79,17 +89,13 @@ final class AppModel: ObservableObject {
 
     func setMode(_ newMode: Mode) {
         mode = newMode
-        appRecordRolling = false
-        appRecordStopAt = nil
         let active = activeDecks
         switch newMode {
         case .stop:
             active.forEach { $0.stopAll() }
             scheduleTakeRefresh()
         case .record:
-            for deck in active {
-                deck.arm(prefix: settings.decks[deck.id].name, nativeTrigger: settings.nativeRecordTrigger)
-            }
+            active.forEach { arm($0) }
         case .playback:
             guard !active.isEmpty else {
                 rebuildTakes()
@@ -102,6 +108,24 @@ final class AppModel: ObservableObject {
                     if remaining == 0 { self?.rebuildTakes() }
                 }
             }
+        }
+    }
+
+    private func arm(_ deck: DeckController) {
+        deck.arm(prefix: settings.decks[deck.id].name, mode: settings.recordMode, dropFrame: settings.ltcRate.isDropFrame)
+    }
+
+    /// A deck (re)connected: bring it into the current mode. A deck that's already recording is
+    /// left alone, so a network blip mid-take doesn't restart the recording.
+    private func deckReady(_ deck: DeckController) {
+        guard settings.decks[deck.id].enabled else { return }
+        switch mode {
+        case .stop:
+            break
+        case .record:
+            if deck.transport.status != .record { arm(deck) }
+        case .playback:
+            deck.enterPlayback { [weak self] in self?.rebuildTakes() }
         }
     }
 
@@ -155,11 +179,37 @@ final class AppModel: ObservableObject {
             return
         }
         takes = reference.clips.reversed().enumerated().map { offset, clip in
-            Take(offset: offset, clipID: clip.id, start: clip.start, duration: clip.duration, name: clip.name)
+            Take(offset: offset, clipID: clip.id, start: clip.start, duration: clip.duration,
+                 name: clip.name, logged: reference.maps.map(for: clip).map { !$0.isEmpty })
         }
         if settings.followLatestTake || selectedTake >= takes.count {
             selectedTake = 0
         }
+    }
+
+    // MARK: Timecode
+
+    /// Rate the deck's timecode labels count at, or nil before the deck reports a video format.
+    private func deckTimecodeRate(_ deck: DeckController) -> FrameRate? {
+        guard let video = deck.videoRate(dropFrame: settings.ltcRate.isDropFrame) else { return nil }
+        return settings.deckTimecodeAtVideoRate ? video : video.ltcRate
+    }
+
+    /// Deck time a clip spans, [start, end) in seconds.
+    private func deckSpan(_ clip: DeckClip, rate: FrameRate) -> (Double, Double) {
+        let start = clip.start.seconds(at: rate)
+        return (start, start + Double(clip.duration.durationFrames(nominal: rate.nominal)) / rate.exact)
+    }
+
+    /// Deck seconds for a displayed timecode. +0.5 centres it within the frame on screen.
+    private func deckSeconds(_ tc: Timecode, rate: FrameRate) -> Double {
+        (Double(tc.frameIndex(at: rate)) + 0.5) / rate.exact
+    }
+
+    /// Files finished recordings' maps under their clips once the deck lists them.
+    private func fileTakeMaps(_ deck: DeckController) {
+        guard let rate = deckTimecodeRate(deck) else { return }
+        deck.maps.attachPending(to: deck.clips) { [unowned self] clip in self.deckSpan(clip, rate: rate) }
     }
 
     // MARK: Audio
@@ -207,8 +257,14 @@ final class AppModel: ObservableObject {
 
     private func settingsChanged(from old: AppSettings) {
         if settings.ltcRate != old.ltcRate {
-            clock = LTCClock(rate: settings.ltcRate)
+            clock = LTCClock(rate: settings.ltcRate, freewheel: settings.freewheelSeconds)
             decks.forEach { $0.resetChase() }
+        }
+        if settings.freewheelSeconds != old.freewheelSeconds {
+            clock.freewheel = settings.freewheelSeconds
+        }
+        if settings.recordMode != old.recordMode {
+            decks.forEach { $0.buildsTakeMaps = settings.recordMode == .continuous }
         }
         if settings.audioDeviceUID != old.audioDeviceUID || settings.audioChannel != old.audioChannel {
             openAudio()
@@ -224,20 +280,18 @@ final class AppModel: ObservableObject {
         let now = HostClock.now()
         let snapshot = clock.snapshot(at: now)
         updateReadout(now: now, rolling: snapshot.rolling)
-        switch mode {
-        case .stop:
-            break
-        case .record:
-            if !settings.nativeRecordTrigger { appTriggeredRecord(rolling: snapshot.rolling, now: now) }
-        case .playback:
-            chase(snapshot, now: now)
-        }
+        let pollDue = now - lastPoll >= 0.1
+        if pollDue { lastPoll = now }
+        if pollDue { logTakes() }
+        if mode == .playback { chase(snapshot, now: now, pollDue: pollDue) }
     }
 
     private func updateReadout(now: Double, rolling: Bool) {
         let text = clock.timecode(at: now)?.display(dropFrame: settings.ltcRate.isDropFrame) ?? "--:--:--:--"
         if text != ltcText { ltcText = text }
         if rolling != ltcRolling { ltcRolling = rolling }
+        let freewheeling = clock.isFreewheeling(at: now)
+        if freewheeling != ltcFreewheeling { ltcFreewheeling = freewheeling }
         guard now - lastInfoUpdate > 0.5 else { return }
         lastInfoUpdate = now
         let info: String
@@ -253,47 +307,42 @@ final class AppModel: ObservableObject {
         if warning != ltcWarning { ltcWarning = warning }
     }
 
-    /// Fallback when decks are not using their own timecode-run trigger.
-    private func appTriggeredRecord(rolling: Bool, now: Double) {
-        if rolling {
-            appRecordStopAt = nil
-            if !appRecordRolling {
-                appRecordRolling = true
-                activeDecks.forEach { $0.record() }
-            }
-        } else if appRecordRolling {
-            if let stopAt = appRecordStopAt {
-                if now >= stopAt {
-                    appRecordRolling = false
-                    appRecordStopAt = nil
-                    activeDecks.forEach { $0.stopTransport() }
-                }
-            } else {
-                appRecordStopAt = now + 1.0
+    /// While decks record, pair each deck timecode reading with show code at the same instant.
+    /// Readings while show code is absent are skipped; the deck keeps recording regardless.
+    private func logTakes() {
+        let ltcFPS = settings.ltcRate.exact
+        for deck in activeDecks where deck.isLoggingTake {
+            guard let rate = deckTimecodeRate(deck) else { continue }
+            deck.poll { [weak self, weak deck] timecode, observedAt in
+                guard let self, let deck, let ltcAt = self.clock.position(at: observedAt) else { return }
+                deck.logTakeReading(
+                    ltcSeconds: ltcAt / ltcFPS,
+                    deckSeconds: self.deckSeconds(timecode, rate: rate),
+                    now: HostClock.now()
+                )
             }
         }
     }
 
-    private func chase(_ snapshot: LTCSnapshot, now: Double) {
-        let ltcRate = settings.ltcRate
-        let pollDue = now - lastPoll >= 0.1
-        if pollDue { lastPoll = now }
+    private func chase(_ snapshot: LTCSnapshot, now: Double, pollDue: Bool) {
+        let ltcFPS = settings.ltcRate.exact
 
         for deck in activeDecks {
             let config = settings.decks[deck.id]
             guard let clip = deck.clip(takeOffset: selectedTake),
-                  let video = deck.videoRate(dropFrame: ltcRate.isDropFrame)
+                  let video = deck.videoRate(dropFrame: settings.ltcRate.isDropFrame),
+                  let tcRate = deckTimecodeRate(deck)
             else {
                 if deck.chase != DeckChaseState() { deck.resetChase() }
                 continue
             }
-            let tcRate = settings.deckTimecodeAtVideoRate ? video : video.ltcRate
-            let clipStart = clip.start.seconds(at: tcRate)
-            let startFrame = clipStart * ltcRate.exact
-            let length = Double(clip.duration.durationFrames(nominal: tcRate.nominal)) / tcRate.exact * ltcRate.exact
+            let (clipStart, clipEnd) = deckSpan(clip, rate: tcRate)
+            // Logged show code if this take has it; otherwise assume the clip was stamped with show code.
+            let map = (deck.maps.map(for: clip) ?? .identity(deckStart: clipStart, duration: clipEnd - clipStart))
+                .clipped(toDeck: clipStart, clipEnd)
             let input = DeckChaseInput(
                 startLatencyFrames: config.playOffsetFrames,
-                range: startFrame...(startFrame + max(0, length - 1)),
+                coverage: map.segments.map { ($0.ltcStart * ltcFPS)..<($0.ltcEnd * ltcFPS) },
                 observedError: deck.takeFreshError(),
                 deckIsPlaying: deck.transport.status == .play
             )
@@ -305,9 +354,8 @@ final class AppModel: ObservableObject {
             for action in actions {
                 switch action {
                 case .cue(let target):
-                    let targetSeconds = Double(target) / ltcRate.exact
-                    let frame = Int(((targetSeconds - clipStart) * video.exact).rounded())
-                    deck.cue(clipID: clip.id, frame: frame)
+                    guard let deckAt = map.deckSeconds(atLTC: Double(target) / ltcFPS) else { continue }
+                    deck.cue(clipID: clip.id, frame: Int(((deckAt - clipStart) * video.exact).rounded()))
                 case .play:
                     deck.play()
                 case .stop:
@@ -317,10 +365,11 @@ final class AppModel: ObservableObject {
 
             if pollDue, case .playing = deck.chase.phase {
                 deck.poll { [weak self, weak deck] timecode, observedAt in
-                    guard let self, let deck, let ltcAt = self.clock.position(at: observedAt) else { return }
-                    // Displayed TC is the frame on screen; +0.5 centres it within that frame.
-                    let deckSeconds = (Double(timecode.frameIndex(at: tcRate)) + 0.5) / tcRate.exact
-                    deck.noteDrift(deckSeconds * ltcRate.exact - ltcAt)
+                    guard let self, let deck,
+                          let ltcAt = self.clock.position(at: observedAt),
+                          let expected = map.deckSeconds(atLTC: ltcAt / ltcFPS)
+                    else { return }
+                    deck.noteDrift((self.deckSeconds(timecode, rate: tcRate) - expected) * ltcFPS)
                 }
             }
         }

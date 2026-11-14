@@ -23,8 +23,13 @@ struct SettingsView: View {
             }
 
             Section("Recording") {
-                Toggle("Use the decks’ own timecode-run trigger", isOn: $model.settings.nativeRecordTrigger)
-                Text("On: each deck starts and stops itself on its LTC input (frame accurate). Off: cam4prog sends record/stop when code rolls.")
+                Picker("Record", selection: $model.settings.recordMode) {
+                    Text("Continuously, REC to STOP (recommended)").tag(RecordMode.continuous)
+                    Text("Only while show timecode runs").tag(RecordMode.timecodeRun)
+                }
+                Text(model.settings.recordMode == .continuous
+                     ? "Decks record from REC until STOP, stamped with their own clock. cam4prog logs show code against each take, so LTC dropouts and jumps don't stop or break a recording."
+                     : "Each deck records only while its LTC input runs and stamps clips with show code. If LTC drops, the deck stops recording.")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -37,6 +42,10 @@ struct SettingsView: View {
                         value: $model.settings.chase.toleranceFrames, in: 0.5...10, step: 0.5)
                 Stepper("Re-lock after \(model.settings.chase.driftStrikes) bad readings",
                         value: $model.settings.chase.driftStrikes, in: 1...20)
+                Stepper(model.settings.freewheelSeconds > 0
+                            ? String(format: "Coast through LTC dropouts for %.1f s", model.settings.freewheelSeconds)
+                            : "Don't coast through LTC dropouts",
+                        value: $model.settings.freewheelSeconds, in: 0...10, step: 0.5)
                 Toggle("Deck timecode counts at video rate (e.g. 0–59 at 59.94)", isOn: $model.settings.deckTimecodeAtVideoRate)
             }
         }

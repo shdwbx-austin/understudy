@@ -36,5 +36,7 @@ struct HyperDeckProtocolTests {
         #expect(HyperDeckCommand.gotoClip(id: 4, frame: 1200) == "goto: clip id: 4 clip: 1200")
         #expect(HyperDeckCommand.recordPrefix("ME 1/PGM") == "configuration: record prefix: ME_1_PGM")
         #expect(HyperDeckCommand.preview(true) == "preview: enable: true")
+        #expect(HyperDeckCommand.timecodePreference(dropFrame: true) == "configuration: timecode preference: dropframe")
+        #expect(HyperDeckCommand.timecodeInputInternal == "configuration: timecode input: internal")
     }
 }

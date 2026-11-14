@@ -72,9 +72,17 @@ public enum HyperDeckCommand {
     public static let stop = "stop"
     public static let playSingleClip = "play: single clip: true"
     public static let timecodeInputExternal = "configuration: timecode input: external"
+    /// Deck stamps recordings from its own clock, independent of LTC.
+    public static let timecodeInputInternal = "configuration: timecode input: internal"
+    public static let record = "record"
     public static let timecodeOutputClip = "configuration: timecode output: clip"
 
     public static func preview(_ enable: Bool) -> String { "preview: enable: \(enable)" }
+
+    /// Whether the deck's own timecode counts drop-frame (fractional rates only).
+    public static func timecodePreference(dropFrame: Bool) -> String {
+        "configuration: timecode preference: \(dropFrame ? "dropframe" : "nondropframe")"
+    }
 
     public static func recordTrigger(timecodeRun: Bool) -> String {
         "configuration: record trigger: \(timecodeRun ? "timecoderun" : "none")"

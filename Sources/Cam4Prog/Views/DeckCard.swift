@@ -51,6 +51,19 @@ struct DeckCard: View {
                 .font(Theme.mono(10))
             }
 
+            if deck.isLoggingTake {
+                HStack(spacing: 6) {
+                    StatusDot(color: model.ltcRolling ? Theme.record : Theme.caution)
+                    Text(model.ltcRolling ? "LOGGING SHOW CODE" : "RECORDING · WAITING FOR LTC")
+                        .foregroundStyle(model.ltcRolling ? Theme.paper : Theme.caution)
+                    Spacer()
+                    if let logged = deck.loggedSeconds {
+                        Text(String(format: "%.0f s logged", logged)).foregroundStyle(Theme.dim)
+                    }
+                }
+                .font(Theme.mono(10, bold: true))
+            }
+
             if model.mode == .playback {
                 HStack {
                     Text(deck.chase.phase.label)

@@ -11,35 +11,53 @@ Shdwbx · Design and Creative Support
 | Mode | Decks | disguise sees |
 | --- | --- | --- |
 | **STOP** `⌘1` | Stopped, disarmed, in preview | Live ME (passes through the deck) |
-| **REC ARM** `⌘2` | Armed to record whenever show LTC runs | Live ME |
+| **REC** `⌘2` | Recording from now until STOP | Live ME |
 | **PLAY TC** `⌘3` | Chase show LTC from the selected take | Recorded ME, in sync with code |
 
 After a run-through, hit **PLAY TC**. The latest take is selected, and the decks follow code every time you roll it.
 
+### Recording survives timecode failures
+
+By default the decks record continuously from **REC** until **STOP**, stamped with their own clock. Show LTC doesn't start or stop anything. While they record, cam4prog reads each deck's timecode ten times a second, pairs it with show LTC at that instant, and saves a timecode map for the take.
+
+- **LTC drops out:** the decks keep recording. Code that never arrived just isn't in the map. If code comes back where it should be, the map carries straight across the gap.
+- **LTC jumps** (per-song code, a re-roll): the map starts a new stretch. If the same code is rolled twice in one take, playback uses the later pass.
+- **Short dropouts:** the show clock coasts (freewheels) for 2 s by default, so a glitch doesn't stop playback or re-park the decks. The header shows **FREEWHEEL · NO LTC** while it coasts.
+
+Maps live in `~/Library/Application Support/cam4prog/takemaps/`. The map in progress is saved every 5 s, so a crash mid-take loses only a few seconds of it.
+
+If you'd rather have the decks record only while code runs and stamp clips with show code (v0.1.0 behaviour), choose **Settings › Recording › Only while show timecode runs**. A dropout then stops the recording. Takes without a map are played back from their clip timecode, so recordings made that way, or with 0.1.0, still work.
+
+### Playback
+
 HyperDecks can't chase LTC natively. cam4prog reads the show LTC itself and handles each deck in four steps:
 
-1. It parks the deck slightly ahead of incoming code (pre-roll).
+1. It looks the incoming code up in the take's map and parks the deck slightly ahead (pre-roll).
 2. It fires `play` when code reaches that point, early by the deck's start latency.
 3. It watches the deck's timecode ten times a second.
-4. It re-parks the deck if the deck drifts out of tolerance.
+4. It re-parks the deck if the deck drifts out of tolerance, or if code moves into a different recorded stretch.
 
 ## Signal flow
 
 ```
 ME n ─SDI─▶ HyperDeck n SDI IN        HyperDeck n SDI OUT ─SDI─▶ disguise capture n
-Show LTC ─DA─▶ every HyperDeck TC IN (XLR)  +  Mac audio input
+Show LTC ─DA─▶ Mac audio input  (+ HyperDeck TC IN, only needed for "record only while code runs")
 House ref ─DA─▶ every HyperDeck REF IN  +  disguise capture cards
 Mac ─Ethernet─▶ switch ─▶ HyperDecks (static IPs)
 ```
 
 For the show itself, put a router or bypass in front of the disguise inputs so a deck fault can't take an IMAG feed.
 
+The Mac's LTC input is now the single source of show code, so give it a clean, dedicated feed. A timecode box with jam-sync/freewheel in front of it is a cheap extra layer.
+
+Lock the LTC generator to house ref, like the decks. If the two clocks drift apart, the map starts a new stretch whenever the difference passes about 1.5 frames, and the deck briefly re-parks there during playback.
+
 ## Deck setup (once per deck)
 
 - Give each deck a static IP on the same network as the Mac.
-- Feed show LTC into **Timecode In**, and house ref into **Ref In**.
+- Feed house ref into **Ref In**.
 - Format SSDs. All four decks should use the same codec and the same video format.
-- Everything else is set by cam4prog when you change mode: remote override, timecode input = external, record trigger, record prefix (deck name), preview/output, and timecode output = clip.
+- Everything else is set by cam4prog when you change mode: remote override, timecode input, record trigger, record prefix (deck name), preview/output, and timecode output = clip.
 
 ## App setup
 
@@ -49,41 +67,48 @@ For the show itself, put a router or bypass in front of the disguise inputs so a
 
 ## Operating
 
-- **REC ARM** before the run. A card's border turns red while that deck records.
-- **PLAY TC** after the run. Roll code (or let the show roll it), and each card goes WAITING → CUEING → ARMED → CHASING.
+- **REC** before the run. A card's border turns red while that deck records, and the card reads **LOGGING SHOW CODE** (or **WAITING FOR LTC** while code is absent).
+- **STOP** or **PLAY TC** after the run ends the take.
+- **PLAY TC**: roll code (or let the show roll it), and each card goes WAITING → CUEING → ARMED → CHASING.
 - **Δ** shows the measured deck error in LTC frames. If a deck sits consistently early or late, press **Calibrate** to fold that error into its play offset.
-- **TAKE** lets you pick an older run. Takes are matched across decks by position (latest, second latest, and so on).
-- **NO MEDIA AT TC** means code is outside the selected take. The deck holds until code comes back into range.
+- **TAKE** lets you pick an older run. Takes are matched across decks by position (latest, second latest, and so on). Each take says **SHOW CODE LOGGED**, **NO SHOW CODE LOGGED** (recorded with no LTC at all, so nothing to chase), or **CLIP TC** (no map; played from clip timecode).
+- **NO MEDIA AT TC** means that code isn't in the selected take. The deck holds until code comes back into a recorded stretch.
+- A deck that reconnects mid-REC carries on recording; one that wasn't recording is started.
 
 ## First hardware test — what to verify
 
-This build is unit-tested on the timecode, LTC, protocol and chase logic. It has not yet been run against decks. On the bench, confirm the following:
+This build is unit-tested on the timecode, LTC, protocol, take-map and chase logic. It has not yet been run against decks. On the bench, confirm the following:
 
-1. **Combined goto.** `goto: clip id: N clip: F` is accepted by your firmware. If it isn't, the app falls back to two separate commands, and the card will show the error once.
-2. **Deck timecode base.** At 2160p59.94, check whether the deck reports display timecode frames 0–59 or 0–29. The default assumes 0–59. If your deck reports 0–29, turn off *Deck timecode counts at video rate* in Settings.
-3. **Play latency.** Check Δ after a few rolls and calibrate.
-4. **Pass-through.** In STOP / REC ARM, confirm the deck's SDI out passes the live input to disguise.
-5. **Local network permission (macOS 15+).** On first launch, allow cam4prog when macOS asks.
+1. **Internal timecode.** `configuration: timecode input: internal` and `configuration: timecode preference: dropframe|nondropframe` are accepted. If either isn't, the card shows the error. The deck's clock must count drop-frame exactly when show code does, or the map drifts by about 3.6 s an hour.
+2. **Record timecode counts per recorded frame.** During REC, the deck's display timecode should advance one frame per recorded frame. In PLAY TC, a frame's clip timecode should match what was displayed when it was recorded. This is what the map relies on.
+3. **Combined goto.** `goto: clip id: N clip: F` is accepted by your firmware. If it isn't, the app falls back to two separate commands, and the card will show the error once.
+4. **Deck timecode base.** At 2160p59.94, check whether the deck reports display timecode frames 0–59 or 0–29. The default assumes 0–59. If your deck reports 0–29, turn off *Deck timecode counts at video rate* in Settings.
+5. **Dropout drill.** Pull the LTC cable mid-REC for 10 s, plug it back, STOP, then PLAY TC through that section. Then try a timecode jump mid-take.
+6. **Play latency.** Check Δ after a few rolls and calibrate.
+7. **Pass-through.** In STOP / REC, confirm the deck's SDI out passes the live input to disguise.
+8. **Local network permission (macOS 15+).** On first launch, allow cam4prog when macOS asks.
 
 ## Build
 
-Runs on macOS 13+. Building needs Swift 6 (Xcode 16 or its Command Line Tools); the universal app build needs full Xcode.
+Runs on macOS 13+. Building needs Swift 6 (Xcode 16 or its Command Line Tools).
 
 ```sh
-./scripts/test.sh           # core logic tests (Swift Testing; works without Xcode)
+./scripts/test.sh          # core logic tests (Swift Testing; works without Xcode)
 swift run Cam4Prog         # run unbundled while developing
 ./scripts/build-app.sh     # dist/cam4prog.app + zip (ad-hoc signed)
 ```
 
-Pushing a tag like `v0.1.0` runs CI and attaches the zipped app to a GitHub release.
+`build-app.sh` makes a universal (Apple silicon + Intel) app when full Xcode is installed, and an app for this Mac's chip otherwise.
+
+Pushing a tag like `v0.2.0` runs CI and attaches the zipped universal app to a GitHub release.
 
 The first launch of an ad-hoc signed build needs right-click → **Open**.
 
 ## Layout
 
 ```
-Sources/Cam4ProgCore   timecode math, LTC decoder/encoder, HyperDeck protocol, chase engine (pure, tested)
-Sources/Cam4Prog       SwiftUI app, Core Audio LTC input, Network.framework deck client
-Tests/                 XCTest for the core
-scripts/build-app.sh   bundle + sign + zip
+Sources/Cam4ProgCore   timecode math, LTC decoder/encoder, HyperDeck protocol, take maps, chase engine, settings (pure, tested)
+Sources/Cam4Prog       SwiftUI app, Core Audio LTC input, Network.framework deck client, take map storage
+Tests/                 Swift Testing suites for the core
+scripts/               test.sh, build-app.sh
 ```

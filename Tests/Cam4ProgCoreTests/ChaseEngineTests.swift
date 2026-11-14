@@ -15,7 +15,7 @@ struct ChaseEngineTests {
 
     @Test func cuesAheadThenFiresPlayOnTime() {
         var state = DeckChaseState()
-        let input = DeckChaseInput(startLatencyFrames: 3, range: nil, observedError: nil, deckIsPlaying: false)
+        let input = DeckChaseInput(startLatencyFrames: 3, coverage: nil, observedError: nil, deckIsPlaying: false)
         var cueAt: Double?
         var playAt: Double?
         for step in 0..<200 {
@@ -41,17 +41,17 @@ struct ChaseEngineTests {
 
     @Test func stopsWhenCodeStops() {
         var state = DeckChaseState()
-        state.phase = .playing(since: 0)
-        let input = DeckChaseInput(startLatencyFrames: 0, range: nil, observedError: nil, deckIsPlaying: true)
+        state.phase = .playing(since: 0, segment: nil)
+        let input = DeckChaseInput(startLatencyFrames: 0, coverage: nil, observedError: nil, deckIsPlaying: true)
         #expect(ChaseEngine.step(&state, ltc: ltc(5, rolling: false), input: input, now: 5, settings: settings) == [.stop])
         #expect(state.phase == .idle)
     }
 
     @Test func driftTriggersRelock() {
         var state = DeckChaseState()
-        state.phase = .playing(since: 0)
+        state.phase = .playing(since: 0, segment: nil)
         state.lastCueTime = 0
-        let drifting = DeckChaseInput(startLatencyFrames: 0, range: nil, observedError: 4, deckIsPlaying: true)
+        let drifting = DeckChaseInput(startLatencyFrames: 0, coverage: nil, observedError: 4, deckIsPlaying: true)
         for k in 0..<settings.driftStrikes {
             let t = 2 + Double(k) * 0.1
             _ = ChaseEngine.step(&state, ltc: ltc(t), input: drifting, now: t, settings: settings)
@@ -63,10 +63,41 @@ struct ChaseEngineTests {
 
     @Test func holdsOutsideTakeRange() {
         var state = DeckChaseState()
-        let input = DeckChaseInput(startLatencyFrames: 0, range: 2000...3000, observedError: nil, deckIsPlaying: false)
+        let input = DeckChaseInput(startLatencyFrames: 0, coverage: [2000..<3000], observedError: nil, deckIsPlaying: false)
         #expect(ChaseEngine.step(&state, ltc: ltc(0), input: input, now: 0, settings: settings) == [])
         #expect(state.phase == .outOfRange)
         // Preroll is 30 frames, so the deck can cue once LTC passes 1970 (t ≈ 32.33 s).
         #expect(ChaseEngine.step(&state, ltc: ltc(32.4), input: input, now: 32.4, settings: settings) == [.cue(target: 2002)])
+    }
+
+    @Test func stopsAtGapInRecordedCode() {
+        var state = DeckChaseState()
+        state.phase = .playing(since: 0, segment: 0)
+        let input = DeckChaseInput(startLatencyFrames: 0, coverage: [1000..<1100, 1200..<1300], observedError: nil, deckIsPlaying: true)
+        // LTC 1105 (t = 3.5 s) is past the first stretch and not recorded.
+        #expect(ChaseEngine.step(&state, ltc: ltc(3.5), input: input, now: 3.5, settings: settings) == [.stop])
+        #expect(state.phase == .outOfRange)
+        // Code reaches the second stretch: cue into it.
+        #expect(ChaseEngine.step(&state, ltc: ltc(6), input: input, now: 6, settings: settings) == [.cue(target: 1210)])
+    }
+
+    @Test func reparksWhenCodeRunsIntoAnotherRecordedStretch() {
+        var state = DeckChaseState()
+        state.phase = .playing(since: 0, segment: 0)
+        // Two adjacent stretches recorded at different points of the clip (code jumped while recording).
+        let input = DeckChaseInput(startLatencyFrames: 0, coverage: [1000..<1100, 1100..<1300], observedError: nil, deckIsPlaying: true)
+        #expect(ChaseEngine.step(&state, ltc: ltc(3.5), input: input, now: 3.5, settings: settings) == [])
+        #expect(state.phase == .idle)
+        #expect(ChaseEngine.step(&state, ltc: ltc(3.51), input: input, now: 3.51, settings: settings) == [.cue(target: 1135)])
+    }
+
+    @Test func playingRecordsWhichStretch() {
+        var state = DeckChaseState()
+        let input = DeckChaseInput(startLatencyFrames: 0, coverage: [900..<1010, 1020..<2000], observedError: nil, deckIsPlaying: false)
+        for step in 0..<200 {
+            let t = Double(step) * 0.01
+            _ = ChaseEngine.step(&state, ltc: ltc(t), input: input, now: t, settings: settings)
+        }
+        #expect(state.phase == .playing(since: 1.0, segment: 1))
     }
 }

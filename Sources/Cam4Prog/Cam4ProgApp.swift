@@ -18,7 +18,7 @@ struct Cam4ProgApp: App {
         .commands {
             CommandMenu("Mode") {
                 Button("Stop") { model.setMode(.stop) }.keyboardShortcut("1", modifiers: .command)
-                Button("Record Arm") { model.setMode(.record) }.keyboardShortcut("2", modifiers: .command)
+                Button("Record") { model.setMode(.record) }.keyboardShortcut("2", modifiers: .command)
                 Button("Play from Timecode") { model.setMode(.playback) }.keyboardShortcut("3", modifiers: .command)
                 Divider()
                 Button("Refresh Takes") { model.refreshTakes() }.keyboardShortcut("r", modifiers: .command)

@@ -1,7 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — unreleased
 
+- **Recording no longer depends on show timecode.** In the new default mode, decks record from REC until STOP, stamped with their own clock. cam4prog logs show LTC against each take as a timecode map, so dropouts and jumps no longer stop or break a recording.
+- Playback looks show code up in the take's map: it holds at gaps, re-parks at jumps, and plays the latest pass of re-rolled code. Takes without a map play from clip timecode, as before.
+- The show clock freewheels through LTC dropouts (2 s by default, adjustable). The header shows FREEWHEEL while it does.
+- A deck that reconnects mid-REC keeps recording; one that wasn't recording is started.
+- Settings saved by older versions keep loading (deck IPs and names are kept) when new settings are added.
+- The previous behaviour stays available as *Record only while show timecode runs*.
+- `build-app.sh` builds for the current Mac's chip when full Xcode isn't installed.
 - Deck replies now reach the app in the order the deck sent them. Before, state changes, notifications and command replies could swap order.
 - Changing a deck's IP no longer lets the old connection's late "disconnected" mark the new connection as down.
 - Saved settings with a missing or extra deck no longer crash the app on launch.
