@@ -4,6 +4,21 @@ import Cam4ProgCore
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
 
+    /// "auto" or a FrameRate raw value.
+    private var rateChoice: Binding<String> {
+        Binding(
+            get: { model.settings.ltcRateAuto ? "auto" : model.settings.ltcRate.rawValue },
+            set: { choice in
+                if choice == "auto" {
+                    model.settings.ltcRateAuto = true
+                } else if let rate = FrameRate(rawValue: choice) {
+                    model.settings.ltcRateAuto = false
+                    model.settings.ltcRate = rate
+                }
+            }
+        )
+    }
+
     var body: some View {
         Form {
             Section("LTC input") {
@@ -14,11 +29,17 @@ struct SettingsView: View {
                     }
                 }
                 Stepper("Channel \(model.settings.audioChannel + 1)", value: $model.settings.audioChannel, in: 0...63)
-                Picker("Show timecode rate", selection: $model.settings.ltcRate) {
+                Picker("Show timecode rate", selection: rateChoice) {
+                    Text("Auto-detect").tag("auto")
+                    Divider()
                     ForEach(FrameRate.allCases.filter { $0.nominal <= 30 }) { rate in
-                        Text(rate.rawValue).tag(rate)
+                        Text(rate.rawValue).tag(rate.rawValue)
                     }
                 }
+                Text(model.settings.ltcRateAuto
+                     ? "cam4prog measures the incoming LTC (\(model.rateLabel.replacingOccurrences(of: "AUTO", with: "now").trimmingCharacters(in: .whitespaces))) and follows it, including drop-frame. Recording logs and playback wait the first couple of seconds of code until the rate is known."
+                     : "Fixed rate. The header warns if incoming LTC doesn't match.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Button("Rescan devices") { model.refreshAudioDevices() }
             }
 

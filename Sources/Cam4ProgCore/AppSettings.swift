@@ -41,7 +41,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public static let deckCount = 4
 
     public var decks: [DeckConfig] = (1...AppSettings.deckCount).map { DeckConfig(id: $0 - 1, name: "ME \($0)", host: "") }
+    /// Show timecode rate when not auto-detecting, and the last rate detected when auto.
     public var ltcRate: FrameRate = .fps29_97DF
+    /// Work the rate out from incoming LTC.
+    public var ltcRateAuto = true
     public var audioDeviceUID: String?
     public var audioChannel: Int = 0
     public var chase = ChaseSettings()
@@ -61,6 +64,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         let d = AppSettings()
         decks = (try? c.decodeIfPresent([DeckConfig].self, forKey: .decks)) ?? d.decks
         ltcRate = (try? c.decodeIfPresent(FrameRate.self, forKey: .ltcRate)) ?? d.ltcRate
+        ltcRateAuto = (try? c.decodeIfPresent(Bool.self, forKey: .ltcRateAuto)) ?? d.ltcRateAuto
         audioDeviceUID = (try? c.decodeIfPresent(String.self, forKey: .audioDeviceUID)) ?? d.audioDeviceUID
         audioChannel = (try? c.decodeIfPresent(Int.self, forKey: .audioChannel)) ?? d.audioChannel
         chase = (try? c.decodeIfPresent(ChaseSettings.self, forKey: .chase)) ?? d.chase

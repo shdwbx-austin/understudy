@@ -43,12 +43,11 @@ final class AppModel: ObservableObject {
     let decks: [DeckController]
 
     private var clock: LTCClock
+    private var rateDetector = LTCRateDetector()
     private let audio = AudioLTCInput()
     private var loop: Task<Void, Never>?
     private var lastPoll = 0.0
     private var lastInfoUpdate = 0.0
-    private var detectedFPS: Double?
-    private var detectedDF = false
     private var takeRefreshScheduled = false
 
     init() {
@@ -79,6 +78,22 @@ final class AppModel: ObservableObject {
                 try? await Task.sleep(nanoseconds: 5_000_000)
             }
         }
+    }
+
+    /// Show timecode rate in use: detected from incoming LTC when auto, otherwise as set.
+    /// Before the first detection, auto uses the last rate it detected.
+    var ltcRate: FrameRate {
+        settings.ltcRateAuto ? (rateDetector.detected ?? settings.ltcRate) : settings.ltcRate
+    }
+
+    /// Off until auto-detect has measured the incoming code; logging and chasing wait for it,
+    /// so a wrong guess never reaches a take map or a deck.
+    private var rateKnown: Bool { !settings.ltcRateAuto || rateDetector.detected != nil }
+
+    /// Header label for the rate, e.g. "AUTO 25" or "SET 29.97 DF".
+    var rateLabel: String {
+        guard settings.ltcRateAuto else { return "SET \(settings.ltcRate.rawValue)" }
+        return rateDetector.detected.map { "AUTO \($0.rawValue)" } ?? "AUTO · DETECTING"
     }
 
     var activeDecks: [DeckController] {
@@ -112,7 +127,7 @@ final class AppModel: ObservableObject {
     }
 
     private func arm(_ deck: DeckController) {
-        deck.arm(prefix: settings.decks[deck.id].name, mode: settings.recordMode, dropFrame: settings.ltcRate.isDropFrame)
+        deck.arm(prefix: settings.decks[deck.id].name, mode: settings.recordMode, dropFrame: ltcRate.isDropFrame)
     }
 
     /// A deck (re)connected: bring it into the current mode. A deck that's already recording is
@@ -191,7 +206,7 @@ final class AppModel: ObservableObject {
 
     /// Rate the deck's timecode labels count at, or nil before the deck reports a video format.
     private func deckTimecodeRate(_ deck: DeckController) -> FrameRate? {
-        guard let video = deck.videoRate(dropFrame: settings.ltcRate.isDropFrame) else { return nil }
+        guard let video = deck.videoRate(dropFrame: ltcRate.isDropFrame) else { return nil }
         return settings.deckTimecodeAtVideoRate ? video : video.ltcRate
     }
 
@@ -240,8 +255,10 @@ final class AppModel: ObservableObject {
     private func openAudio() {
         let device = audioDevices.first { $0.uid == settings.audioDeviceUID }
         do {
+            rateDetector = LTCRateDetector()
             try audio.start(deviceID: device?.id, channel: settings.audioChannel) { [weak self] event in
-                Task { @MainActor in self?.ingest(event) }
+                // The main queue keeps frames in order; separate Tasks don't guarantee that.
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.ingest(event) } }
             }
             audioError = nil
         } catch {
@@ -250,16 +267,23 @@ final class AppModel: ObservableObject {
     }
 
     private func ingest(_ event: AudioLTCInput.Event) {
+        rateDetector.ingest(dropFrameFlag: event.dropFrame, time: event.sampleTime)
+        if settings.ltcRateAuto, let detected = rateDetector.detected, detected != settings.ltcRate {
+            settings.ltcRate = detected   // remembered for next launch; settingsChanged re-rates the clock
+        }
+        syncClockRate()
         clock.ingest(event.timecode, dropFrameFlag: event.dropFrame, boundaryTime: event.boundaryTime)
-        detectedFPS = event.estimatedFPS
-        detectedDF = event.dropFrame
+    }
+
+    /// Rebuilds the show clock when the rate in use changes.
+    private func syncClockRate() {
+        guard clock.rate != ltcRate else { return }
+        clock = LTCClock(rate: ltcRate, freewheel: settings.freewheelSeconds)
+        decks.forEach { $0.resetChase() }
     }
 
     private func settingsChanged(from old: AppSettings) {
-        if settings.ltcRate != old.ltcRate {
-            clock = LTCClock(rate: settings.ltcRate, freewheel: settings.freewheelSeconds)
-            decks.forEach { $0.resetChase() }
-        }
+        syncClockRate()
         if settings.freewheelSeconds != old.freewheelSeconds {
             clock.freewheel = settings.freewheelSeconds
         }
@@ -278,16 +302,17 @@ final class AppModel: ObservableObject {
 
     private func tick() {
         let now = HostClock.now()
-        let snapshot = clock.snapshot(at: now)
+        var snapshot = clock.snapshot(at: now)
+        if !rateKnown { snapshot = LTCSnapshot(rolling: false, position: nil, jumped: false, fps: snapshot.fps) }
         updateReadout(now: now, rolling: snapshot.rolling)
         let pollDue = now - lastPoll >= 0.1
         if pollDue { lastPoll = now }
-        if pollDue { logTakes() }
+        if pollDue && rateKnown { logTakes() }
         if mode == .playback { chase(snapshot, now: now, pollDue: pollDue) }
     }
 
     private func updateReadout(now: Double, rolling: Bool) {
-        let text = clock.timecode(at: now)?.display(dropFrame: settings.ltcRate.isDropFrame) ?? "--:--:--:--"
+        let text = clock.timecode(at: now)?.display(dropFrame: ltcRate.isDropFrame) ?? "--:--:--:--"
         if text != ltcText { ltcText = text }
         if rolling != ltcRolling { ltcRolling = rolling }
         let freewheeling = clock.isFreewheeling(at: now)
@@ -295,22 +320,25 @@ final class AppModel: ObservableObject {
         guard now - lastInfoUpdate > 0.5 else { return }
         lastInfoUpdate = now
         let info: String
-        if let fps = detectedFPS, clock.lastTimecode != nil {
-            info = String(format: "LTC ≈%.2f%@", fps, detectedDF ? " DF" : "")
-        } else {
+        if clock.lastTimecode == nil {
             info = "NO LTC"
+        } else if let fps = rateDetector.measuredFPS {
+            info = String(format: "LTC %.3f fps", fps)
+        } else {
+            info = "MEASURING LTC…"
         }
         if info != ltcInfo { ltcInfo = info }
-        let warning: String? = (detectedFPS != nil && detectedDF != settings.ltcRate.isDropFrame)
-            ? "Incoming LTC is \(detectedDF ? "drop" : "non-drop") frame; rate is set to \(settings.ltcRate.rawValue)."
-            : nil
+        var warning: String?
+        if !settings.ltcRateAuto, let detected = rateDetector.detected, detected != settings.ltcRate {
+            warning = "Incoming LTC looks like \(detected.rawValue); rate is set to \(settings.ltcRate.rawValue)."
+        }
         if warning != ltcWarning { ltcWarning = warning }
     }
 
     /// While decks record, pair each deck timecode reading with show code at the same instant.
     /// Readings while show code is absent are skipped; the deck keeps recording regardless.
     private func logTakes() {
-        let ltcFPS = settings.ltcRate.exact
+        let ltcFPS = ltcRate.exact
         for deck in activeDecks where deck.isLoggingTake {
             guard let rate = deckTimecodeRate(deck) else { continue }
             deck.poll { [weak self, weak deck] timecode, observedAt in
@@ -325,12 +353,12 @@ final class AppModel: ObservableObject {
     }
 
     private func chase(_ snapshot: LTCSnapshot, now: Double, pollDue: Bool) {
-        let ltcFPS = settings.ltcRate.exact
+        let ltcFPS = ltcRate.exact
 
         for deck in activeDecks {
             let config = settings.decks[deck.id]
             guard let clip = deck.clip(takeOffset: selectedTake),
-                  let video = deck.videoRate(dropFrame: settings.ltcRate.isDropFrame),
+                  let video = deck.videoRate(dropFrame: ltcRate.isDropFrame),
                   let tcRate = deckTimecodeRate(deck)
             else {
                 if deck.chase != DeckChaseState() { deck.resetChase() }

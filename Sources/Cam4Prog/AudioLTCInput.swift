@@ -72,7 +72,9 @@ final class AudioLTCInput {
         let dropFrame: Bool
         /// Host time (seconds) at which the decoded frame ended.
         let boundaryTime: Double
-        let estimatedFPS: Double
+        /// The same moment on the audio sample clock (seconds since the input started); steadier
+        /// than host time, so it's what the rate detector measures with.
+        let sampleTime: Double
     }
 
     enum InputError: LocalizedError {
@@ -126,7 +128,7 @@ final class AudioLTCInput {
                     timecode: frame.timecode,
                     dropFrame: frame.dropFrameFlag,
                     boundaryTime: bufferStart + offset,
-                    estimatedFPS: decoder.estimatedFrameRate
+                    sampleTime: Double(frame.boundarySample) / sampleRate
                 ))
             }
         }

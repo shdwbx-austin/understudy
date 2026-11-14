@@ -55,7 +55,7 @@ private struct Header: View {
                     Text("·").foregroundStyle(Theme.dim)
                     Text(model.ltcInfo)
                     Text("·").foregroundStyle(Theme.dim)
-                    Text("SET \(model.settings.ltcRate.rawValue)")
+                    Text(model.rateLabel)
                 }
                 .font(Theme.mono(11))
                 if let warning = model.ltcWarning {

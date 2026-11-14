@@ -28,6 +28,15 @@ Maps live in `~/Library/Application Support/cam4prog/takemaps/`. The map in prog
 
 If you'd rather have the decks record only while code runs and stamp clips with show code (v0.1.0 behaviour), choose **Settings › Recording › Only while show timecode runs**. A dropout then stops the recording. Takes without a map are played back from their clip timecode, so recordings made that way, or with 0.1.0, still work.
 
+### Timecode rate is detected automatically
+
+cam4prog works out the show timecode rate from the incoming LTC and follows it, including drop-frame. It can tell 23.976 from 24 and 29.97 from 30, timing frames on the audio sample clock, within about 2 seconds of code. The header shows **AUTO 29.97 DF** (or whatever it found) and the measured rate.
+
+- **Before the rate is known**, recording logs and playback wait. That's only the first couple of seconds of code after launch or after changing the audio input. Decks still record.
+- **If the show switches to a different rate**, the new rate must hold for 2 seconds before cam4prog follows it.
+- **Takes stay valid across rates**, because take maps are stored in seconds.
+- **A fixed rate** can be set under **Settings › LTC input › Show timecode rate**. The header then warns if incoming code doesn't match it.
+
 ### Playback
 
 HyperDecks can't chase LTC natively. cam4prog reads the show LTC itself and handles each deck in four steps:
@@ -61,7 +70,7 @@ Lock the LTC generator to house ref, like the decks. If the two clocks drift apa
 
 ## App setup
 
-1. Open **Settings** (`⌘,`). Pick the audio interface and channel carrying LTC, then set the show timecode rate.
+1. Open **Settings** (`⌘,`). Pick the audio interface and channel carrying LTC. The show timecode rate is detected automatically (see below); you can fix it instead if you prefer.
 2. Type each deck's IP into its card and press return. The dot goes green and the card shows the model.
 3. Check that each card reads **REF LOCKED**.
 

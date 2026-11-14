@@ -4,6 +4,8 @@
 
 - **Recording no longer depends on show timecode.** In the new default mode, decks record from REC until STOP, stamped with their own clock. cam4prog logs show LTC against each take as a timecode map, so dropouts and jumps no longer stop or break a recording.
 - Playback looks show code up in the take's map: it holds at gaps, re-parks at jumps, and plays the latest pass of re-rolled code. Takes without a map play from clip timecode, as before.
+- **Show timecode rate is detected automatically** from incoming LTC (23.976, 24, 25, 29.97 DF/NDF, 30), and playback follows it. A fixed rate is still available.
+- LTC frames now reach the app strictly in order.
 - The show clock freewheels through LTC dropouts (2 s by default, adjustable). The header shows FREEWHEEL while it does.
 - A deck that reconnects mid-REC keeps recording; one that wasn't recording is started.
 - Settings saved by older versions keep loading (deck IPs and names are kept) when new settings are added.
