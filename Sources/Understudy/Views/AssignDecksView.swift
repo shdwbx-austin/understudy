@@ -45,7 +45,11 @@ struct AssignDecksView: View {
         .background(Theme.ink)
         .foregroundStyle(Theme.paper)
         .preferredColorScheme(.dark)
-        .onAppear { draft = model.settings.decks }
+        .onAppear {
+            draft = model.settings.decks
+            model.discovery.startBrowsing()
+        }
+        .onDisappear { model.discovery.stopBrowsing() }
     }
 
     private var canApply: Bool { !model.setupLocked && draft != model.settings.decks }
@@ -135,7 +139,7 @@ private struct NetworkList: View {
             SectionHead(index: 2, title: "On the network") {
                 HStack(spacing: 18) {
                     InterfacePicker()
-                    if !unassigned.isEmpty, draft.contains(where: { $0.host.isEmpty }) {
+                    if unassigned.contains(where: { !$0.busy }), draft.contains(where: { $0.host.isEmpty }) {
                         TextButton(title: "Fill empty slots") { fillEmpty() }
                     }
                     TextButton(title: discovery.isScanning ? "Scanning…" : "Find decks") { discovery.scan() }
@@ -189,7 +193,8 @@ private struct NetworkList: View {
     }
 
     private func fillEmpty() {
-        for f in unassigned {
+        // Busy decks belong to another controller (e.g. another department): never auto-assign them.
+        for f in unassigned where !f.busy {
             guard let empty = draft.firstIndex(where: { $0.host.trimmingCharacters(in: .whitespaces).isEmpty }) else { return }
             assign(f, to: empty)
         }
@@ -209,9 +214,10 @@ private struct NetworkList: View {
 /// Which network interface discovery looks on.
 private struct InterfacePicker: View {
     @EnvironmentObject private var model: AppModel
+    /// Read when the sheet opens, not on every redraw (it queries the system's interfaces).
+    @State private var networks: [DeckDiscovery.LocalNetwork] = []
 
     var body: some View {
-        let networks = DeckDiscovery.localNetworks()
         Menu {
             Button("All interfaces") { choose(nil) }
             Divider()
@@ -224,6 +230,7 @@ private struct InterfacePicker: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Which network to look for HyperDecks on")
+        .onAppear { networks = DeckDiscovery.localNetworks() }
     }
 
     private func label(_ networks: [DeckDiscovery.LocalNetwork]) -> String {

@@ -20,6 +20,8 @@ final class DeckController: ObservableObject, Identifiable {
     @Published private(set) var config: [String: String] = [:]
     @Published private(set) var deviceInfo: DeckDeviceInfo?
     @Published private(set) var slots: [DeckSlotInfo] = []
+    /// Stop was pressed while this deck was offline: tell it to stop when it's back.
+    var owesStop = false
     /// Has connected at least once to the current address, so a drop now is a fault.
     @Published private(set) var everConnected = false
 
@@ -65,6 +67,7 @@ final class DeckController: ObservableObject, Identifiable {
         slots = []
         config = [:]
         deviceInfo = nil
+        pollInFlight = false
         everConnected = false   // a new address starts clean
         let trimmed = host.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else {
@@ -155,8 +158,8 @@ final class DeckController: ObservableObject, Identifiable {
 
     /// Sets one configuration value. `done` gets nil on success, or what went wrong.
     func apply(_ key: String, _ value: String, done: @escaping (String?) -> Void) {
-        guard let client else { done("Not connected."); return }
-        client.send(DeckSetupCommand.set(key, value)) { [weak self] r, _, _ in
+        guard client != nil else { done("Not connected."); return }
+        request(DeckSetupCommand.set(key, value)) { [weak self] r, _, _ in
             guard let self else { return }
             if r.isSuccess {
                 self.config[key] = value
@@ -172,9 +175,25 @@ final class DeckController: ObservableObject, Identifiable {
     /// Flashes the deck's front-panel button so it can be found in the rack.
     func identify() { sendQuietly(DeckSetupCommand.identify) }
 
+    /// Every command goes through here. A reply that arrives after this deck was re-pointed at
+    /// another address (or disconnected) is delivered as "connection lost", so nothing from the
+    /// old deck can update this one's state.
+    private func request(_ command: String, _ done: @escaping HyperDeckClient.Completion) {
+        guard let current = client else {
+            let now = HostClock.now()
+            done(HyperDeckResponse(code: HyperDeckClient.connectionLostCode, text: "not connected"), now, now)
+            return
+        }
+        current.send(command) { [weak self, weak current] response, sentAt, receivedAt in
+            let live = current != nil && self?.client === current
+            done(live ? response : HyperDeckResponse(code: HyperDeckClient.connectionLostCode, text: "connection replaced"),
+                 sentAt, receivedAt)
+        }
+    }
+
     /// For optional commands: a deck that doesn't know one shouldn't show an error.
     private func sendQuietly(_ command: String, then: ((HyperDeckResponse) -> Void)? = nil) {
-        client?.send(command) { response, _, _ in then?(response) }
+        request(command) { response, _, _ in then?(response) }
     }
 
     /// Every transport update goes through here so record start/stop is never missed,
@@ -198,8 +217,9 @@ final class DeckController: ObservableObject, Identifiable {
     // MARK: Commands
 
     func send(_ command: String, then: ((HyperDeckResponse) -> Void)? = nil) {
-        client?.send(command) { [weak self] response, _, _ in
-            if response.isError {
+        request(command) { [weak self] response, _, _ in
+            // A dropped link is shown by the connection state, not as a command error.
+            if response.isError, response.code != HyperDeckClient.connectionLostCode {
                 self?.lastError = response.hint ?? "\(command) → \(response.code) \(response.text)"
             }
             then?(response)
@@ -207,14 +227,14 @@ final class DeckController: ObservableObject, Identifiable {
     }
 
     func refreshTransport(_ done: (() -> Void)? = nil) {
-        client?.send(HyperDeckCommand.transportInfo) { [weak self] response, _, _ in
+        request(HyperDeckCommand.transportInfo) { [weak self] response, _, _ in
             if response.isSuccess { self?.mergeTransport(response.fields) }
             done?()
         }
     }
 
     func refreshClips(_ done: (() -> Void)? = nil) {
-        client?.send(HyperDeckCommand.clipsGet) { [weak self] response, _, _ in
+        request(HyperDeckCommand.clipsGet) { [weak self] response, _, _ in
             if response.isSuccess, let self {
                 self.clips = DeckClip.parse(response)
                 self.onClipsRefreshed?()
@@ -265,7 +285,7 @@ final class DeckController: ObservableObject, Identifiable {
 
     func cue(clipID: Int, frame: Int) {
         send(HyperDeckCommand.stop)
-        client?.send(HyperDeckCommand.gotoClip(id: clipID, frame: frame)) { [weak self] response, _, _ in
+        request(HyperDeckCommand.gotoClip(id: clipID, frame: frame)) { [weak self] response, _, _ in
             guard let self, response.isError else { return }
             // Older firmware: one parameter per goto.
             self.send(HyperDeckCommand.gotoClipStart(id: clipID))
@@ -319,9 +339,9 @@ final class DeckController: ObservableObject, Identifiable {
 
     /// Polls transport and hands back the deck timecode with the host time it was valid at.
     func poll(_ result: @escaping (Timecode, Double) -> Void) {
-        guard !pollInFlight, let client else { return }
+        guard !pollInFlight, client != nil else { return }
         pollInFlight = true
-        client.send(HyperDeckCommand.transportInfo) { [weak self] response, sentAt, receivedAt in
+        request(HyperDeckCommand.transportInfo) { [weak self] response, sentAt, receivedAt in
             guard let self else { return }
             self.pollInFlight = false
             guard response.isSuccess else { return }

@@ -75,7 +75,9 @@ final class TakeBackup: ObservableObject {
 
     func cancel() {
         cancelled = true
-        processes.forEach { $0.process.terminate() }
+        // Only a launched process can be terminated (terminate() on one that hasn't started
+        // raises and kills the app); ones not yet launched see `cancelled` and never start.
+        processes.forEach { $0.cancel() }
         for i in jobs.indices where [.waiting, .finding, .copying].contains(jobs[i].state) {
             jobs[i].state = .failed("Cancelled")
         }
@@ -105,7 +107,7 @@ final class TakeBackup: ObservableObject {
         }
         let url = FTPPaths.url(host: host, port: port, path: path)
 
-        let headers = await curl(["-sI", "--fail", "--connect-timeout", "5", url])
+        let headers = await curl(["-sI", "--fail", "--connect-timeout", "5", "--max-time", "20", url])
         let total = headers.status == 0 ? FTPPaths.contentLength(fromHeaders: headers.output) : nil
         update(id) { $0.total = total }
 
@@ -133,7 +135,9 @@ final class TakeBackup: ObservableObject {
                 self?.update(id) { $0.copied = size }
             }
         }
-        var args = ["-s", "--fail", "--connect-timeout", "5", "--ftp-method", "singlecwd", "-o", part.path, url]
+        // A copy that stalls (deck gone mid-transfer) gives up after 20 s without data instead of hanging.
+        var args = ["-s", "--fail", "--connect-timeout", "5", "--speed-limit", "1", "--speed-time", "20",
+                    "--ftp-method", "singlecwd", "-o", part.path, url]
         if let total, let have = Self.size(of: part), have > 0, have < total {
             args.insert(contentsOf: ["-C", "-"], at: 0)   // resume an interrupted copy
         } else {
@@ -165,7 +169,7 @@ final class TakeBackup: ObservableObject {
         var listed = 0
         while !queue.isEmpty, listed < 40, !cancelled {
             let dir = queue.removeFirst()
-            let result = await curl(["-s", "--fail", "--connect-timeout", "5", "--list-only",
+            let result = await curl(["-s", "--fail", "--connect-timeout", "5", "--max-time", "20", "--list-only",
                                      FTPPaths.url(host: host, port: port, path: dir, directory: true)])
             listed += 1
             guard result.status == 0 else { continue }
@@ -193,6 +197,22 @@ final class TakeBackup: ObservableObject {
 
     private final class ProcessBox: @unchecked Sendable {
         let process = Process()
+        private let lock = NSLock()
+        private var cancelled = false
+
+        /// Starts the process unless it was cancelled first.
+        func launch() throws -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            guard !cancelled else { return false }
+            try process.run()
+            return true
+        }
+
+        func cancel() {
+            lock.lock(); defer { lock.unlock() }
+            cancelled = true
+            if process.isRunning { process.terminate() }
+        }
     }
 
     /// Runs /usr/bin/curl; returns its exit status and standard output.
@@ -208,7 +228,10 @@ final class TakeBackup: ObservableObject {
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
                 do {
-                    try box.process.run()
+                    guard try box.launch() else {
+                        continuation.resume(returning: (-1, ""))
+                        return
+                    }
                     let data = out.fileHandleForReading.readDataToEndOfFile()
                     box.process.waitUntilExit()
                     continuation.resume(returning: (box.process.terminationStatus, String(decoding: data, as: UTF8.self)))

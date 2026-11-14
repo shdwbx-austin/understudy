@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import Foundation
 import UnderstudyCore
@@ -94,11 +95,16 @@ final class AppModel: ObservableObject {
             return Set(self.decks.filter(\.isConnected).map { self.settings.decks[$0.id].host.trimmingCharacters(in: .whitespaces) })
         }
         discovery.interface = { [weak self] in self?.settings.discoveryInterface }
-        discovery.startBrowsing()
+        // Bonjour browsing runs only while Assign decks is open, so it never touches decks in use mid-show.
         if loaded.decks.allSatisfy({ $0.host.trimmingCharacters(in: .whitespaces).isEmpty }) {
             discovery.scan()
         }
         showMachine.keepAwake(loaded.keepAwake)
+        // A normal Quit is not a crash: don't come back recording next time.
+        let lastModeKey = Self.lastModeKey
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
+            UserDefaults.standard.set(Mode.stop.rawValue, forKey: lastModeKey)
+        }
         applyConfidence()
         // Back into Record or Play after a restart, if asked. Decks are brought into the mode as
         // they connect (deckReady); a deck that kept recording through the restart is left alone.
@@ -166,6 +172,8 @@ final class AppModel: ObservableObject {
         switch newMode {
         case .stop:
             active.forEach { $0.stopAll() }
+            // Decks offline right now still owe a stop (they may be recording on their own).
+            for deck in decks where settings.decks[deck.id].enabled && !deck.isConnected { deck.owesStop = true }
             scheduleTakeRefresh()
         case .record:
             active.forEach { arm($0) }
@@ -184,7 +192,11 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The drop-frame setting decks were armed with, to catch arming before the rate was known.
+    private var armedDropFrame: Bool?
+
     private func arm(_ deck: DeckController) {
+        armedDropFrame = ltcRate.isDropFrame
         deck.arm(prefix: settings.decks[deck.id].name, mode: settings.recordMode, dropFrame: ltcRate.isDropFrame)
     }
 
@@ -194,10 +206,14 @@ final class AppModel: ObservableObject {
         guard settings.decks[deck.id].enabled else { return }
         switch mode {
         case .stop:
-            break
+            // Missed a Stop while offline: stop it now.
+            if deck.owesStop { deck.stopAll() }
+            deck.owesStop = false
         case .record:
+            deck.owesStop = false
             if deck.transport.status != .record { arm(deck) }
         case .playback:
+            deck.owesStop = false
             deck.enterPlayback { [weak self] in self?.rebuildTakes() }
         }
     }
@@ -591,6 +607,10 @@ final class AppModel: ObservableObject {
         var warning: String?
         if !settings.ltcRateAuto, let detected = rateDetector.detected, detected != settings.ltcRate {
             warning = "Incoming LTC looks like \(detected.rawValue); rate is set to \(settings.ltcRate.rawValue)."
+        }
+        if mode == .record, settings.recordMode == .continuous, rateKnown,
+           let armed = armedDropFrame, armed != ltcRate.isDropFrame {
+            warning = "Decks were armed \(armed ? "drop-frame" : "non-drop") before the show rate was known. Stop and record again to match \(ltcRate.rawValue)."
         }
         if warning != ltcWarning { ltcWarning = warning }
     }

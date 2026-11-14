@@ -52,6 +52,11 @@ final class DeckDiscovery: ObservableObject {
 
     // MARK: Bonjour
 
+    func stopBrowsing() {
+        browsers.forEach { $0.cancel() }
+        browsers.removeAll()
+    }
+
     func startBrowsing() {
         guard browsers.isEmpty else { return }
         for type in Self.serviceTypes {
