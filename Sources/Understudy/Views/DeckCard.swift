@@ -1,5 +1,5 @@
 import SwiftUI
-import Cam4ProgCore
+import UnderstudyCore
 
 struct DeckCard: View {
     @EnvironmentObject private var model: AppModel

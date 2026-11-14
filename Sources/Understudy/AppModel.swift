@@ -1,6 +1,6 @@
 import AVFoundation
 import Foundation
-import Cam4ProgCore
+import UnderstudyCore
 
 struct Take: Identifiable, Hashable {
     /// 0 = latest take.
@@ -248,7 +248,7 @@ final class AppModel: ObservableObject {
                 }
             }
         default:
-            audioError = "Audio input is blocked. Allow cam4prog in System Settings › Privacy & Security › Microphone."
+            audioError = "Audio input is blocked. Allow Understudy in System Settings › Privacy & Security › Microphone."
         }
     }
 

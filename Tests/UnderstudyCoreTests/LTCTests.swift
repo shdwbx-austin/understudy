@@ -1,5 +1,5 @@
 import Testing
-@testable import Cam4ProgCore
+@testable import UnderstudyCore
 
 struct LTCTests {
     private func decode(_ samples: [Float], sampleRate: Double) -> [LTCFrame] {

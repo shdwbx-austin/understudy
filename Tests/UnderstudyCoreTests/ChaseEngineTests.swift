@@ -1,5 +1,5 @@
 import Testing
-@testable import Cam4ProgCore
+@testable import UnderstudyCore
 
 struct ChaseEngineTests {
     private var settings: ChaseSettings {

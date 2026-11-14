@@ -2,11 +2,11 @@ import AppKit
 import SwiftUI
 
 @main
-struct Cam4ProgApp: App {
+struct UnderstudyApp: App {
     @StateObject private var model = AppModel()
 
     var body: some Scene {
-        WindowGroup("cam4prog") {
+        WindowGroup("Understudy") {
             ContentView()
                 .environmentObject(model)
                 .onAppear {

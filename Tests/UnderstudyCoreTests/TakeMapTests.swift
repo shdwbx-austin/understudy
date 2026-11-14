@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import Cam4ProgCore
+@testable import UnderstudyCore
 
 struct TakeMapTests {
     /// Readings every 0.1 s while recording: show code `ltc0 + t`, deck clock `deck0 + t`,

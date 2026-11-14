@@ -1,6 +1,6 @@
 import Foundation
 import Network
-import Cam4ProgCore
+import UnderstudyCore
 
 /// One TCP session to a HyperDeck on port 9993. Responses to commands arrive in order,
 /// so completions are matched FIFO; 5xx messages are routed to `onAsync`.
@@ -28,7 +28,7 @@ final class HyperDeckClient: @unchecked Sendable {
 
     init(host: String) {
         self.host = host
-        queue = DispatchQueue(label: "cam4prog.hyperdeck.\(host)", qos: .userInteractive)
+        queue = DispatchQueue(label: "understudy.hyperdeck.\(host)", qos: .userInteractive)
     }
 
     func connect() {

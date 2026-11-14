@@ -2,7 +2,8 @@
 
 ## 0.2.0 — unreleased
 
-- **Recording no longer depends on show timecode.** In the new default mode, decks record from REC until STOP, stamped with their own clock. cam4prog logs show LTC against each take as a timecode map, so dropouts and jumps no longer stop or break a recording.
+- **Renamed from cam4prog to Understudy.** The bundle ID is unchanged, so saved settings and macOS permissions carry over. Saved take maps move to the new folder on first launch.
+- **Recording no longer depends on show timecode.** In the new default mode, decks record from REC until STOP, stamped with their own clock. Understudy logs show LTC against each take as a timecode map, so dropouts and jumps no longer stop or break a recording.
 - Playback looks show code up in the take's map: it holds at gaps, re-parks at jumps, and plays the latest pass of re-rolled code. Takes without a map play from clip timecode, as before.
 - **Show timecode rate is detected automatically** from incoming LTC (23.976, 24, 25, 29.97 DF/NDF, 30), and playback follows it. A fixed rate is still available.
 - LTC frames now reach the app strictly in order.

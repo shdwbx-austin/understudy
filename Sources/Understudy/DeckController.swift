@@ -1,5 +1,5 @@
 import Foundation
-import Cam4ProgCore
+import UnderstudyCore
 
 @MainActor
 final class DeckController: ObservableObject, Identifiable {
@@ -149,7 +149,7 @@ final class DeckController: ObservableObject, Identifiable {
         case .continuous:
             send(HyperDeckCommand.recordTrigger(timecodeRun: false))
             send(HyperDeckCommand.timecodeInputInternal)
-            // The deck's clock must count the same way as show code (cam4prog reads both with the show rate's drop-frame setting).
+            // The deck's clock must count the same way as show code (Understudy reads both with the show rate's drop-frame setting).
             send(HyperDeckCommand.timecodePreference(dropFrame: dropFrame))
             send(HyperDeckCommand.preview(true))
             send(HyperDeckCommand.record)

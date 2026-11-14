@@ -1,8 +1,8 @@
 import Foundation
-import Cam4ProgCore
+import UnderstudyCore
 
 /// Keeps one deck's take maps on disk:
-/// ~/Library/Application Support/cam4prog/takemaps/deck-N.json
+/// ~/Library/Application Support/Understudy/takemaps/deck-N.json
 ///
 /// A map is built while the deck records (`inProgress`, saved every few seconds so a crash loses
 /// little), becomes `pending` when recording stops, and is filed under its clip(s) once the deck's
@@ -39,9 +39,15 @@ final class TakeMapStore {
     private let url: URL?
 
     init(deckID: Int) {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("cam4prog/takemaps", isDirectory: true)
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        let dir = support?.appendingPathComponent("Understudy/takemaps", isDirectory: true)
         url = dir?.appendingPathComponent("deck-\(deckID + 1).json")
+        // Maps saved before the rename from cam4prog.
+        if let url, let old = support?.appendingPathComponent("cam4prog/takemaps/deck-\(deckID + 1).json"),
+           !FileManager.default.fileExists(atPath: url.path), FileManager.default.fileExists(atPath: old.path) {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? FileManager.default.moveItem(at: old, to: url)
+        }
         if let url, let data = try? Data(contentsOf: url),
            let loaded = try? JSONDecoder().decode(Contents.self, from: data) {
             contents = loaded
@@ -122,7 +128,7 @@ final class TakeMapStore {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(contents).write(to: url, options: .atomic)
         } catch {
-            NSLog("cam4prog: couldn't save take maps: \(error.localizedDescription)")
+            NSLog("Understudy: couldn't save take maps: \(error.localizedDescription)")
         }
     }
 }

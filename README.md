@@ -1,4 +1,6 @@
-# cam4prog
+# Understudy
+
+**Stands in for the cameras between run-throughs.**
 
 Record four broadcast MEs on HyperDecks, then play them back into the disguise capture inputs locked to show timecode — so you can program against real SDI between run-throughs, with no files to copy and no transcoding.
 
@@ -18,28 +20,28 @@ After a run-through, hit **PLAY TC**. The latest take is selected, and the decks
 
 ### Recording survives timecode failures
 
-By default the decks record continuously from **REC** until **STOP**, stamped with their own clock. Show LTC doesn't start or stop anything. While they record, cam4prog reads each deck's timecode ten times a second, pairs it with show LTC at that instant, and saves a timecode map for the take.
+By default the decks record continuously from **REC** until **STOP**, stamped with their own clock. Show LTC doesn't start or stop anything. While they record, Understudy reads each deck's timecode ten times a second, pairs it with show LTC at that instant, and saves a timecode map for the take.
 
 - **LTC drops out:** the decks keep recording. Code that never arrived just isn't in the map. If code comes back where it should be, the map carries straight across the gap.
 - **LTC jumps** (per-song code, a re-roll): the map starts a new stretch. If the same code is rolled twice in one take, playback uses the later pass.
 - **Short dropouts:** the show clock coasts (freewheels) for 2 s by default, so a glitch doesn't stop playback or re-park the decks. The header shows **FREEWHEEL · NO LTC** while it coasts.
 
-Maps live in `~/Library/Application Support/cam4prog/takemaps/`. The map in progress is saved every 5 s, so a crash mid-take loses only a few seconds of it.
+Maps live in `~/Library/Application Support/Understudy/takemaps/`. The map in progress is saved every 5 s, so a crash mid-take loses only a few seconds of it.
 
 If you'd rather have the decks record only while code runs and stamp clips with show code (v0.1.0 behaviour), choose **Settings › Recording › Only while show timecode runs**. A dropout then stops the recording. Takes without a map are played back from their clip timecode, so recordings made that way, or with 0.1.0, still work.
 
 ### Timecode rate is detected automatically
 
-cam4prog works out the show timecode rate from the incoming LTC and follows it, including drop-frame. It can tell 23.976 from 24 and 29.97 from 30, timing frames on the audio sample clock, within about 2 seconds of code. The header shows **AUTO 29.97 DF** (or whatever it found) and the measured rate.
+Understudy works out the show timecode rate from the incoming LTC and follows it, including drop-frame. It can tell 23.976 from 24 and 29.97 from 30, timing frames on the audio sample clock, within about 2 seconds of code. The header shows **AUTO 29.97 DF** (or whatever it found) and the measured rate.
 
 - **Before the rate is known**, recording logs and playback wait. That's only the first couple of seconds of code after launch or after changing the audio input. Decks still record.
-- **If the show switches to a different rate**, the new rate must hold for 2 seconds before cam4prog follows it.
+- **If the show switches to a different rate**, the new rate must hold for 2 seconds before Understudy follows it.
 - **Takes stay valid across rates**, because take maps are stored in seconds.
 - **A fixed rate** can be set under **Settings › LTC input › Show timecode rate**. The header then warns if incoming code doesn't match it.
 
 ### Playback
 
-HyperDecks can't chase LTC natively. cam4prog reads the show LTC itself and handles each deck in four steps:
+HyperDecks can't chase LTC natively. Understudy reads the show LTC itself and handles each deck in four steps:
 
 1. It looks the incoming code up in the take's map and parks the deck slightly ahead (pre-roll).
 2. It fires `play` when code reaches that point, early by the deck's start latency.
@@ -66,7 +68,7 @@ Lock the LTC generator to house ref, like the decks. If the two clocks drift apa
 - Give each deck a static IP on the same network as the Mac.
 - Feed house ref into **Ref In**.
 - Format SSDs. All four decks should use the same codec and the same video format.
-- Everything else is set by cam4prog when you change mode: remote override, timecode input, record trigger, record prefix (deck name), preview/output, and timecode output = clip.
+- Everything else is set by Understudy when you change mode: remote override, timecode input, record trigger, record prefix (deck name), preview/output, and timecode output = clip.
 
 ## App setup
 
@@ -95,7 +97,7 @@ This build is unit-tested on the timecode, LTC, protocol, take-map and chase log
 5. **Dropout drill.** Pull the LTC cable mid-REC for 10 s, plug it back, STOP, then PLAY TC through that section. Then try a timecode jump mid-take.
 6. **Play latency.** Check Δ after a few rolls and calibrate.
 7. **Pass-through.** In STOP / REC, confirm the deck's SDI out passes the live input to disguise.
-8. **Local network permission (macOS 15+).** On first launch, allow cam4prog when macOS asks.
+8. **Local network permission (macOS 15+).** On first launch, allow Understudy when macOS asks.
 
 ## Build
 
@@ -103,8 +105,8 @@ Runs on macOS 13+. Building needs Swift 6 (Xcode 16 or its Command Line Tools).
 
 ```sh
 ./scripts/test.sh          # core logic tests (Swift Testing; works without Xcode)
-swift run Cam4Prog         # run unbundled while developing
-./scripts/build-app.sh     # dist/cam4prog.app + zip (ad-hoc signed)
+swift run Understudy         # run unbundled while developing
+./scripts/build-app.sh     # dist/Understudy.app + zip (ad-hoc signed)
 ```
 
 `build-app.sh` makes a universal (Apple silicon + Intel) app when full Xcode is installed, and an app for this Mac's chip otherwise.
@@ -116,8 +118,8 @@ The first launch of an ad-hoc signed build needs right-click → **Open**.
 ## Layout
 
 ```
-Sources/Cam4ProgCore   timecode math, LTC decoder/encoder, HyperDeck protocol, take maps, chase engine, settings (pure, tested)
-Sources/Cam4Prog       SwiftUI app, Core Audio LTC input, Network.framework deck client, take map storage
+Sources/UnderstudyCore   timecode math, LTC decoder/encoder, HyperDeck protocol, take maps, chase engine, settings (pure, tested)
+Sources/Understudy       SwiftUI app, Core Audio LTC input, Network.framework deck client, take map storage
 Tests/                 Swift Testing suites for the core
 scripts/               test.sh, build-app.sh
 ```

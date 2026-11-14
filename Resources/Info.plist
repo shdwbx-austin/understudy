@@ -5,13 +5,13 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>Cam4Prog</string>
+    <string>Understudy</string>
     <key>CFBundleIdentifier</key>
     <string>com.shdwbx.cam4prog</string>
     <key>CFBundleName</key>
-    <string>cam4prog</string>
+    <string>Understudy</string>
     <key>CFBundleDisplayName</key>
-    <string>cam4prog</string>
+    <string>Understudy</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -27,9 +27,9 @@
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>cam4prog reads show LTC timecode from an audio input.</string>
+    <string>Understudy reads show LTC timecode from an audio input.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>cam4prog controls HyperDeck recorders on your show network.</string>
+    <string>Understudy controls HyperDeck recorders on your show network.</string>
     <key>NSHumanReadableCopyright</key>
     <string>Shdwbx · Design and Creative Support</string>
 </dict>

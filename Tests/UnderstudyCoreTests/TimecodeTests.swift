@@ -1,5 +1,5 @@
 import Testing
-@testable import Cam4ProgCore
+@testable import UnderstudyCore
 
 struct TimecodeTests {
     @Test(arguments: [FrameRate.fps29_97DF, .fps59_94DF, .fps25, .fps23_976])

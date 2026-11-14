@@ -1,5 +1,5 @@
 import Testing
-@testable import Cam4ProgCore
+@testable import UnderstudyCore
 
 struct LTCRateDetectorTests {
     /// Feeds `seconds` of frames at `rate`, starting at `t0`, with up to ±`jitter` s timing noise.

@@ -1,5 +1,5 @@
 import SwiftUI
-import Cam4ProgCore
+import UnderstudyCore
 
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
@@ -37,7 +37,7 @@ struct SettingsView: View {
                     }
                 }
                 Text(model.settings.ltcRateAuto
-                     ? "cam4prog measures the incoming LTC (\(model.rateLabel.replacingOccurrences(of: "AUTO", with: "now").trimmingCharacters(in: .whitespaces))) and follows it, including drop-frame. Recording logs and playback wait the first couple of seconds of code until the rate is known."
+                     ? "Understudy measures the incoming LTC (\(model.rateLabel.replacingOccurrences(of: "AUTO", with: "now").trimmingCharacters(in: .whitespaces))) and follows it, including drop-frame. Recording logs and playback wait the first couple of seconds of code until the rate is known."
                      : "Fixed rate. The header warns if incoming LTC doesn't match.")
                     .font(.caption).foregroundStyle(.secondary)
                 Button("Rescan devices") { model.refreshAudioDevices() }
@@ -49,7 +49,7 @@ struct SettingsView: View {
                     Text("Only while show timecode runs").tag(RecordMode.timecodeRun)
                 }
                 Text(model.settings.recordMode == .continuous
-                     ? "Decks record from REC until STOP, stamped with their own clock. cam4prog logs show code against each take, so LTC dropouts and jumps don't stop or break a recording."
+                     ? "Decks record from REC until STOP, stamped with their own clock. Understudy logs show code against each take, so LTC dropouts and jumps don't stop or break a recording."
                      : "Each deck records only while its LTC input runs and stamps clips with show code. If LTC drops, the deck stops recording.")
                     .font(.caption).foregroundStyle(.secondary)
             }

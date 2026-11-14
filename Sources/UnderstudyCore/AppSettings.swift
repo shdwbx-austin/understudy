@@ -1,7 +1,7 @@
 import Foundation
 
 public enum RecordMode: String, Codable, CaseIterable, Sendable, Identifiable {
-    /// Decks record from REC until STOP, stamped with their own clock; cam4prog logs show code
+    /// Decks record from REC until STOP, stamped with their own clock; Understudy logs show code
     /// against the recording. Survives LTC dropouts and jumps.
     case continuous
     /// Decks record only while show LTC runs, using their own timecode-run trigger, and stamp

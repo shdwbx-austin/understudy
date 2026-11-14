@@ -1,6 +1,6 @@
 import AVFoundation
 import CoreAudio
-import Cam4ProgCore
+import UnderstudyCore
 
 enum HostClock {
     static func now() -> Double { AVAudioTime.seconds(forHostTime: mach_absolute_time()) }

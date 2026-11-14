@@ -1,5 +1,5 @@
 import SwiftUI
-import Cam4ProgCore
+import UnderstudyCore
 
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
@@ -36,9 +36,9 @@ private struct Header: View {
     var body: some View {
         HStack(alignment: .lastTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("cam4prog")
+                Text("Understudy")
                     .font(Theme.display(30, weight: .semibold))
-                Text("ME record & timecode playback for programming")
+                Text("Stands in for the cameras between run-throughs")
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.dim)
             }

@@ -91,7 +91,7 @@ public enum HyperDeckCommand {
     public static func recordPrefix(_ name: String) -> String {
         let safe = name.unicodeScalars
             .map { CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_" ? Character($0) : "_" }
-        return "configuration: record prefix: \(String(safe).isEmpty ? "cam4prog" : String(safe))"
+        return "configuration: record prefix: \(String(safe).isEmpty ? "understudy" : String(safe))"
     }
 
     /// Go to clip `id`, offset `frame` frames from its start.
