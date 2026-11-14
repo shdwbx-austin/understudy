@@ -28,7 +28,22 @@ struct SettingsView: View {
                         Text("\(device.name) (\(device.channels) ch)").tag(Optional(device.uid))
                     }
                 }
-                Stepper("Channel \(model.settings.audioChannel + 1)", value: $model.settings.audioChannel, in: 0...63)
+                if model.inputChannelNames.isEmpty {
+                    Text("No input open.").foregroundStyle(.secondary)
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("LTC channel — click to choose").font(.caption).foregroundStyle(.secondary)
+                        ForEach(model.inputChannelNames.indices, id: \.self) { index in
+                            ChannelRow(
+                                index: index,
+                                name: model.inputChannelNames[index],
+                                db: model.inputLevels.indices.contains(index) ? model.inputLevels[index] : -60,
+                                selected: index == model.settings.audioChannel,
+                                ltc: index == model.settings.audioChannel && model.ltcInfo != "NO LTC"
+                            ) { model.settings.audioChannel = index }
+                        }
+                    }
+                }
                 Picker("Show timecode rate", selection: rateChoice) {
                     Text("Auto-detect").tag("auto")
                     Divider()
@@ -73,5 +88,35 @@ struct SettingsView: View {
         .formStyle(.grouped)
         .frame(width: 520)
         .padding(.vertical, 8)
+    }
+}
+
+/// One input channel: name, live level, and whether it carries the LTC in use.
+private struct ChannelRow: View {
+    let index: Int
+    let name: String
+    let db: Float
+    let selected: Bool
+    let ltc: Bool
+    let choose: () -> Void
+
+    var body: some View {
+        Button(action: choose) {
+            HStack(spacing: 8) {
+                Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(selected ? Color.accentColor : .secondary)
+                Text("Ch \(index + 1)").monospacedDigit().frame(width: 44, alignment: .leading)
+                Text(name).foregroundStyle(.secondary).lineLimit(1)
+                Spacer(minLength: 8)
+                if ltc {
+                    Text("LTC").font(.caption.bold()).foregroundStyle(Theme.live)
+                }
+                LevelMeter(db: db).frame(width: 150)
+                Text(LevelMeter.label(db)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                    .frame(width: 48, alignment: .trailing)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

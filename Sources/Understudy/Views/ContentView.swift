@@ -173,8 +173,13 @@ private struct Footer: View {
                     Text(error).foregroundStyle(Theme.caution)
                 } else {
                     let name = model.audioDevices.first { $0.uid == model.settings.audioDeviceUID }?.name ?? "System default input"
-                    Text("LTC IN  \(name) · ch \(model.settings.audioChannel + 1)")
+                    let channel = model.settings.audioChannel
+                    let channelName = model.inputChannelNames.indices.contains(channel) ? model.inputChannelNames[channel] : ""
+                    let db = model.inputLevels.indices.contains(channel) ? model.inputLevels[channel] : -60
+                    Text("LTC IN  \(name) · ch \(channel + 1)\(channelName.isEmpty ? "" : " \(channelName)")")
                         .foregroundStyle(Theme.dim)
+                    LevelMeter(db: db).frame(width: 120)
+                    Text(LevelMeter.label(db)).foregroundStyle(Theme.dim).frame(width: 48, alignment: .trailing)
                 }
                 Spacer()
                 Text("⌘, settings").foregroundStyle(Theme.dim)

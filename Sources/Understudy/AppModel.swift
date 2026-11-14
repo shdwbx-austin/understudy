@@ -35,6 +35,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var ltcWarning: String?
     @Published private(set) var audioDevices: [AudioInputDevice] = []
     @Published private(set) var audioError: String?
+    /// Peak level per channel of the open input, dBFS (−60…0), with meter-style fall-off.
+    @Published private(set) var inputLevels: [Float] = []
+    /// The open input's channels, as the device names them ("" where it doesn't).
+    @Published private(set) var inputChannelNames: [String] = []
     @Published private(set) var takes: [Take] = []
     @Published var selectedTake = 0 {
         didSet { if selectedTake != oldValue { decks.forEach { $0.resetChase() } } }
@@ -256,14 +260,40 @@ final class AppModel: ObservableObject {
         let device = audioDevices.first { $0.uid == settings.audioDeviceUID }
         do {
             rateDetector = LTCRateDetector()
-            try audio.start(deviceID: device?.id, channel: settings.audioChannel) { [weak self] event in
-                // The main queue keeps frames in order; separate Tasks don't guarantee that.
-                DispatchQueue.main.async { MainActor.assumeIsolated { self?.ingest(event) } }
-            }
+            try audio.start(
+                deviceID: device?.id,
+                channel: settings.audioChannel,
+                onFrame: { [weak self] event in
+                    // The main queue keeps frames in order; separate Tasks don't guarantee that.
+                    DispatchQueue.main.async { [self] in MainActor.assumeIsolated { self?.ingest(event) } }
+                },
+                onLevels: { [weak self] peaks in
+                    DispatchQueue.main.async { [self] in MainActor.assumeIsolated { self?.ingestLevels(peaks) } }
+                }
+            )
             audioError = nil
         } catch {
             audioError = error.localizedDescription
         }
+        let count = audio.channelCount
+        let deviceID = device?.id ?? AudioDeviceCatalog.defaultInputDeviceID()
+        inputChannelNames = deviceID.map { AudioDeviceCatalog.inputChannelNames($0, count: count) }
+            ?? Array(repeating: "", count: count)
+        inputLevels = Array(repeating: -60, count: count)
+        // The chosen channel doesn't exist on this device: fall back to its first channel.
+        if count > 0, settings.audioChannel >= count {
+            settings.audioChannel = 0
+        }
+    }
+
+    private func ingestLevels(_ peaks: [Float]) {
+        let fall: Float = 1.2   // dB per update (~24 dB/s)
+        var levels = inputLevels.count == peaks.count ? inputLevels : Array(repeating: -60, count: peaks.count)
+        for (i, peak) in peaks.enumerated() {
+            let db = min(0, max(-60, 20 * log10(max(peak, 1e-6))))
+            levels[i] = max(db, levels[i] - fall)
+        }
+        if levels != inputLevels { inputLevels = levels }
     }
 
     private func ingest(_ event: AudioLTCInput.Event) {

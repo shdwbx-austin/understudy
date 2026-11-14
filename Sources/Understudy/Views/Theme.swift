@@ -53,3 +53,30 @@ struct StatusDot: View {
         Circle().fill(color).frame(width: 8, height: 8)
     }
 }
+
+/// Horizontal peak meter, −60…0 dBFS. Green, amber above −12, red above −3.
+struct LevelMeter: View {
+    let db: Float
+
+    var body: some View {
+        GeometryReader { geo in
+            let fraction = CGFloat(max(0, min(1, (db + 60) / 60)))
+            ZStack(alignment: .leading) {
+                Rectangle().fill(Theme.rule.opacity(0.6))
+                Rectangle().fill(color).frame(width: geo.size.width * fraction)
+            }
+        }
+        .frame(height: 8)
+        .accessibilityLabel(Text(LevelMeter.label(db)))
+    }
+
+    private var color: Color {
+        if db > -3 { return Theme.record }
+        if db > -12 { return Theme.caution }
+        return Theme.live
+    }
+
+    static func label(_ db: Float) -> String {
+        db <= -59.5 ? "−∞ dB" : String(format: "%.0f dB", db)
+    }
+}

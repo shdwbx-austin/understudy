@@ -72,7 +72,7 @@ Lock the LTC generator to house ref, like the decks. If the two clocks drift apa
 
 ## App setup
 
-1. Open **Settings** (`⌘,`). Pick the audio interface and channel carrying LTC. The show timecode rate is detected automatically (see below); you can fix it instead if you prefer.
+1. Open **Settings** (`⌘,`) and pick the audio interface. Settings lists that device's input channels, by the device's own channel names, each with a live level meter. Click the one carrying LTC; it's marked **LTC** once code decodes. The show timecode rate is detected automatically (see below); you can fix it instead if you prefer. The main window's footer keeps a meter on the LTC channel.
 2. Type each deck's IP into its card and press return. The dot goes green and the card shows the model.
 3. Check that each card reads **REF LOCKED**.
 

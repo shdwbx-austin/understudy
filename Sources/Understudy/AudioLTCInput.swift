@@ -1,4 +1,5 @@
 import AVFoundation
+import Accelerate
 import CoreAudio
 import UnderstudyCore
 
@@ -37,6 +38,38 @@ enum AudioDeviceCatalog {
         }
     }
 
+    /// The system's default input device.
+    static func defaultInputDeviceID() -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var id = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &id) == noErr,
+              id != 0 else { return nil }
+        return id
+    }
+
+    /// Input channel names as the device reports them ("Analog 1", "Mic/Line 2"…), or "" where it doesn't.
+    static func inputChannelNames(_ id: AudioDeviceID, count: Int) -> [String] {
+        (1...max(1, count)).prefix(count).map { channel in
+            var address = AudioObjectPropertyAddress(
+                mSelector: kAudioObjectPropertyElementName,
+                mScope: kAudioDevicePropertyScopeInput,
+                mElement: AudioObjectPropertyElement(channel)
+            )
+            var value: Unmanaged<CFString>?
+            var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            guard AudioObjectHasProperty(id, &address),
+                  AudioObjectGetPropertyData(id, &address, 0, nil, &size, &value) == noErr,
+                  let value
+            else { return "" }
+            return value.takeRetainedValue() as String
+        }
+    }
+
     private static func inputChannelCount(_ id: AudioDeviceID) -> Int {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamConfiguration,
@@ -65,8 +98,22 @@ enum AudioDeviceCatalog {
     }
 }
 
-/// Reads one channel of an audio input and decodes LTC on the audio thread.
+/// Reads an audio input on the audio thread: decodes LTC from one channel and meters every channel.
 final class AudioLTCInput {
+    /// Peak level per channel (linear, 0…1), about 20 times a second.
+    typealias LevelHandler = @Sendable ([Float]) -> Void
+
+    /// Peak accumulator, touched only on the audio thread.
+    private final class Meter: @unchecked Sendable {
+        var peaks: [Float]
+        var samples = 0
+        let interval: Int
+        init(channels: Int, interval: Int) {
+            peaks = Array(repeating: 0, count: channels)
+            self.interval = interval
+        }
+    }
+
     struct Event: Sendable {
         let timecode: Timecode
         let dropFrame: Bool
@@ -91,8 +138,15 @@ final class AudioLTCInput {
 
     private var engine = AVAudioEngine()
     private var running = false
+    /// Channels on the open input (0 when closed).
+    private(set) var channelCount = 0
 
-    func start(deviceID: AudioDeviceID?, channel: Int, onFrame: @escaping @Sendable (Event) -> Void) throws {
+    func start(
+        deviceID: AudioDeviceID?,
+        channel: Int,
+        onFrame: @escaping @Sendable (Event) -> Void,
+        onLevels: @escaping LevelHandler
+    ) throws {
         stop()
         engine = AVAudioEngine()
         let input = engine.inputNode
@@ -114,10 +168,25 @@ final class AudioLTCInput {
         let sampleRate = format.sampleRate
         let channelIndex = min(max(0, channel), Int(format.channelCount) - 1)
         let decoder = LTCDecoder(sampleRate: sampleRate)
+        let channelTotal = Int(format.channelCount)
+        let meter = Meter(channels: channelTotal, interval: Int(sampleRate / 20))
 
         input.installTap(onBus: 0, bufferSize: 512, format: format) { buffer, when in
             guard let channels = buffer.floatChannelData else { return }
             let count = Int(buffer.frameLength)
+
+            for c in 0..<min(channelTotal, Int(buffer.format.channelCount)) {
+                var peak: Float = 0
+                vDSP_maxmgv(channels[c], 1, &peak, vDSP_Length(count))
+                meter.peaks[c] = max(meter.peaks[c], peak)
+            }
+            meter.samples += count
+            if meter.samples >= meter.interval {
+                onLevels(meter.peaks)
+                meter.peaks = Array(repeating: 0, count: channelTotal)
+                meter.samples = 0
+            }
+
             let bufferStart = when.isHostTimeValid
                 ? AVAudioTime.seconds(forHostTime: when.hostTime)
                 : HostClock.now() - Double(count) / sampleRate
@@ -135,6 +204,7 @@ final class AudioLTCInput {
         engine.prepare()
         try engine.start()
         running = true
+        channelCount = channelTotal
     }
 
     func stop() {
@@ -142,5 +212,6 @@ final class AudioLTCInput {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         running = false
+        channelCount = 0
     }
 }
