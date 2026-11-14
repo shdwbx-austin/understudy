@@ -40,8 +40,16 @@ final class DeckController: ObservableObject, Identifiable {
             return
         }
         let client = HyperDeckClient(host: trimmed)
-        client.onState = { [weak self] state in self?.handleState(state) }
-        client.onAsync = { [weak self] response in self?.handleAsync(response) }
+        // Ignore anything still arriving from a previous client (e.g. its `.disconnected`
+        // landing after the new one has connected).
+        client.onState = { [weak self, weak client] state in
+            guard let self, let client, self.client === client else { return }
+            self.handleState(state)
+        }
+        client.onAsync = { [weak self, weak client] response in
+            guard let self, let client, self.client === client else { return }
+            self.handleAsync(response)
+        }
         self.client = client
         client.connect()
     }

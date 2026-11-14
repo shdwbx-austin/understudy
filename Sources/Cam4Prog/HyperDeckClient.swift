@@ -4,7 +4,7 @@ import Cam4ProgCore
 
 /// One TCP session to a HyperDeck on port 9993. Responses to commands arrive in order,
 /// so completions are matched FIFO; 5xx messages are routed to `onAsync`.
-/// All socket state lives on `queue`; callbacks are delivered on the main actor.
+/// All socket state lives on `queue`; callbacks are delivered on the main actor, in arrival order.
 final class HyperDeckClient: @unchecked Sendable {
     enum State: Equatable {
         case disconnected
@@ -13,11 +13,12 @@ final class HyperDeckClient: @unchecked Sendable {
         case failed(String)
     }
 
-    typealias Completion = @MainActor (_ response: HyperDeckResponse, _ sentAt: Double, _ receivedAt: Double) -> Void
+    typealias Completion = @MainActor @Sendable (_ response: HyperDeckResponse, _ sentAt: Double, _ receivedAt: Double) -> Void
 
     let host: String
-    var onState: (@MainActor (State) -> Void)?
-    var onAsync: (@MainActor (HyperDeckResponse) -> Void)?
+    /// Set these before `connect()`; they are read on `queue`.
+    var onState: (@MainActor @Sendable (State) -> Void)?
+    var onAsync: (@MainActor @Sendable (HyperDeckResponse) -> Void)?
 
     private let queue: DispatchQueue
     private var connection: NWConnection?
@@ -52,7 +53,7 @@ final class HyperDeckClient: @unchecked Sendable {
             guard let connection else {
                 if let completion {
                     let now = HostClock.now()
-                    Task { @MainActor in completion(HyperDeckResponse(code: 120, text: "not connected"), now, now) }
+                    Self.onMain { completion(HyperDeckResponse(code: 120, text: "not connected"), now, now) }
                 }
                 return
             }
@@ -107,14 +108,14 @@ final class HyperDeckClient: @unchecked Sendable {
         let now = HostClock.now()
         for response in parser.feed(bytes) {
             if response.isAsync {
-                if let onAsync { Task { @MainActor in onAsync(response) } }
+                if let onAsync { Self.onMain { onAsync(response) } }
                 continue
             }
             guard !pending.isEmpty else { continue }
             let item = pending.removeFirst()
             if let completion = item.completion {
                 let sentAt = item.sentAt
-                Task { @MainActor in completion(response, sentAt, now) }
+                Self.onMain { completion(response, sentAt, now) }
             }
         }
     }
@@ -139,12 +140,18 @@ final class HyperDeckClient: @unchecked Sendable {
         for item in items {
             if let completion = item.completion {
                 let sentAt = item.sentAt
-                Task { @MainActor in completion(HyperDeckResponse(code: 120, text: "connection lost"), sentAt, now) }
+                Self.onMain { completion(HyperDeckResponse(code: 120, text: "connection lost"), sentAt, now) }
             }
         }
     }
 
     private func emit(_ state: State) {
-        if let onState { Task { @MainActor in onState(state) } }
+        if let onState { Self.onMain { onState(state) } }
+    }
+
+    /// The main queue is FIFO, so state changes, async messages and completions reach the
+    /// main actor in the order the deck sent them. Separate `Task`s don't guarantee that.
+    private static func onMain(_ work: @escaping @MainActor @Sendable () -> Void) {
+        DispatchQueue.main.async { MainActor.assumeIsolated(work) }
     }
 }

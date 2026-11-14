@@ -11,7 +11,7 @@ struct DeckConfig: Codable, Equatable, Identifiable {
 }
 
 struct AppSettings: Codable, Equatable {
-    var decks: [DeckConfig] = (1...4).map { DeckConfig(id: $0 - 1, name: "ME \($0)", host: "") }
+    var decks: [DeckConfig] = (1...AppSettings.deckCount).map { DeckConfig(id: $0 - 1, name: "ME \($0)", host: "") }
     var ltcRate: FrameRate = .fps29_97DF
     var audioDeviceUID: String?
     var audioChannel: Int = 0
@@ -24,11 +24,26 @@ struct AppSettings: Codable, Equatable {
 
     private static let key = "cam4prog.settings.v1"
 
+    static let deckCount = 4
+
     static func load() -> AppSettings {
         guard let data = UserDefaults.standard.data(forKey: key),
-              let settings = try? JSONDecoder().decode(AppSettings.self, from: data)
+              var settings = try? JSONDecoder().decode(AppSettings.self, from: data)
         else { return AppSettings() }
+        settings.normalizeDecks()
         return settings
+    }
+
+    /// The app indexes decks by `id`, so ids must be exactly 0..<deckCount in order.
+    /// Repairs stored settings that don't match rather than crashing on launch.
+    mutating func normalizeDecks() {
+        let defaults = AppSettings().decks
+        decks = (0..<Self.deckCount).map { index in
+            guard var deck = decks.first(where: { $0.id == index }) ?? (decks.indices.contains(index) ? decks[index] : nil)
+            else { return defaults[index] }
+            deck.id = index
+            return deck
+        }
     }
 
     func save() {
