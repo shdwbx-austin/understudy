@@ -63,6 +63,16 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var discoveryInterface: String?
     /// Folder that take backups are copied into (e.g. inside Dropbox); nil until chosen.
     public var backupFolder: String?
+    /// Confidence monitor: pictures of the decks from a capture device (e.g. a quad multiviewer).
+    public var confidenceEnabled = false
+    /// AVCaptureDevice unique ID; nil = first available.
+    public var confidenceDeviceID: String?
+    public var confidenceLayout: ConfidenceLayout = .quad
+    /// Quadrant (0 TL, 1 TR, 2 BL, 3 BR) showing each deck, by deck id.
+    public var confidenceQuadrants: [Int] = [0, 1, 2, 3]
+    /// With the single layout, which deck the image is.
+    public var confidenceSingleDeck = 0
+    public var pictureCheck = PictureCheckSettings()
     /// Stop the Mac sleeping while Understudy is open (a dedicated show machine).
     public var keepAwake = true
     /// After a restart or crash, go back to the mode Understudy was in (Record or Play) instead of Stop.
@@ -90,6 +100,13 @@ public struct AppSettings: Codable, Equatable, Sendable {
         freewheelSeconds = (try? c.decodeIfPresent(Double.self, forKey: .freewheelSeconds)) ?? d.freewheelSeconds
         discoveryInterface = (try? c.decodeIfPresent(String.self, forKey: .discoveryInterface)) ?? d.discoveryInterface
         backupFolder = (try? c.decodeIfPresent(String.self, forKey: .backupFolder)) ?? d.backupFolder
+        confidenceEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .confidenceEnabled)) ?? d.confidenceEnabled
+        confidenceDeviceID = (try? c.decodeIfPresent(String.self, forKey: .confidenceDeviceID)) ?? d.confidenceDeviceID
+        confidenceLayout = (try? c.decodeIfPresent(ConfidenceLayout.self, forKey: .confidenceLayout)) ?? d.confidenceLayout
+        confidenceQuadrants = (try? c.decodeIfPresent([Int].self, forKey: .confidenceQuadrants)) ?? d.confidenceQuadrants
+        if confidenceQuadrants.count != Self.deckCount { confidenceQuadrants = d.confidenceQuadrants }
+        confidenceSingleDeck = (try? c.decodeIfPresent(Int.self, forKey: .confidenceSingleDeck)) ?? d.confidenceSingleDeck
+        pictureCheck = (try? c.decodeIfPresent(PictureCheckSettings.self, forKey: .pictureCheck)) ?? d.pictureCheck
         keepAwake = (try? c.decodeIfPresent(Bool.self, forKey: .keepAwake)) ?? d.keepAwake
         resumeLastMode = (try? c.decodeIfPresent(Bool.self, forKey: .resumeLastMode)) ?? d.resumeLastMode
         normalizeDecks()

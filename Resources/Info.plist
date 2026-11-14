@@ -26,6 +26,8 @@
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Understudy shows confidence pictures of the decks from a capture device, such as a multiviewer feed.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Understudy reads show LTC timecode from an audio input.</string>
     <key>NSBonjourServices</key>

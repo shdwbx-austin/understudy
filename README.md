@@ -113,6 +113,18 @@ Each connected deck has **Setup**, a panel that reads the deck's own settings an
 
 Recording resolution and frame rate always follow the deck's input, and playback output follows the clip: the HyperDeck protocol can't set either. Each deck column shows its **Input** (the format arriving, or **NO SIGNAL** in red).
 
+### Confidence monitor
+
+HyperDecks can't send pictures over the network, so for real pictures feed a **quad-split multiviewer** of the four deck outputs (e.g. Blackmagic MultiView 4, or a switcher/disguise multiview) into a **capture device the Mac sees as a camera**: a USB/UVC HDMI or SDI capture box, an ATEM Mini's webcam out, or a Web Presenter. Turn it on in **Settings › Confidence monitor**, pick the device, and say which quarter is which deck (or use *One deck* for a full-frame feed).
+
+Each deck column then shows its picture, checked a few times a second at low resolution:
+
+- **BLACK** (red): near black for 2 s (adjustable). A quick fade through black doesn't count; a dark stage with lights isn't black.
+- **STILL** (amber): unchanged for 3 s (adjustable), shown only while the deck is playing, since a static shot during recording is normal.
+- **NO FEED** (red): no frames from the capture device.
+
+The checks ignore the edges and bottom of each quarter, where multiviewers draw borders, tallies and source labels. macOS asks once for camera access. The monitor shows what the multiviewer sees; feed it from the same SDI distribution as disguise for a good proxy of what disguise gets.
+
 ### HyperDeck Extreme 8K HDR
 
 The Extreme uses the same Ethernet protocol as the Studio models, so Understudy controls it the same way. On each Extreme:
@@ -155,6 +167,7 @@ This build is unit-tested on the timecode, LTC, protocol, take-map and chase log
 9. **HyperDeck Extreme 8K.** Repeat 1–4 on an Extreme at 4320p and 2160p, and confirm `clips get: version: 2` lists clips recorded to its cache or USB-C drive.
 10. **FTP backup.** Back up a take from each deck model you use, and confirm the files open. Check the folder layout the deck's FTP shows.
 11. **Show machine.** Turn on *Start at login*, approve it, force-quit Understudy (⌥⌘⎋), and confirm it relaunches.
+12. **Confidence monitor.** With the capture device and multiviewer you'll use, check the quadrant mapping, that a black source reads BLACK despite the multiviewer's labels, and CPU use on the Mac mini.
 
 ## Build
 

@@ -53,6 +53,8 @@ struct SettingsView: View {
                 Button("Rescan devices") { model.refreshAudioDevices() }
             }
 
+            ConfidenceSettings(monitor: model.confidence)
+
             Section("Show machine") {
                 Toggle("Keep this Mac awake while Understudy is open", isOn: $model.settings.keepAwake)
                 ShowMachineAgent(machine: model.showMachine)
@@ -204,5 +206,62 @@ private struct LTCInputPicker: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+/// Confidence monitor: capture device, layout, quadrant per deck, sensitivity.
+private struct ConfidenceSettings: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject var monitor: ConfidenceMonitor
+
+    var body: some View {
+        Section("Confidence monitor") {
+            Toggle("Show deck pictures from a capture device", isOn: $model.settings.confidenceEnabled)
+            if model.settings.confidenceEnabled {
+                Picker("Capture device", selection: $model.settings.confidenceDeviceID) {
+                    Text("First available").tag(String?.none)
+                    ForEach(monitor.devices) { device in
+                        Text(device.name).tag(Optional(device.id))
+                    }
+                }
+                Picker("Layout", selection: $model.settings.confidenceLayout) {
+                    Text("Quad multiviewer (four decks)").tag(ConfidenceLayout.quad)
+                    Text("One deck").tag(ConfidenceLayout.single)
+                }
+                if model.settings.confidenceLayout == .quad {
+                    ForEach(0..<AppSettings.deckCount, id: \.self) { deck in
+                        Picker("\(String(format: "%02d", deck + 1))  \(model.settings.decks[deck].name)",
+                               selection: $model.settings.confidenceQuadrants[deck]) {
+                            ForEach(0..<4, id: \.self) { q in
+                                Text(ConfidenceLayout.quadrantNames[q]).tag(q)
+                            }
+                        }
+                    }
+                } else {
+                    Picker("The image is", selection: $model.settings.confidenceSingleDeck) {
+                        ForEach(0..<AppSettings.deckCount, id: \.self) { deck in
+                            Text("\(String(format: "%02d", deck + 1))  \(model.settings.decks[deck].name)").tag(deck)
+                        }
+                    }
+                }
+                Stepper(String(format: "Flag black after %.0f s", model.settings.pictureCheck.blackSeconds),
+                        value: $model.settings.pictureCheck.blackSeconds, in: 1...10, step: 1)
+                Stepper(String(format: "Flag a still picture during playback after %.0f s", model.settings.pictureCheck.stillSeconds),
+                        value: $model.settings.pictureCheck.stillSeconds, in: 2...20, step: 1)
+                HStack {
+                    Text(status).font(.caption).foregroundStyle(monitor.error == nil ? Color.secondary : Theme.signal)
+                    Spacer()
+                    Button("Rescan devices") { monitor.refreshDevices() }
+                }
+                Text("Feed a quad-split multiviewer of the four deck outputs into any capture device macOS sees as a camera (USB/UVC capture, ATEM Mini webcam out, Web Presenter). Pictures are checked a few times a second at low resolution.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var status: String {
+        if let error = monitor.error { return error }
+        if let name = monitor.deviceName { return "Watching \(name)." }
+        return monitor.devices.isEmpty ? "No capture devices found." : "Not running."
     }
 }

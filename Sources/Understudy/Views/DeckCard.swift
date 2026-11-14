@@ -74,6 +74,11 @@ struct DeckCard: View {
             }
             .padding(.top, 6)
 
+            if model.settings.confidenceEnabled {
+                ConfidencePicture(deck: deck, monitor: model.confidence)
+                    .padding(.top, 14)
+            }
+
             // Readouts
             TimecodeText(text: deck.transport.displayTimecode?.description ?? "--:--:--:--", size: 26)
                 .foregroundStyle(deck.isConnected ? Theme.paper : Theme.quiet)
@@ -235,5 +240,53 @@ private struct Row: View {
         }
         .padding(.vertical, 6)
         .overlay(alignment: .bottom) { Rule(color: Theme.rule.opacity(0.6)) }
+    }
+}
+
+/// The deck's picture from the confidence monitor, with a badge when something's wrong.
+private struct ConfidencePicture: View {
+    @ObservedObject var deck: DeckController
+    @ObservedObject var monitor: ConfidenceMonitor
+
+    var body: some View {
+        let feed = monitor.feeds[deck.id]
+        ZStack(alignment: .bottomLeading) {
+            Rectangle().fill(Theme.fill)
+            if let image = feed?.image {
+                Image(decorative: image, scale: 1)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            }
+            if let badge = badge(feed?.state) {
+                Text(badge.text)
+                    .font(Theme.mono(9, bold: true))
+                    .tracking(1.2)
+                    .foregroundStyle(Theme.ink)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(badge.color)
+                    .padding(6)
+            }
+        }
+        .aspectRatio(16 / 9, contentMode: .fit)
+        .clipped()
+        .overlay(Rectangle().stroke(borderColor(feed?.state), lineWidth: 1))
+        .help(monitor.deviceName.map { "From \($0)" } ?? "Confidence monitor")
+    }
+
+    private func badge(_ state: PictureState?) -> (text: String, color: Color)? {
+        guard monitor.isRunning else { return ("MONITOR OFF", Theme.quiet) }
+        switch state {
+        case nil, .noFeed?: return ("NO FEED", Theme.signal)
+        case .black?: return ("BLACK", Theme.signal)
+        // A still picture only matters when the deck should be moving.
+        case .still?: return deck.transport.status == .play ? ("STILL", Theme.amber) : nil
+        case .picture?: return nil
+        }
+    }
+
+    private func borderColor(_ state: PictureState?) -> Color {
+        guard let b = badge(state) else { return Theme.rule }
+        return b.color
     }
 }

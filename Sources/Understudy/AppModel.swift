@@ -50,6 +50,7 @@ final class AppModel: ObservableObject {
     let discovery = DeckDiscovery()
     let showMachine = ShowMachine()
     let backup = TakeBackup()
+    let confidence = ConfidenceMonitor()
     /// Set when the app came back in Record or Play after a restart; shown as a banner until dismissed.
     @Published var resumedMode: Mode?
     private static let lastModeKey = "understudy.lastMode"
@@ -97,6 +98,7 @@ final class AppModel: ObservableObject {
             discovery.scan()
         }
         showMachine.keepAwake(loaded.keepAwake)
+        applyConfidence()
         // Back into Record or Play after a restart, if asked. Decks are brought into the mode as
         // they connect (deckReady); a deck that kept recording through the restart is left alone.
         if loaded.resumeLastMode,
@@ -191,6 +193,21 @@ final class AppModel: ObservableObject {
         } else {
             decks[id].disconnect()
         }
+    }
+
+    // MARK: Confidence monitor
+
+    /// Starts, stops or re-maps the confidence monitor to match settings.
+    private func applyConfidence(restart: Bool = true) {
+        confidence.configure(
+            layout: settings.confidenceLayout,
+            quadrants: settings.confidenceQuadrants,
+            singleDeck: settings.confidenceSingleDeck,
+            check: settings.pictureCheck
+        )
+        guard restart else { return }
+        confidence.stop()
+        if settings.confidenceEnabled { confidence.start(deviceID: settings.confidenceDeviceID) }
     }
 
     // MARK: Deck setup
@@ -494,6 +511,12 @@ final class AppModel: ObservableObject {
 
     private func settingsChanged(from old: AppSettings) {
         syncClockRate()
+        if settings.confidenceEnabled != old.confidenceEnabled || settings.confidenceDeviceID != old.confidenceDeviceID {
+            applyConfidence()
+        } else if settings.confidenceLayout != old.confidenceLayout || settings.confidenceQuadrants != old.confidenceQuadrants
+            || settings.confidenceSingleDeck != old.confidenceSingleDeck || settings.pictureCheck != old.pictureCheck {
+            applyConfidence(restart: false)   // same device: just re-map / re-tune
+        }
         if settings.keepAwake != old.keepAwake {
             showMachine.keepAwake(settings.keepAwake)
         }
@@ -523,7 +546,10 @@ final class AppModel: ObservableObject {
         updateReadout(now: now, rolling: snapshot.rolling)
         let pollDue = now - lastPoll >= 0.1
         if pollDue { lastPoll = now }
-        if pollDue { watchAudio(now: now) }
+        if pollDue {
+            watchAudio(now: now)
+            confidence.checkStale(now: now)
+        }
         if pollDue && rateKnown { logTakes() }
         if mode == .playback { chase(snapshot, now: now, pollDue: pollDue) }
     }
