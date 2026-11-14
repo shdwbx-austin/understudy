@@ -45,6 +45,7 @@ final class AppModel: ObservableObject {
     }
 
     let decks: [DeckController]
+    let discovery = DeckDiscovery()
 
     private var clock: LTCClock
     private var rateDetector = LTCRateDetector()
@@ -77,6 +78,14 @@ final class AppModel: ObservableObject {
         }
         refreshAudioDevices()
         startAudio()
+        discovery.skip = { [weak self] in
+            guard let self else { return [] }
+            return Set(self.decks.filter(\.isConnected).map { self.settings.decks[$0.id].host.trimmingCharacters(in: .whitespaces) })
+        }
+        discovery.startBrowsing()
+        if loaded.decks.allSatisfy({ $0.host.trimmingCharacters(in: .whitespaces).isEmpty }) {
+            discovery.scan()
+        }
         loop = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 self?.tick()
@@ -157,6 +166,30 @@ final class AppModel: ObservableObject {
             decks[id].connect(host: config.host)
         } else {
             decks[id].disconnect()
+        }
+    }
+
+    /// The slot a host is assigned to, if any.
+    func slot(for host: String) -> Int? {
+        settings.decks.firstIndex { $0.host.trimmingCharacters(in: .whitespaces) == host }
+    }
+
+    /// Puts a found deck in a slot and connects it. A deck already in another slot moves.
+    func assign(_ found: FoundDeck, to id: Int) {
+        if let previous = slot(for: found.host), previous != id {
+            settings.decks[previous].host = ""
+            applyHost(previous)
+        }
+        settings.decks[id].host = found.host
+        settings.decks[id].enabled = true
+        applyHost(id)
+    }
+
+    /// Assigns found decks that aren't in a slot yet to the empty slots, in address order.
+    func fillEmptySlots() {
+        for found in discovery.found where slot(for: found.host) == nil {
+            guard let empty = settings.decks.firstIndex(where: { $0.host.trimmingCharacters(in: .whitespaces).isEmpty }) else { return }
+            assign(found, to: empty)
         }
     }
 

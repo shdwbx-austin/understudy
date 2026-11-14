@@ -32,6 +32,25 @@ struct HyperDeckProtocolTests {
         #expect(clips[1].name == "ME1 take two.mov")
     }
 
+    @Test func recognisesGreeting() throws {
+        var parser = HyperDeckResponseParser()
+        let hello = "500 connection info:\r\nprotocol version: 1.13\r\nmodel: HyperDeck Studio HD Pro\r\n\r\n"
+        let r = try #require(parser.feed(Array(hello.utf8)).first)
+        let g = try #require(HyperDeckGreeting.recognise(r))
+        #expect(g.model == "HyperDeck Studio HD Pro")
+        #expect(g.protocolVersion == "1.13")
+        #expect(!g.busy)
+
+        var busyParser = HyperDeckResponseParser()
+        let busy = try #require(busyParser.feed(Array("120 connection rejected\r\n".utf8)).first)
+        #expect(HyperDeckGreeting.recognise(busy)?.busy == true)
+
+        var other = HyperDeckResponseParser()
+        let ssh = other.feed(Array("SSH-2.0-OpenSSH_9.6\r\n".utf8))
+        #expect(ssh.isEmpty || HyperDeckGreeting.recognise(ssh[0]) == nil)
+        #expect(HyperDeckGreeting.recognise(HyperDeckResponse(code: 200, text: "ok")) == nil)
+    }
+
     @Test func commands() {
         #expect(HyperDeckCommand.gotoClip(id: 4, frame: 1200) == "goto: clip id: 4 clip: 1200")
         #expect(HyperDeckCommand.recordPrefix("ME 1/PGM") == "configuration: record prefix: ME_1_PGM")

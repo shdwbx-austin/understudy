@@ -86,6 +86,8 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
+        .font(Theme.grotesk(13))
+        .tint(Theme.paper)
         .frame(width: 520)
         .padding(.vertical, 8)
     }
@@ -104,7 +106,7 @@ private struct ChannelRow: View {
         Button(action: choose) {
             HStack(spacing: 8) {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .foregroundStyle(selected ? Color.accentColor : .secondary)
+                    .foregroundStyle(selected ? Theme.paper : Theme.quiet)
                 Text("Ch \(index + 1)").monospacedDigit().frame(width: 44, alignment: .leading)
                 Text(name).foregroundStyle(.secondary).lineLimit(1)
                 Spacer(minLength: 8)

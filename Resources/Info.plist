@@ -28,8 +28,13 @@
     <string>NSApplication</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Understudy reads show LTC timecode from an audio input.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_hyperdeck_ctrl._tcp</string>
+        <string>_blackmagic._tcp</string>
+    </array>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Understudy controls HyperDeck recorders on your show network.</string>
+    <string>Understudy finds and controls HyperDeck recorders on your show network.</string>
     <key>NSHumanReadableCopyright</key>
     <string>Shdwbx · Design and Creative Support</string>
 </dict>

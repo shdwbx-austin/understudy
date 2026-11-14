@@ -157,3 +157,28 @@ public struct DeckClip: Equatable, Sendable, Identifiable {
         }
     }
 }
+
+/// What a HyperDeck says about itself when a client connects:
+/// `500 connection info:` with `protocol version` and `model`, or `120 connection rejected`
+/// when it's already serving its maximum number of clients.
+public struct HyperDeckGreeting: Equatable, Sendable {
+    public var model: String?
+    public var protocolVersion: String?
+    /// The deck answered but refused another client (it's a HyperDeck, just busy).
+    public var busy: Bool
+
+    public init(model: String? = nil, protocolVersion: String? = nil, busy: Bool = false) {
+        self.model = model
+        self.protocolVersion = protocolVersion
+        self.busy = busy
+    }
+
+    /// Recognises a HyperDeck from the first response on port 9993, or nil if it isn't one.
+    public static func recognise(_ response: HyperDeckResponse) -> HyperDeckGreeting? {
+        if response.code == 500, response.text.lowercased().hasPrefix("connection info") {
+            return HyperDeckGreeting(model: response.fields["model"], protocolVersion: response.fields["protocol version"])
+        }
+        if response.code == 120 { return HyperDeckGreeting(busy: true) }
+        return nil
+    }
+}

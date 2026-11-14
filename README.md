@@ -73,8 +73,8 @@ Lock the LTC generator to house ref, like the decks. If the two clocks drift apa
 ## App setup
 
 1. Open **Settings** (`⌘,`) and pick the audio interface. Settings lists that device's input channels, by the device's own channel names, each with a live level meter. Click the one carrying LTC; it's marked **LTC** once code decodes. The show timecode rate is detected automatically (see below); you can fix it instead if you prefer. The main window's footer keeps a meter on the LTC channel.
-2. Type each deck's IP into its card and press return. The dot goes green and the card shows the model.
-3. Check that each card reads **REF LOCKED**.
+2. Assign the decks. Understudy looks for HyperDecks on the local network: by Bonjour, and by asking every address on the Mac's subnets on port 9993, keeping only those that answer like a HyperDeck. They're listed under **Network**. Use **Assign** on a row, the **▾** next to a deck's address, or **Fill empty slots**. You can still type an address and press return. The first scan makes macOS ask for local network access; allow it, then **Find decks** again. Decks already connected are never probed, so a deck in use never gets a second client.
+3. Check that each deck reads **Reference: LOCKED**.
 
 ## Operating
 

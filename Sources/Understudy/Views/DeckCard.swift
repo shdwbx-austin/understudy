@@ -1,21 +1,29 @@
 import SwiftUI
 import UnderstudyCore
 
+/// One deck as a grid column: index, name, address, then a label/value table.
 struct DeckCard: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var deck: DeckController
+    @ObservedObject var discovery: DeckDiscovery
     @Binding var config: DeckConfig
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                StatusDot(color: connectionColor)
-                TextField("Name", text: $config.name)
-                    .textFieldStyle(.plain)
-                    .font(Theme.display(18, weight: .semibold))
-                    .frame(maxWidth: 120)
+        VStack(alignment: .leading, spacing: 0) {
+            // Index and status
+            HStack(alignment: .firstTextBaseline) {
+                Text(String(format: "%02d", deck.id + 1))
+                    .font(Theme.grotesk(44, .light))
+                    .tracking(-1)
+                    .foregroundStyle(deck.transport.status == .record ? Theme.signal : Theme.paper)
                 Spacer()
-                StatusPill(text: deck.transport.status.rawValue.uppercased(), color: statusColor)
+                HStack(spacing: 6) {
+                    StatusDot(color: connectionColor, filled: deck.isConnected)
+                    Text(connectionWord)
+                        .font(Theme.mono(9))
+                        .tracking(1.2)
+                        .foregroundStyle(connectionColor)
+                }
                 Toggle("", isOn: $config.enabled)
                     .labelsHidden()
                     .toggleStyle(.switch)
@@ -23,140 +31,187 @@ struct DeckCard: View {
                     .onChange(of: config.enabled) { _ in model.applyHost(deck.id) }
             }
 
-            HStack(spacing: 8) {
-                TextField("HyperDeck IP", text: $config.host)
-                    .textFieldStyle(.roundedBorder)
+            TextField("Name", text: $config.name)
+                .textFieldStyle(.plain)
+                .font(Theme.grotesk(20, .medium))
+                .padding(.top, 2)
+
+            // Address
+            HStack(spacing: 6) {
+                TextField("IP address", text: $config.host)
+                    .textFieldStyle(.plain)
                     .font(Theme.mono(12))
                     .onSubmit { model.applyHost(deck.id) }
-                Button("Connect") { model.applyHost(deck.id) }
-                    .font(Theme.mono(11))
+                if !discovery.found.isEmpty {
+                    Menu {
+                        ForEach(discovery.found) { found in
+                            Button("\(found.host) — \(found.title)") { model.assign(found, to: deck.id) }
+                        }
+                    } label: {
+                        Text("▾").font(Theme.mono(11))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("Pick a HyperDeck found on the network")
+                }
             }
-            Text(connectionText)
-                .font(Theme.mono(10))
-                .foregroundStyle(Theme.dim)
+            .padding(.vertical, 6)
+            .overlay(alignment: .bottom) { Rule() }
+            .padding(.top, 8)
+
+            Text(deck.model ?? connectionDetail)
+                .font(Theme.grotesk(12, .light))
+                .foregroundStyle(Theme.grey)
                 .lineLimit(1)
+                .padding(.top, 6)
 
-            Rule()
+            // Readouts
+            Text(deck.transport.displayTimecode?.description ?? "--:--:--:--")
+                .font(Theme.grotesk(26, .light))
+                .tracking(-0.3)
+                .foregroundStyle(deck.isConnected ? Theme.paper : Theme.quiet)
+                .padding(.top, 18)
 
-            HStack(alignment: .firstTextBaseline) {
-                Text(deck.transport.displayTimecode?.description ?? "--:--:--:--")
-                    .font(Theme.mono(24, bold: true))
-                    .monospacedDigit()
-                Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(deck.transport.videoFormat ?? deck.transport.inputVideoFormat ?? "—")
-                    Text(deck.transport.referenceLocked == true ? "REF LOCKED" : "REF —")
-                        .foregroundStyle(deck.transport.referenceLocked == true ? Theme.live : Theme.caution)
+            VStack(spacing: 0) {
+                Row(label: "Transport", value: deck.transport.status.rawValue.uppercased(), color: statusColor)
+                Row(label: "Format", value: deck.transport.videoFormat ?? deck.transport.inputVideoFormat ?? "—")
+                Row(label: "Reference", value: refText, color: refColor)
+                if deck.isLoggingTake {
+                    Row(label: "Show code",
+                        value: model.ltcRolling ? loggedText : "WAITING FOR LTC",
+                        color: model.ltcRolling ? Theme.paper : Theme.amber)
                 }
-                .font(Theme.mono(10))
-            }
-
-            if deck.isLoggingTake {
-                HStack(spacing: 6) {
-                    StatusDot(color: model.ltcRolling ? Theme.record : Theme.caution)
-                    Text(model.ltcRolling ? "LOGGING SHOW CODE" : "RECORDING · WAITING FOR LTC")
-                        .foregroundStyle(model.ltcRolling ? Theme.paper : Theme.caution)
-                    Spacer()
-                    if let logged = deck.loggedSeconds {
-                        Text(String(format: "%.0f s logged", logged)).foregroundStyle(Theme.dim)
+                if model.mode == .playback {
+                    Row(label: "Chase", value: deck.chase.phase.label, color: phaseColor)
+                    Row(label: "Error Δ", value: errorText, color: errorColor)
+                    HStack {
+                        Label8(text: "Play offset")
+                        Spacer()
+                        Stepper(value: $config.playOffsetFrames, in: -30...30, step: 0.5) {
+                            Text(String(format: "%+.1f f", config.playOffsetFrames)).font(Theme.mono(11))
+                        }
+                        .controlSize(.small)
                     }
-                }
-                .font(Theme.mono(10, bold: true))
-            }
-
-            if model.mode == .playback {
-                HStack {
-                    Text(deck.chase.phase.label)
-                        .font(Theme.mono(11, bold: true))
-                        .foregroundStyle(phaseColor)
-                    Spacer()
-                    Text(errorText)
-                        .font(Theme.mono(11))
-                        .foregroundStyle(errorColor)
-                }
-                HStack(spacing: 8) {
-                    Text("PLAY OFFSET").font(Theme.mono(10)).foregroundStyle(Theme.dim)
-                    Stepper(value: $config.playOffsetFrames, in: -30...30, step: 0.5) {
-                        Text(String(format: "%+.1f f", config.playOffsetFrames)).font(Theme.mono(11))
-                    }
-                    Spacer()
-                    Button("Calibrate") { model.calibrate(deck.id) }
-                        .font(Theme.mono(11))
+                    .padding(.vertical, 6)
+                    .overlay(alignment: .bottom) { Rule(color: Theme.rule.opacity(0.6)) }
+                    HStack {
+                        Spacer()
+                        TextButton(title: "Calibrate", color: deck.smoothedError == nil ? Theme.quiet : Theme.paper) {
+                            model.calibrate(deck.id)
+                        }
                         .disabled(deck.smoothedError == nil)
-                        .help("Fold the measured drift into the play offset")
+                        .help("Fold the measured error into the play offset")
+                    }
+                    .padding(.top, 8)
                 }
             }
+            .padding(.top, 10)
 
             if let error = deck.lastError {
                 Text(error)
                     .font(Theme.mono(10))
-                    .foregroundStyle(Theme.caution)
-                    .lineLimit(2)
+                    .foregroundStyle(Theme.amber)
+                    .lineLimit(3)
+                    .padding(.top, 10)
                     .onTapGesture { deck.lastError = nil }
+                    .help("Click to dismiss")
             }
         }
-        .padding(14)
-        .background(Theme.panel)
-        .overlay(Rectangle().stroke(deck.transport.status == .record ? Theme.record : Theme.rule, lineWidth: 1))
-        .opacity(config.enabled ? 1 : 0.45)
+        .opacity(config.enabled ? 1 : 0.4)
     }
 
-    private var connectionText: String {
+    // MARK: Text and colour
+
+    private var connectionWord: String {
         switch deck.connection {
-        case .disconnected: return config.host.isEmpty ? "Enter an IP and press return" : "Disconnected"
+        case .connected: return "ONLINE"
+        case .connecting: return "CONNECTING"
+        case .failed: return "RETRYING"
+        case .disconnected: return config.host.isEmpty ? "EMPTY" : "OFFLINE"
+        }
+    }
+
+    private var connectionDetail: String {
+        switch deck.connection {
+        case .disconnected: return config.host.isEmpty ? "Enter an address or pick one found below." : "Not connected."
         case .connecting: return "Connecting to \(config.host):9993…"
-        case .connected: return deck.model ?? "Connected"
-        case .failed(let reason): return "Retrying · \(reason)"
+        case .connected: return "Connected"
+        case .failed(let reason): return reason
         }
     }
 
     private var connectionColor: Color {
         switch deck.connection {
-        case .connected: return Theme.live
-        case .connecting: return Theme.caution
-        case .failed: return Theme.record
-        case .disconnected: return Theme.dim
+        case .connected: return Theme.paper
+        case .connecting: return Theme.amber
+        case .failed: return Theme.signal
+        case .disconnected: return Theme.quiet
         }
     }
 
     private var statusColor: Color {
         switch deck.transport.status {
-        case .record: return Theme.record
-        case .play: return Theme.live
-        case .preview: return Theme.paper
-        default: return Theme.dim
+        case .record: return Theme.signal
+        case .unknown: return Theme.quiet
+        default: return Theme.paper
         }
+    }
+
+    private var refText: String {
+        switch deck.transport.referenceLocked {
+        case true?: return "LOCKED"
+        case false?: return "NOT LOCKED"
+        case nil: return "—"
+        }
+    }
+
+    private var refColor: Color {
+        deck.transport.referenceLocked == false ? Theme.signal : Theme.paper
+    }
+
+    private var loggedText: String {
+        guard let s = deck.loggedSeconds else { return "LOGGING" }
+        return String(format: "LOGGING · %.0f S", s)
     }
 
     private var phaseColor: Color {
         switch deck.chase.phase {
-        case .playing: return Theme.live
-        case .cueing, .armed: return Theme.caution
-        case .outOfRange: return Theme.record
-        case .idle: return Theme.dim
+        case .playing: return Theme.paper
+        case .cueing, .armed: return Theme.amber
+        case .outOfRange: return Theme.signal
+        case .idle: return Theme.grey
         }
     }
 
     private var errorText: String {
-        guard let error = deck.smoothedError else { return "Δ —" }
-        return String(format: "Δ %+.1f f", error)
+        guard let error = deck.smoothedError else { return "—" }
+        return String(format: "%+.1f F", error)
     }
 
     private var errorColor: Color {
-        guard let error = deck.smoothedError else { return Theme.dim }
-        return abs(error) <= model.settings.chase.toleranceFrames ? Theme.live : Theme.caution
+        guard let error = deck.smoothedError else { return Theme.grey }
+        return abs(error) <= model.settings.chase.toleranceFrames ? Theme.paper : Theme.amber
     }
 }
 
-private struct StatusPill: View {
-    let text: String
-    let color: Color
+/// A label/value line in a deck column.
+private struct Row: View {
+    let label: String
+    let value: String
+    var color: Color = Theme.paper
+
     var body: some View {
-        Text(text)
-            .font(Theme.mono(10, bold: true))
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .foregroundStyle(color)
-            .overlay(Rectangle().stroke(color, lineWidth: 1))
+        HStack(alignment: .firstTextBaseline) {
+            Label8(text: label)
+            Spacer(minLength: 8)
+            Text(value)
+                .font(Theme.mono(11))
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.vertical, 6)
+        .overlay(alignment: .bottom) { Rule(color: Theme.rule.opacity(0.6)) }
     }
 }

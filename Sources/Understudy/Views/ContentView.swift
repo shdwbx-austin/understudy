@@ -5,133 +5,192 @@ struct ContentView: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Header()
-            Rule()
-            ModeBar()
-            if model.mode == .playback { TakeBar() }
-            SectionTitle(text: "Decks")
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)], spacing: 14) {
-                ForEach(model.decks) { deck in
-                    DeckCard(deck: deck, config: $model.settings.decks[deck.id])
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 0) {
+                    sections
                 }
+                .padding(.trailing, Theme.marginTrailing)
             }
-            Spacer(minLength: 0)
+            .scrollIndicators(.automatic)
             Footer()
+                .padding(.trailing, Theme.marginTrailing)
+                .padding(.top, 12)
         }
-        // House format: wide left margin, tight right.
-        .padding(.leading, 40)
-        .padding(.trailing, 20)
-        .padding(.vertical, 22)
-        .frame(minWidth: 940, minHeight: 700, alignment: .topLeading)
-        .background(Theme.background)
+        .padding(.leading, Theme.marginLeading)
+        .padding(.top, 30)
+        .padding(.bottom, 20)
+        .frame(minWidth: 1100, minHeight: 760, alignment: .topLeading)
+        .background(Theme.ink)
         .foregroundStyle(Theme.paper)
         .preferredColorScheme(.dark)
     }
+
+    @ViewBuilder private var sections: some View {
+            Header()
+                .padding(.bottom, 28)
+            SectionHead(index: 1, title: "Mode")
+            ModeBar()
+                .padding(.top, 14)
+                .padding(.bottom, 30)
+            if model.mode == .playback {
+                SectionHead(index: 2, title: "Take")
+                TakeBar()
+                    .padding(.top, 12)
+                    .padding(.bottom, 30)
+            }
+            SectionHead(index: model.mode == .playback ? 3 : 2, title: "Decks") {
+                DeckCount()
+            }
+            DeckRow()
+                .padding(.top, 14)
+                .padding(.bottom, 30)
+            NetworkSection(index: model.mode == .playback ? 4 : 3, discovery: model.discovery)
+                .padding(.bottom, 12)
+    }
 }
+
+// MARK: - Header
 
 private struct Header: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        HStack(alignment: .lastTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Understudy")
-                    .font(Theme.display(30, weight: .semibold))
-                Text("Stands in for the cameras between run-throughs")
-                    .font(Theme.mono(11))
-                    .foregroundStyle(Theme.dim)
+        HStack(alignment: .top, spacing: Theme.gutter) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("understudy")
+                    .font(Theme.grotesk(40, .medium))
+                    .tracking(-0.8)
+                Text("Stands in for the cameras between run-throughs.")
+                    .font(Theme.grotesk(15, .light))
+                    .foregroundStyle(Theme.grey)
+                Text("SHDWBX — DESIGN AND CREATIVE SUPPORT")
+                    .font(Theme.mono(9))
+                    .tracking(1.4)
+                    .foregroundStyle(Theme.quiet)
+                    .padding(.top, 10)
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 4) {
+            VStack(alignment: .trailing, spacing: 8) {
                 Text(model.ltcText)
-                    .font(Theme.mono(46, bold: true))
-                    .monospacedDigit()
-                    .foregroundStyle(model.ltcRolling ? (model.ltcFreewheeling ? Theme.caution : Theme.paper) : Theme.dim)
-                HStack(spacing: 8) {
-                    StatusDot(color: clockColor)
-                    Text(clockState)
-                        .foregroundStyle(model.ltcFreewheeling ? Theme.caution : Theme.paper)
-                    Text("·").foregroundStyle(Theme.dim)
-                    Text(model.ltcInfo)
-                    Text("·").foregroundStyle(Theme.dim)
+                    .font(Theme.grotesk(68, .light))
+                    .tracking(-1)
+                    .foregroundStyle(timecodeColor)
+                    .lineLimit(1)
+                HStack(spacing: 18) {
+                    HStack(spacing: 7) {
+                        StatusDot(color: clockColor, filled: model.ltcRolling)
+                        Text(clockState).foregroundStyle(model.ltcFreewheeling ? Theme.amber : Theme.paper)
+                    }
                     Text(model.rateLabel)
+                    Text(model.ltcInfo).foregroundStyle(Theme.grey)
                 }
-                .font(Theme.mono(11))
+                .font(Theme.mono(10))
+                .tracking(1)
                 if let warning = model.ltcWarning {
-                    Text(warning).font(Theme.mono(11)).foregroundStyle(Theme.caution)
+                    Text(warning).font(Theme.mono(10)).foregroundStyle(Theme.amber)
                 }
             }
         }
     }
-}
 
-extension Header {
+    private var timecodeColor: Color {
+        if !model.ltcRolling { return Theme.quiet }
+        return model.ltcFreewheeling ? Theme.amber : Theme.paper
+    }
+
     private var clockState: String {
         if !model.ltcRolling { return "STOPPED" }
         return model.ltcFreewheeling ? "FREEWHEEL · NO LTC" : "ROLLING"
     }
 
     private var clockColor: Color {
-        if !model.ltcRolling { return Theme.dim }
-        return model.ltcFreewheeling ? Theme.caution : Theme.live
+        if !model.ltcRolling { return Theme.quiet }
+        return model.ltcFreewheeling ? Theme.amber : Theme.paper
     }
 }
+
+// MARK: - Mode
 
 private struct ModeBar: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
         let continuous = model.settings.recordMode == .continuous
-        HStack(spacing: 12) {
-            ModeButton(title: "STOP", detail: "Decks idle · live feed passes through", key: "⌘1",
-                       tint: Theme.paper, active: model.mode == .stop) { model.setMode(.stop) }
-            ModeButton(title: continuous ? "REC" : "REC ARM",
-                       detail: continuous ? "Decks record until STOP · show code is logged" : "Decks record whenever show code runs",
-                       key: "⌘2", tint: Theme.record, active: model.mode == .record) { model.setMode(.record) }
-            ModeButton(title: "PLAY TC", detail: "Decks chase show LTC from the selected take", key: "⌘3",
-                       tint: Theme.live, active: model.mode == .playback) { model.setMode(.playback) }
+        HStack(spacing: 0) {
+            ModeBlock(
+                index: "A", title: "Stop", key: "⌘1",
+                detail: "Decks idle. Live feed passes through.",
+                tint: Theme.paper, active: model.mode == .stop
+            ) { model.setMode(.stop) }
+            VRule()
+            ModeBlock(
+                index: "B", title: continuous ? "Record" : "Record arm", key: "⌘2",
+                detail: continuous ? "Decks record until Stop. Show code is logged." : "Decks record while show code runs.",
+                tint: Theme.signal, active: model.mode == .record
+            ) { model.setMode(.record) }
+            VRule()
+            ModeBlock(
+                index: "C", title: "Play to code", key: "⌘3",
+                detail: "Decks chase show LTC from the selected take.",
+                tint: Theme.paper, active: model.mode == .playback
+            ) { model.setMode(.playback) }
         }
+        .frame(height: 104)
+        .overlay(Rectangle().stroke(Theme.rule, lineWidth: 1))
     }
 }
 
-private struct ModeButton: View {
+private struct ModeBlock: View {
+    let index: String
     let title: String
-    let detail: String
     let key: String
+    let detail: String
     let tint: Color
     let active: Bool
     let action: () -> Void
+    @State private var hover = false
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 0) {
                 HStack {
-                    Text(title).font(Theme.mono(20, bold: true))
+                    Text(index).font(Theme.mono(10))
                     Spacer()
-                    Text(key).font(Theme.mono(11)).opacity(0.6)
+                    Text(key).font(Theme.mono(10))
                 }
-                Text(detail).font(Theme.mono(11)).opacity(0.75)
+                .opacity(0.7)
+                Spacer(minLength: 8)
+                Text(title)
+                    .font(Theme.grotesk(30, active ? .medium : .light))
+                    .tracking(-0.4)
+                Text(detail)
+                    .font(Theme.grotesk(12, .regular))
+                    .opacity(0.72)
+                    .padding(.top, 4)
             }
             .padding(14)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .foregroundStyle(active ? Color.black : tint)
-            .background(active ? tint : Theme.panel)
-            .overlay(Rectangle().stroke(active ? tint : Theme.rule, lineWidth: 1))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .foregroundStyle(active ? (tint == Theme.signal ? Theme.paper : Theme.ink) : Theme.paper)
+            .background(active ? tint : (hover ? Theme.fill : Theme.ink))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { hover = $0 }
     }
 }
+
+// MARK: - Take
 
 private struct TakeBar: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        HStack(spacing: 14) {
-            Text("TAKE").font(Theme.mono(11, bold: true)).foregroundStyle(Theme.dim)
+        HStack(alignment: .firstTextBaseline, spacing: Theme.gutter) {
             if model.takes.isEmpty {
-                Text("No clips on the decks yet").font(Theme.mono(12)).foregroundStyle(Theme.dim)
+                Text("No takes on the decks yet.")
+                    .font(Theme.grotesk(14, .light))
+                    .foregroundStyle(Theme.grey)
             } else {
                 Picker("", selection: $model.selectedTake) {
                     ForEach(model.takes) { take in
@@ -139,52 +198,194 @@ private struct TakeBar: View {
                     }
                 }
                 .labelsHidden()
-                .frame(maxWidth: 520)
+                .fixedSize()
+                if let take = model.takes.first(where: { $0.offset == model.selectedTake }) {
+                    Text(sync(take))
+                        .font(Theme.mono(10))
+                        .tracking(1)
+                        .foregroundStyle(take.logged == false ? Theme.amber : Theme.grey)
+                }
             }
+            Spacer()
             Toggle("Follow latest", isOn: $model.settings.followLatestTake)
                 .toggleStyle(.checkbox)
-                .font(Theme.mono(11))
-            Spacer()
-            Button("Refresh") { model.refreshTakes() }
-                .font(Theme.mono(11))
+                .font(Theme.mono(10))
+            TextButton(title: "Refresh") { model.refreshTakes() }
         }
     }
 
     private func label(for take: Take) -> String {
-        let latest = take.offset == 0 ? "LATEST · " : ""
-        let sync: String
+        let latest = take.offset == 0 ? "Latest — " : ""
+        return "\(latest)#\(take.clipID)  \(take.name)  \(take.duration.description)"
+    }
+
+    private func sync(_ take: Take) -> String {
         switch take.logged {
-        case true?: sync = "SHOW CODE LOGGED"
-        case false?: sync = "NO SHOW CODE LOGGED"
-        case nil: sync = "CLIP TC"
+        case true?: return "SHOW CODE LOGGED"
+        case false?: return "NO SHOW CODE LOGGED"
+        case nil: return "CLIP TIMECODE"
         }
-        return "\(latest)#\(take.clipID)  +\(take.duration.description)  \(take.name)  · \(sync)"
     }
 }
+
+// MARK: - Decks
+
+private struct DeckCount: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        let connected = model.decks.filter(\.isConnected).count
+        Text("\(connected) OF \(model.decks.count) CONNECTED")
+            .font(Theme.mono(10))
+            .tracking(1.2)
+            .foregroundStyle(Theme.quiet)
+    }
+}
+
+private struct DeckRow: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            ForEach(model.decks) { deck in
+                if deck.id > 0 { VRule() }
+                DeckCard(deck: deck, discovery: model.discovery, config: $model.settings.decks[deck.id])
+                    .padding(.leading, deck.id == 0 ? 0 : 16)
+                    .padding(.trailing, 16)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+// MARK: - Network
+
+private struct NetworkSection: View {
+    @EnvironmentObject private var model: AppModel
+    let index: Int
+    @ObservedObject var discovery: DeckDiscovery
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionHead(index: index, title: "Network") {
+                HStack(spacing: 18) {
+                    Text(scanSummary)
+                        .font(Theme.mono(10))
+                        .foregroundStyle(Theme.quiet)
+                    if !unassigned.isEmpty, model.settings.decks.contains(where: { $0.host.isEmpty }) {
+                        TextButton(title: "Fill empty slots") { model.fillEmptySlots() }
+                    }
+                    TextButton(title: discovery.isScanning ? "Scanning…" : "Find decks") { discovery.scan() }
+                        .disabled(discovery.isScanning)
+                }
+            }
+            if discovery.found.isEmpty {
+                Text(emptyText)
+                    .font(Theme.grotesk(13, .light))
+                    .foregroundStyle(Theme.grey)
+                    .padding(.vertical, 12)
+            } else {
+                ForEach(discovery.found) { found in
+                    FoundRow(found: found)
+                    Rule(color: Theme.rule.opacity(0.6))
+                }
+            }
+        }
+    }
+
+    private var unassigned: [FoundDeck] { discovery.found.filter { model.slot(for: $0.host) == nil } }
+
+    private var scanSummary: String {
+        guard let last = discovery.lastScanned else { return discovery.isScanning ? "" : "NOT SCANNED YET" }
+        let nets = discovery.scannedNetworks.joined(separator: ", ")
+        return "\(nets) · \(last.formatted(date: .omitted, time: .shortened))".uppercased()
+    }
+
+    private var emptyText: String {
+        if discovery.isScanning { return "Looking for HyperDecks on the local network…" }
+        if discovery.lastScanned == nil { return "Find decks scans the local network for HyperDecks." }
+        return "No HyperDecks found. If macOS asked about local network access, allow it and scan again."
+    }
+}
+
+private struct FoundRow: View {
+    @EnvironmentObject private var model: AppModel
+    let found: FoundDeck
+
+    var body: some View {
+        let slot = model.slot(for: found.host)
+        HStack(alignment: .firstTextBaseline, spacing: Theme.gutter) {
+            Text(found.host)
+                .font(Theme.mono(12))
+                .frame(width: 150, alignment: .leading)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(found.title).font(Theme.grotesk(14, .regular))
+                if let model = found.model, found.name != nil {
+                    Text(model).font(Theme.grotesk(12, .light)).foregroundStyle(Theme.grey)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Text(status(slot))
+                .font(Theme.mono(10))
+                .tracking(1)
+                .foregroundStyle(found.busy && slot == nil ? Theme.amber : Theme.grey)
+                .frame(width: 170, alignment: .leading)
+            Menu {
+                ForEach(model.decks) { deck in
+                    let config = model.settings.decks[deck.id]
+                    Button("\(String(format: "%02d", deck.id + 1))  \(config.name)\(config.host.isEmpty ? "" : " — replaces \(config.host)")") {
+                        model.assign(found, to: deck.id)
+                    }
+                }
+            } label: {
+                Text(slot == nil ? "ASSIGN" : "MOVE")
+                    .font(Theme.mono(10, bold: true))
+                    .tracking(1.2)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        }
+        .padding(.vertical, 10)
+    }
+
+    private func status(_ slot: Int?) -> String {
+        if let slot { return "IN USE · \(String(format: "%02d", slot + 1))" }
+        if found.busy { return "BUSY · OTHER CLIENT" }
+        return "AVAILABLE"
+    }
+}
+
+// MARK: - Footer
 
 private struct Footer: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             Rule()
-            HStack {
+            HStack(alignment: .center, spacing: Theme.gutter) {
                 if let error = model.audioError {
-                    Text(error).foregroundStyle(Theme.caution)
+                    Text(error).foregroundStyle(Theme.amber)
                 } else {
                     let name = model.audioDevices.first { $0.uid == model.settings.audioDeviceUID }?.name ?? "System default input"
                     let channel = model.settings.audioChannel
                     let channelName = model.inputChannelNames.indices.contains(channel) ? model.inputChannelNames[channel] : ""
                     let db = model.inputLevels.indices.contains(channel) ? model.inputLevels[channel] : -60
-                    Text("LTC IN  \(name) · ch \(channel + 1)\(channelName.isEmpty ? "" : " \(channelName)")")
-                        .foregroundStyle(Theme.dim)
-                    LevelMeter(db: db).frame(width: 120)
-                    Text(LevelMeter.label(db)).foregroundStyle(Theme.dim).frame(width: 48, alignment: .trailing)
+                    Label8(text: "LTC in")
+                    Text("\(name) · Ch \(channel + 1)\(channelName.isEmpty ? "" : " \(channelName)")")
+                        .foregroundStyle(Theme.grey)
+                    LevelMeter(db: db).frame(width: 140)
+                    Text(LevelMeter.label(db)).foregroundStyle(Theme.grey).frame(width: 48, alignment: .leading)
                 }
                 Spacer()
-                Text("⌘, settings").foregroundStyle(Theme.dim)
+                Text("⌘,  SETTINGS").foregroundStyle(Theme.quiet)
+                Text("shdwbx")
+                    .font(Theme.grotesk(15, .medium))
+                    .tracking(-0.2)
             }
-            .font(Theme.mono(11))
+            .font(Theme.mono(10))
         }
     }
 }
