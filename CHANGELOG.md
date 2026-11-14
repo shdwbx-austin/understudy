@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 — unreleased
+## 0.2.0 — 2026-11-14
 
 - **Finds HyperDecks on the network**, by Bonjour and by a scan of the local subnets on port 9993 that keeps only hosts greeting like a HyperDeck. Found decks can be assigned to a slot or used to fill empty slots.
 - **Timecode hardening** (from an independent bug sweep, failure cases reproduced in tests): rate detection times frame intervals and skips missed frames (a lossy 30 fps signal no longer locks as 29.97) and confirms even the first lock; a single corrupt LTC frame no longer counts as a jump (a jump needs a second agreeing frame); deck timecode is read the way the deck says it counts (its timecode preference) and stored with each take map; a deck reset mid-chase is stopped rather than left playing; repeated drift re-locks back off; a fixed rate contradicted by incoming code pauses chase and logging; audio interfaces are followed when unplugged/replugged and a dead input is retried; false-start takes no longer swap maps with the real run; STILL ignores small movement in a static shot.
