@@ -1,4 +1,4 @@
-# cam4prog
+# understudy
 
 Record four broadcast MEs on HyperDecks, then play them back into the disguise capture inputs locked to show timecode — so you can program against real SDI between run-throughs, with no files to copy and no transcoding.
 
