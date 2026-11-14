@@ -89,7 +89,8 @@ final class TakeMapStore {
     func attachPending(to clips: [DeckClip], deckSpan: (DeckClip) -> (Double, Double)) {
         guard !contents.pending.isEmpty else { return }
         var stillPending: [Pending] = []
-        for item in contents.pending {
+        // Oldest recording first, so a false start doesn't take the real run's clip.
+        for item in contents.pending.sorted(by: { $0.map.createdAt < $1.map.createdAt }) {
             let candidates = clips.filter { clip in
                 let key = Self.key(for: clip)
                 return !item.existingClipKeys.contains(key) && contents.maps[key] == nil
@@ -101,8 +102,8 @@ final class TakeMapStore {
                     return range.upperBound > start && range.lowerBound < end
                 }
             } else {
-                // No code logged: the take is the newest new clip.
-                matches = candidates.last.map { [$0] } ?? []
+                // No code logged: the oldest clip that's new since it started.
+                matches = candidates.first.map { [$0] } ?? []
             }
             if matches.isEmpty {
                 if Date().timeIntervalSince(item.map.createdAt) < Self.pendingLifetime { stillPending.append(item) }

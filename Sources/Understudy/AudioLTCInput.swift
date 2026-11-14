@@ -39,6 +39,18 @@ enum AudioDeviceCatalog {
         }
     }
 
+    /// Calls `changed` on the main queue whenever audio devices appear or disappear.
+    static func observeDevices(_ changed: @escaping @Sendable () -> Void) {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, DispatchQueue.main) { _, _ in
+            changed()
+        }
+    }
+
     /// The system's default input device.
     static func defaultInputDeviceID() -> AudioDeviceID? {
         var address = AudioObjectPropertyAddress(

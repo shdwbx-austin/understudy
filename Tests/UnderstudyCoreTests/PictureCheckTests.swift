@@ -60,6 +60,18 @@ struct PictureCheckTests {
         #expect(state == .picture)                     // moves again
     }
 
+    @Test func smallMovementInStaticShotIsNotStill() {
+        var c = PictureChecker()
+        var state = PictureState.picture
+        for k in 0..<30 {
+            var values = picture(5).values
+            let spot = (k * 3) % (32 * 18)          // a small performer moving across a static wide
+            values[spot] = 1; values[(spot + 1) % values.count] = 1
+            state = c.update(LumaGrid(width: 32, height: 18, values: values), at: Double(k) * 0.2)
+        }
+        #expect(state == .picture)
+    }
+
     @Test func feedLostWhenFramesStop() {
         var c = PictureChecker()
         c.update(picture(0), at: 0)

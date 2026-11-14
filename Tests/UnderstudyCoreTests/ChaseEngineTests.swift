@@ -61,6 +61,23 @@ struct ChaseEngineTests {
         #expect(actions == [.cue(target: 1120)])
     }
 
+    @Test func repeatedRelocksBackOff() {
+        var state = DeckChaseState()
+        let drifting = DeckChaseInput(startLatencyFrames: 0, coverage: nil, observedError: 4, deckIsPlaying: true)
+        var cues: [Double] = []
+        var t = 0.0
+        while t < 40 {
+            for action in ChaseEngine.step(&state, ltc: ltc(t), input: drifting, now: t, settings: settings) {
+                if case .cue = action { cues.append(t) }
+            }
+            t += 0.05
+        }
+        // Gaps between cues grow (1 s, 2 s, 4 s, … plus cue/play time) instead of re-cueing every couple of seconds.
+        let gaps = zip(cues.dropFirst(), cues).map { $0 - $1 }
+        #expect(cues.count < 12)
+        #expect((gaps.last ?? 0) > (gaps.first ?? 0) + 5)
+    }
+
     @Test func holdsOutsideTakeRange() {
         var state = DeckChaseState()
         let input = DeckChaseInput(startLatencyFrames: 0, coverage: [2000..<3000], observedError: nil, deckIsPlaying: false)

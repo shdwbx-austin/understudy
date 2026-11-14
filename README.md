@@ -61,7 +61,7 @@ HyperDecks can't chase LTC natively. Understudy reads the show LTC itself and ha
 Understudy is meant to live on a Mac that stays at the rehearsal: a Mac mini on the show network is ideal. HyperDecks can't follow timecode in playback on their own, so a computer has to run it. In **Settings › Show machine**:
 
 - **Keep this Mac awake** (on by default). The app also always opts out of App Nap, so its timing isn't throttled when the window is hidden or the display sleeps.
-- **Start at login and relaunch if it quits unexpectedly** registers a launch agent bundled in the app. macOS may ask you to approve it under System Settings › General › Login Items. A normal Quit isn't relaunched.
+- **Start at login and relaunch if it quits unexpectedly** registers a launch agent bundled in the app. macOS may ask you to approve it under System Settings › General › Login Items. A normal Quit isn't relaunched. Only the copy the agent starts (at login) is watched: a copy opened by hand isn't, and Settings says which you're running. On a dedicated show Mac, let it start at login.
 - **After a restart, go back to Record or Play** (off by default). When it happens, the header says so until you dismiss it. Decks that kept recording through the restart are left alone.
 
 Only one copy runs at a time: a second launch hands over to the running one.

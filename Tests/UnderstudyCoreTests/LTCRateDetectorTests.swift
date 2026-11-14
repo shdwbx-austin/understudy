@@ -28,7 +28,7 @@ struct LTCRateDetectorTests {
         var d = LTCRateDetector()
         feed(&d, rate: .fps25, seconds: 1.5)
         #expect(d.detected == nil)
-        feed(&d, rate: .fps25, seconds: 1.0, t0: 1.5 - 1.0 / 25)
+        feed(&d, rate: .fps25, seconds: 1.5, t0: 1.5 - 1.0 / 25)
         #expect(d.detected == .fps25)
     }
 
@@ -49,6 +49,16 @@ struct LTCRateDetectorTests {
         #expect(d.detected == .fps25)
         feed(&d, rate: .fps23_976, seconds: 2.5, t0: t)
         #expect(d.detected == .fps23_976)
+    }
+
+    /// A noisy cable losing one frame in ten must not turn 30 into 29.97 (or 24 into 23.976).
+    @Test(arguments: [FrameRate.fps30, .fps24, .fps25, .fps29_97])
+    func missedFramesDontBiasTheRate(rate: FrameRate) {
+        var d = LTCRateDetector()
+        for k in 0..<Int(6 * rate.exact) where k % 10 != 7 {
+            d.ingest(dropFrameFlag: false, time: Double(k + 1) / rate.exact)
+        }
+        #expect(d.detected == rate)
     }
 
     @Test func ignoresNonsense() {

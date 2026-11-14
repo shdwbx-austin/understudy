@@ -90,6 +90,10 @@ final class AppModel: ObservableObject {
         }
         refreshAudioDevices()
         startAudio()
+        // Interface unplugged, replugged or arriving after launch: re-read devices and reopen.
+        AudioDeviceCatalog.observeDevices { [weak self] in
+            MainActor.assumeIsolated { self?.audioDevicesChanged() }
+        }
         discovery.skip = { [weak self] in
             guard let self else { return [] }
             return Set(self.decks.filter(\.isConnected).map { self.settings.decks[$0.id].host.trimmingCharacters(in: .whitespaces) })
@@ -130,7 +134,12 @@ final class AppModel: ObservableObject {
 
     /// Off until auto-detect has measured the incoming code; logging and chasing wait for it,
     /// so a wrong guess never reaches a take map or a deck.
-    private var rateKnown: Bool { !settings.ltcRateAuto || rateDetector.detected != nil }
+    private var rateKnown: Bool {
+        // A fixed rate the incoming code contradicts would re-cue every second and log wrong
+        // positions: wait (the header warns) rather than act on it.
+        settings.ltcRateAuto ? rateDetector.detected != nil
+            : (rateDetector.detected == nil || rateDetector.detected == settings.ltcRate)
+    }
 
     /// Header label for the rate, e.g. "AUTO 25" or "SET 29.97 DF".
     var rateLabel: String {
@@ -192,11 +201,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// The drop-frame setting decks were armed with, to catch arming before the rate was known.
-    private var armedDropFrame: Bool?
-
     private func arm(_ deck: DeckController) {
-        armedDropFrame = ltcRate.isDropFrame
         deck.arm(prefix: settings.decks[deck.id].name, mode: settings.recordMode, dropFrame: ltcRate.isDropFrame)
     }
 
@@ -357,8 +362,14 @@ final class AppModel: ObservableObject {
     // MARK: Timecode
 
     /// Rate the deck's timecode labels count at, or nil before the deck reports a video format.
-    private func deckTimecodeRate(_ deck: DeckController) -> FrameRate? {
-        guard let video = deck.videoRate(dropFrame: ltcRate.isDropFrame) else { return nil }
+    /// How the deck's own timecode counts: what the deck reports (its timecode preference), or
+    /// the show rate's drop-frame if it hasn't said.
+    private func deckDropFrame(_ deck: DeckController) -> Bool {
+        deck.deckDropFrame ?? ltcRate.isDropFrame
+    }
+
+    private func deckTimecodeRate(_ deck: DeckController, dropFrame: Bool? = nil) -> FrameRate? {
+        guard let video = deck.videoRate(dropFrame: dropFrame ?? deckDropFrame(deck)) else { return nil }
         return settings.deckTimecodeAtVideoRate ? video : video.ltcRate
     }
 
@@ -485,7 +496,11 @@ final class AppModel: ObservableObject {
         inputChannelNames = deviceID.map { AudioDeviceCatalog.inputChannelNames($0, count: count) }
             ?? Array(repeating: "", count: count)
         inputLevels = Array(repeating: -60, count: count)
-        openInput = audio.isRunning ? wanted : nil
+        // Record what's really open: if the chosen device is missing, that's the system default.
+        openInput = audio.isRunning ? (device?.uid, wanted.channel) : nil
+        if audio.isRunning, wanted.uid != nil, device == nil {
+            audioError = "The chosen LTC interface isn't connected; reading the system default input."
+        }
         // The chosen channel doesn't exist on this device: fall back to its first channel.
         if count > 0, wanted.channel >= count {
             if inputRole == .playback { settings.playbackAudioChannel = 0 } else { settings.audioChannel = 0 }
@@ -493,7 +508,21 @@ final class AppModel: ObservableObject {
     }
 
     /// Reopens the input if it stops delivering audio (e.g. the interface glitched or was replugged).
+    private func audioDevicesChanged() {
+        refreshAudioDevices()
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return }
+        // Reopen if what's open isn't what's wanted (the interface came back) or nothing is open.
+        if openInput?.uid != wantedInput().uid || !audio.isRunning { openAudio() }
+    }
+
     private func watchAudio(now: Double) {
+        // Nothing open (failed to start, device vanished): keep trying every few seconds.
+        if !audio.isRunning, AVCaptureDevice.authorizationStatus(for: .audio) == .authorized, now - lastAudioRestart > 5 {
+            lastAudioRestart = now
+            refreshAudioDevices()
+            openAudio()
+            return
+        }
         guard audio.isRunning, audio.secondsSinceLastBuffer > 1.5, now - lastAudioRestart > 5 else { return }
         lastAudioRestart = now
         NSLog("Understudy: audio input stalled; reopening")
@@ -608,10 +637,7 @@ final class AppModel: ObservableObject {
         if !settings.ltcRateAuto, let detected = rateDetector.detected, detected != settings.ltcRate {
             warning = "Incoming LTC looks like \(detected.rawValue); rate is set to \(settings.ltcRate.rawValue)."
         }
-        if mode == .record, settings.recordMode == .continuous, rateKnown,
-           let armed = armedDropFrame, armed != ltcRate.isDropFrame {
-            warning = "Decks were armed \(armed ? "drop-frame" : "non-drop") before the show rate was known. Stop and record again to match \(ltcRate.rawValue)."
-        }
+
         if warning != ltcWarning { ltcWarning = warning }
     }
 
@@ -620,12 +646,14 @@ final class AppModel: ObservableObject {
     private func logTakes() {
         let ltcFPS = ltcRate.exact
         for deck in activeDecks where deck.isLoggingTake {
-            guard let rate = deckTimecodeRate(deck) else { continue }
+            let dropFrame = deckDropFrame(deck)
+            guard let rate = deckTimecodeRate(deck, dropFrame: dropFrame) else { continue }
             deck.poll { [weak self, weak deck] timecode, observedAt in
                 guard let self, let deck, let ltcAt = self.clock.position(at: observedAt) else { return }
                 deck.logTakeReading(
                     ltcSeconds: ltcAt / ltcFPS,
                     deckSeconds: self.deckSeconds(timecode, rate: rate),
+                    deckDropFrame: dropFrame,
                     now: HostClock.now()
                 )
             }
@@ -637,16 +665,19 @@ final class AppModel: ObservableObject {
 
         for deck in activeDecks {
             let config = settings.decks[deck.id]
+            let logged = deck.clip(takeOffset: selectedTake).flatMap { deck.maps.map(for: $0) }
+            // Read deck timecode the way the deck counted when this take was recorded.
+            let dropFrame = logged?.deckDropFrame ?? deckDropFrame(deck)
             guard let clip = deck.clip(takeOffset: selectedTake),
-                  let video = deck.videoRate(dropFrame: ltcRate.isDropFrame),
-                  let tcRate = deckTimecodeRate(deck)
+                  let video = deck.videoRate(dropFrame: dropFrame),
+                  let tcRate = deckTimecodeRate(deck, dropFrame: dropFrame)
             else {
                 if deck.chase != DeckChaseState() { deck.resetChase() }
                 continue
             }
             let (clipStart, clipEnd) = deckSpan(clip, rate: tcRate)
             // Logged show code if this take has it; otherwise assume the clip was stamped with show code.
-            let map = (deck.maps.map(for: clip) ?? .identity(deckStart: clipStart, duration: clipEnd - clipStart))
+            let map = (logged ?? .identity(deckStart: clipStart, duration: clipEnd - clipStart))
                 .clipped(toDeck: clipStart, clipEnd)
             let input = DeckChaseInput(
                 startLatencyFrames: config.playOffsetFrames,

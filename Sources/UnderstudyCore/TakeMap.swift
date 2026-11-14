@@ -31,6 +31,9 @@ public struct TakeMap: Codable, Equatable, Sendable {
     /// Non-overlapping, sorted by `ltcStart`.
     public private(set) var segments: [Segment]
     public var createdAt: Date
+    /// Whether the deck's own timecode counted drop-frame while this take was recorded
+    /// (nil in maps from older versions). Playback reads deck timecode the same way.
+    public var deckDropFrame: Bool?
 
     public init(segments: [Segment] = [], createdAt: Date = Date()) {
         self.segments = []
@@ -63,6 +66,7 @@ public struct TakeMap: Codable, Equatable, Sendable {
     /// Keeps only what falls inside deck time [start, end), i.e. one clip's frames.
     public func clipped(toDeck start: Double, _ end: Double) -> TakeMap {
         var out = TakeMap(createdAt: createdAt)
+        out.deckDropFrame = deckDropFrame
         for s in segments {
             let piece = Segment(
                 ltcStart: max(s.ltcStart, start - s.offset),
@@ -141,6 +145,8 @@ public struct TakeMapBuilder: Sendable {
 
     private var committed: TakeMap
     private var current: Run?
+    /// Stamped onto the map (see `TakeMap.deckDropFrame`).
+    public var deckDropFrame: Bool?
     private var candidates: [(ltc: Double, offset: Double)] = []
 
     /// Code that resumes within this time of the previous run is treated as continuous
@@ -153,6 +159,7 @@ public struct TakeMapBuilder: Sendable {
     public init(resuming map: TakeMap? = nil, tolerance: Double = 0.05, confirmReadings: Int = 3) {
         self.tolerance = tolerance
         self.confirmReadings = confirmReadings
+        deckDropFrame = map?.deckDropFrame
         var base = map ?? TakeMap()
         if let latest = base.segments.max(by: { $0.deckEnd < $1.deckEnd }) {
             base = TakeMap(segments: base.segments.filter { $0 != latest }, createdAt: base.createdAt)
@@ -191,6 +198,7 @@ public struct TakeMapBuilder: Sendable {
     public var map: TakeMap {
         var m = committed
         if let run = current { m.insert(run.segment) }
+        if let deckDropFrame { m.deckDropFrame = deckDropFrame }
         return m
     }
 }

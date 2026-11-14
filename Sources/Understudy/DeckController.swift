@@ -27,6 +27,15 @@ final class DeckController: ObservableObject, Identifiable {
 
     /// Was connected to this address and isn't any more.
     var isLost: Bool { everConnected && !isConnected }
+    /// Whether the deck's own timecode counts drop-frame, as it reports (nil if it hasn't said).
+    var deckDropFrame: Bool? {
+        switch config["timecode preference"] {
+        case "dropframe"?: return true
+        case "nondropframe"?: return false
+        default: return nil
+        }
+    }
+
     /// Recording time left across mounted media, in seconds.
     var mediaSecondsLeft: Int? { MediaTime.secondsLeft(slots) }
 
@@ -255,7 +264,9 @@ final class DeckController: ObservableObject, Identifiable {
             send(HyperDeckCommand.recordTrigger(timecodeRun: false))
             send(HyperDeckCommand.timecodeInputInternal)
             // The deck's clock must count the same way as show code (Understudy reads both with the show rate's drop-frame setting).
-            send(HyperDeckCommand.timecodePreference(dropFrame: dropFrame))
+            send(HyperDeckCommand.timecodePreference(dropFrame: dropFrame)) { [weak self] r in
+                if r.isSuccess { self?.config["timecode preference"] = dropFrame ? "dropframe" : "nondropframe" }
+            }
             send(HyperDeckCommand.preview(true))
             send(HyperDeckCommand.record)
         case .timecodeRun:
@@ -297,6 +308,11 @@ final class DeckController: ObservableObject, Identifiable {
     func stopTransport() { send(HyperDeckCommand.stop) }
 
     func resetChase() {
+        // A deck mid-chase must not run on unsupervised (input switch, rate change, new take).
+        switch chase.phase {
+        case .cueing, .armed, .playing: stopTransport()
+        default: break
+        }
         chase = DeckChaseState()
         freshError = nil
         smoothedError = nil
@@ -323,8 +339,9 @@ final class DeckController: ObservableObject, Identifiable {
     }
 
     /// One reading while recording: show code and the deck's own timecode at the same instant.
-    func logTakeReading(ltcSeconds: Double, deckSeconds: Double, now: Double) {
+    func logTakeReading(ltcSeconds: Double, deckSeconds: Double, deckDropFrame: Bool, now: Double) {
         guard var builder = mapBuilder else { return }
+        builder.deckDropFrame = deckDropFrame
         builder.add(ltc: ltcSeconds, deck: deckSeconds)
         mapBuilder = builder
         if now - lastMapSave >= 5 {

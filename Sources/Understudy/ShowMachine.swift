@@ -62,12 +62,20 @@ final class ShowMachine: ObservableObject {
 
     var agentStatusText: String {
         switch agentStatus {
-        case .enabled: return "On. Understudy starts at login and relaunches if it quits unexpectedly."
+        case .enabled:
+            return Self.launchedByAgent
+                ? "On. This copy was started by the login agent and is relaunched if it quits unexpectedly."
+                : "On from the next login. This copy was opened by hand, so it isn't watched; log out and in (or restart) to run under the agent."
         case .requiresApproval: return "Waiting for approval in System Settings › General › Login Items."
         case .notRegistered: return "Off."
         case .notFound: return canManageAgent ? "Not available in this build." : "Available in the installed app, not when run from source."
         @unknown default: return "Unknown."
         }
+    }
+
+    /// Started by the login agent (launchd names the job in the environment).
+    static var launchedByAgent: Bool {
+        ProcessInfo.processInfo.environment["XPC_SERVICE_NAME"] == "com.shdwbx.understudy.agent"
     }
 
     // MARK: Single instance

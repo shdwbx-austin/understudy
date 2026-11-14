@@ -202,6 +202,8 @@ public struct LTCClock: Sendable {
     private var anchorTime: Double = 0
     private var stationary = false
     private var pendingJump = false
+    /// A frame that disagreed with the running code, waiting for the next to confirm it.
+    private var jumpCandidate: (frame: Int, time: Double)?
 
     public init(rate: FrameRate, freewheel: Double = 2.0) {
         self.rate = rate
@@ -216,11 +218,25 @@ public struct LTCClock: Sendable {
     public mutating func ingest(_ timecode: Timecode, dropFrameFlag: Bool, boundaryTime: Double) {
         let next = timecode.frameIndex(at: rate) + 1
         if let anchor = anchorFrame, boundaryTime - anchorTime < rollWindow {
-            stationary = next == anchor
             let expected = Double(anchor) + (boundaryTime - anchorTime) * rate.exact
-            if !stationary && abs(Double(next) - expected) > 2.5 { pendingJump = true }
+            if next != anchor, abs(Double(next) - expected) > 2.5 {
+                // A jump, or one corrupt frame. Only a second frame continuing from it makes it real;
+                // until then keep counting from the old code.
+                if let c = jumpCandidate,
+                   abs(Double(next) - (Double(c.frame) + (boundaryTime - c.time) * rate.exact)) <= 2.5 {
+                    pendingJump = true
+                    jumpCandidate = nil
+                } else {
+                    jumpCandidate = (next, boundaryTime)
+                    return
+                }
+            } else {
+                jumpCandidate = nil
+            }
+            stationary = next == anchor
         } else {
             stationary = false
+            jumpCandidate = nil
         }
         anchorFrame = next
         anchorTime = boundaryTime

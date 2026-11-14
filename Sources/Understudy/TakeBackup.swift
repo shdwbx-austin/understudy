@@ -107,7 +107,9 @@ final class TakeBackup: ObservableObject {
         }
         let url = FTPPaths.url(host: host, port: port, path: path)
 
+        guard !cancelled else { return }
         let headers = await curl(["-sI", "--fail", "--connect-timeout", "5", "--max-time", "20", url])
+        guard !cancelled else { return }
         let total = headers.status == 0 ? FTPPaths.contentLength(fromHeaders: headers.output) : nil
         update(id) { $0.total = total }
 
@@ -215,8 +217,9 @@ final class TakeBackup: ObservableObject {
         }
     }
 
-    /// Runs /usr/bin/curl; returns its exit status and standard output.
+    /// Runs /usr/bin/curl; returns its exit status and standard output. After Cancel, nothing new starts.
     private func curl(_ args: [String]) async -> (status: Int32, output: String) {
+        if cancelled { return (-1, "") }
         let box = ProcessBox()
         box.process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
         box.process.arguments = args

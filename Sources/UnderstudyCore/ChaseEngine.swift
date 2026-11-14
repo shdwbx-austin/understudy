@@ -76,6 +76,9 @@ public struct DeckChaseState: Equatable, Sendable {
     public var strikes = 0
     public var lastCueTime = -Double.infinity
     public var lastErrorFrames: Double?
+    /// Drift re-locks in a row; each doubles the wait before the next cue (a persistent error,
+    /// e.g. a wrong deck timecode setting, must not re-cue every few seconds forever).
+    public var relocks = 0
 
     public init() {}
 }
@@ -139,7 +142,8 @@ public enum ChaseEngine {
                 s.phase = .outOfRange
                 return (!wasOut && input.deckIsPlaying) ? [.stop] : []
             }
-            guard now - s.lastCueTime >= settings.recueCooldownSeconds else { return [] }
+            let cooldown = settings.recueCooldownSeconds * pow(2, Double(min(s.relocks, 4)))
+            guard now - s.lastCueTime >= cooldown else { return [] }
             s.phase = .cueing(target: target, since: now)
             s.lastCueTime = now
             s.strikes = 0
@@ -184,9 +188,11 @@ public enum ChaseEngine {
             guard let error = input.observedError, now - since >= settings.playGraceSeconds else { return [] }
             s.lastErrorFrames = error
             s.strikes = abs(error) > settings.toleranceFrames ? s.strikes + 1 : 0
+            if s.strikes == 0, now - since > 10 { s.relocks = 0 }   // holding fine: forgive past re-locks
             if s.strikes >= settings.driftStrikes {
                 s.phase = .idle
                 s.strikes = 0
+                s.relocks += 1
             }
             return []
         }

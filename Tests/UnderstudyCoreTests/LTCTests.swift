@@ -41,9 +41,12 @@ struct LTCTests {
         #expect(abs(position - (Double(start + 10) + 0.5)) <= 1e-6)
         #expect(!clock.snapshot(at: now).jumped)
 
+        // A jump takes two agreeing frames.
         clock.ingest(Timecode(frameIndex: start + 500, rate: .fps25), dropFrameFlag: false, boundaryTime: 11.0 / 25)
-        #expect(clock.snapshot(at: 11.0 / 25).jumped)
-        #expect(!clock.isRolling(at: 11.0 / 25 + 2.5))
+        #expect(!clock.snapshot(at: 11.0 / 25).jumped)
+        clock.ingest(Timecode(frameIndex: start + 501, rate: .fps25), dropFrameFlag: false, boundaryTime: 12.0 / 25)
+        #expect(clock.snapshot(at: 12.0 / 25).jumped)
+        #expect(!clock.isRolling(at: 12.0 / 25 + 2.5))
     }
 
     @Test func freewheelsThroughDropout() throws {
@@ -72,9 +75,24 @@ struct LTCTests {
         for k in 0..<25 {
             clock.ingest(Timecode(frameIndex: start + k, rate: .fps25), dropFrameFlag: false, boundaryTime: Double(k + 1) / 25)
         }
-        // After a 1 s gap, code returns somewhere else.
+        // After a 1 s gap, code returns somewhere else (two frames confirm it).
         clock.ingest(Timecode(frameIndex: start + 9_000, rate: .fps25), dropFrameFlag: false, boundaryTime: 2.0)
-        #expect(clock.snapshot(at: 2.0).jumped)
+        clock.ingest(Timecode(frameIndex: start + 9_001, rate: .fps25), dropFrameFlag: false, boundaryTime: 2.04)
+        #expect(clock.snapshot(at: 2.04).jumped)
+    }
+
+    @Test func singleCorruptFrameIsIgnored() throws {
+        var clock = LTCClock(rate: .fps30, freewheel: 2.0)
+        let start = try #require(Timecode("01:00:00:00")).frameIndex(at: .fps30)
+        for k in 0..<30 {
+            clock.ingest(Timecode(frameIndex: start + k, rate: .fps30), dropFrameFlag: false, boundaryTime: Double(k + 1) / 30)
+        }
+        // One bit flipped: 01:00:01:00 decodes as 03:00:01:00. The next frame is back on track.
+        clock.ingest(Timecode(frameIndex: start + 30 + 2 * 3600 * 30, rate: .fps30), dropFrameFlag: false, boundaryTime: 31.0 / 30)
+        clock.ingest(Timecode(frameIndex: start + 31, rate: .fps30), dropFrameFlag: false, boundaryTime: 32.0 / 30)
+        #expect(!clock.snapshot(at: 32.0 / 30).jumped)
+        let position = try #require(clock.position(at: 32.0 / 30))
+        #expect(abs(position - Double(start + 32)) < 0.01)
     }
 
     @Test func heldFrameStopsAtOnce() throws {

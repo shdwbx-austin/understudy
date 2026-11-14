@@ -21,7 +21,15 @@ public struct LTCRateDetector: Sendable {
     /// Long runs are measured in windows of this length, so a change of source is noticed.
     public var window: Double = 10.0
 
+    /// Seconds a first rate must hold before it's trusted.
+    public var firstLockSeconds: Double = 0.5
+    /// Frame intervals longer than this include a missed frame and are left out of the measurement
+    /// (the longest real interval, 23.976 fps, is 0.0417 s).
+    private static let longestFrame = 0.05
+
     private var runStart: Double?
+    private var intervalSum = 0.0
+    private var intervals = 0
     private var runFrames = 0
     private var dropFlags = 0
     private var lastTime: Double?
@@ -33,36 +41,56 @@ public struct LTCRateDetector: Sendable {
     ///   - dropFrameFlag: the frame's LTC drop-frame bit.
     ///   - time: when the frame ended, in seconds on a steady clock (ideally audio sample time).
     public mutating func ingest(dropFrameFlag: Bool, time: Double) {
-        if let last = lastTime, time <= last || time - last > maxGap {
+        let previous = lastTime
+        if let last = previous, time <= last || time - last > maxGap {
             runStart = nil
         }
         lastTime = time
         guard let start = runStart else {
-            runStart = time
-            runFrames = 1
-            dropFlags = dropFrameFlag ? 1 : 0
+            startRun(at: time, dropFrameFlag: dropFrameFlag)
             return
         }
         runFrames += 1
         if dropFrameFlag { dropFlags += 1 }
+        // Average the frame-to-frame interval, skipping any that span a missed frame: counting
+        // frames received over elapsed time reads low after a single dropout (30 → 29.97).
+        if let previous {
+            let dt = time - previous
+            if dt > 0, dt <= Self.longestFrame {
+                intervalSum += dt
+                intervals += 1
+            }
+        }
 
         let span = time - start
-        guard span >= minimumRun else { return }
-        let fps = Double(runFrames - 1) / span
+        guard span >= minimumRun, intervals >= 20, intervalSum > 0 else { return }
+        let fps = Double(intervals) / intervalSum
         measuredFPS = fps
         if let candidate = Self.classify(fps: fps, dropFrame: dropFlags * 2 > runFrames) {
             consider(candidate, at: time)
         }
-        if span >= window {
-            runStart = time
-            runFrames = 1
-            dropFlags = dropFrameFlag ? 1 : 0
-        }
+        if span >= window { startRun(at: time, dropFrameFlag: dropFrameFlag) }
+    }
+
+    private mutating func startRun(at time: Double, dropFrameFlag: Bool) {
+        runStart = time
+        runFrames = 1
+        dropFlags = dropFrameFlag ? 1 : 0
+        intervalSum = 0
+        intervals = 0
     }
 
     private mutating func consider(_ candidate: FrameRate, at time: Double) {
         guard let current = detected else {
-            detected = candidate
+            // Even the first lock must hold briefly, so one odd measurement can't set the rate.
+            if let p = pending, p.rate == candidate {
+                if time - p.since >= firstLockSeconds {
+                    detected = candidate
+                    pending = nil
+                }
+            } else {
+                pending = (candidate, time)
+            }
             return
         }
         guard candidate != current else {

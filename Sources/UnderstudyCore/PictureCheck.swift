@@ -20,6 +20,14 @@ public struct LumaGrid: Equatable, Sendable {
         values.isEmpty ? 0 : Float(values.filter { $0 > level }.count) / Float(values.count)
     }
 
+    /// Largest single-cell change from another grid (catches small movement in a static frame).
+    public func maxDifference(from other: LumaGrid) -> Float {
+        guard other.values.count == values.count, !values.isEmpty else { return 1 }
+        var m: Float = 0
+        for i in values.indices { m = max(m, abs(values[i] - other.values[i])) }
+        return m
+    }
+
     /// Mean absolute difference from another grid of the same size (0 = identical).
     public func difference(from other: LumaGrid) -> Float {
         guard other.values.count == values.count, !values.isEmpty else { return 1 }
@@ -92,7 +100,10 @@ public struct PictureChecker: Sendable {
         // Black: dark overall and essentially nothing bright (a dark scene with highlights isn't black).
         let isBlack = grid.mean < settings.blackLevel && grid.fraction(above: settings.blackLevel * 3) < 0.01
         blackSince = isBlack ? (blackSince ?? time) : nil
-        if let previous, !isBlack, grid.difference(from: previous) < settings.stillLevel {
+        // Still = no change on average AND nowhere in particular: a wide shot with a small
+        // moving performer changes a few cells a lot and must not read as frozen.
+        if let previous, !isBlack, grid.difference(from: previous) < settings.stillLevel,
+           grid.maxDifference(from: previous) < 0.08 {
             stillSince = stillSince ?? time
         } else {
             stillSince = nil
