@@ -17,6 +17,7 @@ enum Theme {
     static let fill = Color(white: 0.07)
     static let signal = Color(red: 0.89, green: 0.12, blue: 0.10)   // record, alarm
     static let amber = Color(red: 1.0, green: 0.70, blue: 0.16)     // warnings only
+    static let lock = Color(red: 0.24, green: 0.86, blue: 0.52)     // timecode locked
 
     // Old names, still used by a few views.
     static var background: Color { ink }
@@ -224,5 +225,32 @@ struct LevelMeter: View {
 
     static func label(_ db: Float) -> String {
         db <= -59.5 ? "−∞ dB" : String(format: "%.0f dB", db)
+    }
+}
+
+/// A timecode set in fixed-width cells, so it holds still while the digits change.
+///
+/// Neue Haas Grotesk has proportional figures only (a 1 is about half the width of a 0) and
+/// ignores the tabular-figures feature, so each character gets its own cell instead.
+struct TimecodeText: View {
+    let text: String
+    let size: CGFloat
+    var weight: Theme.Weight = .light
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(text.enumerated()), id: \.offset) { _, ch in
+                Text(String(ch))
+                    .font(Theme.grotesk(size, weight))
+                    .frame(width: cellWidth(ch), alignment: .center)
+            }
+        }
+        .fixedSize()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(text))
+    }
+
+    private func cellWidth(_ ch: Character) -> CGFloat {
+        ch.isNumber || ch == "-" ? size * 0.6 : size * 0.26
     }
 }

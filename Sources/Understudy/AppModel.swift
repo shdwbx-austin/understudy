@@ -31,6 +31,8 @@ final class AppModel: ObservableObject {
     @Published private(set) var ltcText = "--:--:--:--"
     @Published private(set) var ltcRolling = false
     @Published private(set) var ltcFreewheeling = false
+    /// Code is rolling, its rate is known (and matches the set rate when fixed), and it isn't freewheeling.
+    @Published private(set) var ltcLocked = false
     @Published private(set) var ltcInfo = "NO LTC"
     @Published private(set) var ltcWarning: String?
     @Published private(set) var audioDevices: [AudioInputDevice] = []
@@ -401,6 +403,11 @@ final class AppModel: ObservableObject {
         if rolling != ltcRolling { ltcRolling = rolling }
         let freewheeling = clock.isFreewheeling(at: now)
         if freewheeling != ltcFreewheeling { ltcFreewheeling = freewheeling }
+        let rateAgrees = settings.ltcRateAuto
+            ? rateDetector.detected != nil
+            : (rateDetector.detected == nil || rateDetector.detected == settings.ltcRate)
+        let locked = rolling && !freewheeling && rateAgrees
+        if locked != ltcLocked { ltcLocked = locked }
         guard now - lastInfoUpdate > 0.5 else { return }
         lastInfoUpdate = now
         let info: String

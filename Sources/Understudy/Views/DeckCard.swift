@@ -67,9 +67,7 @@ struct DeckCard: View {
                 .padding(.top, 6)
 
             // Readouts
-            Text(deck.transport.displayTimecode?.description ?? "--:--:--:--")
-                .font(Theme.grotesk(26, .light))
-                .tracking(-0.3)
+            TimecodeText(text: deck.transport.displayTimecode?.description ?? "--:--:--:--", size: 26)
                 .foregroundStyle(deck.isConnected ? Theme.paper : Theme.quiet)
                 .padding(.top, 18)
 

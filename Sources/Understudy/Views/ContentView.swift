@@ -72,16 +72,15 @@ private struct Header: View {
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 8) {
-                Text(model.ltcText)
-                    .font(Theme.grotesk(68, .light))
-                    .tracking(-1)
-                    .foregroundStyle(timecodeColor)
-                    .lineLimit(1)
+                TimecodeText(text: model.ltcText, size: 68)
+                    .foregroundStyle(clockColor)
+                    .animation(.easeInOut(duration: 0.25), value: clockState)
                 HStack(spacing: 18) {
                     HStack(spacing: 7) {
                         StatusDot(color: clockColor, filled: model.ltcRolling)
-                        Text(clockState).foregroundStyle(model.ltcFreewheeling ? Theme.amber : Theme.paper)
+                        Text(clockState).foregroundStyle(clockColor)
                     }
+                    .animation(.easeInOut(duration: 0.25), value: clockState)
                     Text(model.rateLabel)
                     Text(model.ltcInfo).foregroundStyle(Theme.grey)
                 }
@@ -94,19 +93,17 @@ private struct Header: View {
         }
     }
 
-    private var timecodeColor: Color {
-        if !model.ltcRolling { return Theme.quiet }
-        return model.ltcFreewheeling ? Theme.amber : Theme.paper
-    }
-
+    /// Stopped (grey) → acquiring (off-white) → locked (green); freewheel (amber).
     private var clockState: String {
         if !model.ltcRolling { return "STOPPED" }
-        return model.ltcFreewheeling ? "FREEWHEEL · NO LTC" : "ROLLING"
+        if model.ltcFreewheeling { return "FREEWHEEL · NO LTC" }
+        return model.ltcLocked ? "LOCKED" : "ACQUIRING"
     }
 
     private var clockColor: Color {
         if !model.ltcRolling { return Theme.quiet }
-        return model.ltcFreewheeling ? Theme.amber : Theme.paper
+        if model.ltcFreewheeling { return Theme.amber }
+        return model.ltcLocked ? Theme.lock : Theme.paper
     }
 }
 
