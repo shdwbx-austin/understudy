@@ -247,10 +247,21 @@ private struct DeckCount: View {
 
     var body: some View {
         let connected = model.decks.filter(\.isConnected).count
-        Text("\(connected) OF \(model.decks.count) CONNECTED")
-            .font(Theme.mono(10))
-            .tracking(1.2)
-            .foregroundStyle(Theme.quiet)
+        let lost = model.decks.filter(\.isLost)
+        HStack(spacing: 18) {
+            if let low = model.lowestMedia, MediaTime.level(low.seconds) != .ok {
+                Text("\(String(format: "%02d", low.deck + 1)) MEDIA \(MediaTime.text(low.seconds).uppercased())")
+                    .foregroundStyle(MediaTime.level(low.seconds) == .low ? Theme.amber : Theme.signal)
+            }
+            if !lost.isEmpty {
+                Text("\(lost.map { String(format: "%02d", $0.id + 1) }.joined(separator: " ")) LOST")
+                    .foregroundStyle(Theme.signal)
+            }
+            Text("\(connected) OF \(model.decks.count) CONNECTED")
+                .foregroundStyle(lost.isEmpty && connected > 0 ? Theme.lock : Theme.quiet)
+        }
+        .font(Theme.mono(10))
+        .tracking(1.2)
     }
 }
 

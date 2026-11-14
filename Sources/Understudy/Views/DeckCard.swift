@@ -11,12 +11,25 @@ struct DeckCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            // Connection bar: green connected, red lost, grey empty/off — readable across the room.
+            Rectangle()
+                .fill(connectionColor)
+                .frame(height: deck.isConnected || deck.isLost ? 4 : 1)
+                .padding(.bottom, 10)
+                .animation(.easeInOut(duration: 0.2), value: connectionWord)
+
             // Index and status
             HStack(alignment: .firstTextBaseline) {
                 Text(String(format: "%02d", deck.id + 1))
                     .font(Theme.grotesk(44, .light))
                     .tracking(-1)
-                    .foregroundStyle(deck.transport.status == .record ? Theme.signal : Theme.paper)
+                    .foregroundStyle(deck.isConnected || deck.isLost ? connectionColor : Theme.paper)
+                if deck.transport.status == .record {
+                    Text("● REC")
+                        .font(Theme.mono(10, bold: true))
+                        .tracking(1.2)
+                        .foregroundStyle(Theme.signal)
+                }
                 Spacer()
                 HStack(spacing: 6) {
                     StatusDot(color: connectionColor, filled: deck.isConnected)
@@ -85,10 +98,14 @@ struct DeckCard: View {
                 .padding(.top, 18)
 
             VStack(spacing: 0) {
-                Row(label: "Transport", value: deck.transport.status.rawValue.uppercased(), color: statusColor)
+                // Nothing stale: a deck that isn't connected shows dashes, not its last known state.
+                Row(label: "Transport", value: deck.isConnected ? deck.transport.status.rawValue.uppercased() : "—",
+                    color: deck.isConnected ? statusColor : Theme.quiet)
                 Row(label: "Input", value: inputText, color: inputColor)
-                Row(label: "Format", value: deck.transport.videoFormat ?? "—")
+                Row(label: "Format", value: deck.isConnected ? deck.transport.videoFormat ?? "—" : "—",
+                    color: deck.isConnected ? Theme.paper : Theme.quiet)
                 Row(label: "Reference", value: refText, color: refColor)
+                Row(label: "Media left", value: deck.isConnected ? MediaTime.text(deck.mediaSecondsLeft) : "—", color: mediaColor)
                 if deck.isLoggingTake {
                     Row(label: "Show code",
                         value: model.ltcRolling ? loggedText : "WAITING FOR LTC",
@@ -151,11 +168,21 @@ struct DeckCard: View {
     // MARK: Text and colour
 
     private var connectionWord: String {
+        if deck.isConnected { return "CONNECTED" }
+        if deck.isLost { return "LOST · RETRYING" }
         switch deck.connection {
-        case .connected: return "ONLINE"
         case .connecting: return "CONNECTING"
-        case .failed: return "RETRYING"
-        case .disconnected: return config.host.isEmpty ? "EMPTY" : "OFFLINE"
+        case .failed: return "NOT REACHABLE"
+        case .connected, .disconnected: return config.host.isEmpty ? "EMPTY" : (config.enabled ? "OFFLINE" : "OFF")
+        }
+    }
+
+    private var mediaColor: Color {
+        guard deck.isConnected else { return Theme.quiet }
+        switch MediaTime.level(deck.mediaSecondsLeft) {
+        case .ok: return Theme.paper
+        case .low: return Theme.amber
+        case .critical, .none: return Theme.signal
         }
     }
 
@@ -168,12 +195,14 @@ struct DeckCard: View {
         }
     }
 
+    /// Green connected, red lost after having connected, amber while first connecting, grey otherwise.
     private var connectionColor: Color {
+        if deck.isConnected { return Theme.lock }
+        if deck.isLost { return Theme.signal }
         switch deck.connection {
-        case .connected: return Theme.paper
         case .connecting: return Theme.amber
-        case .failed: return Theme.signal
-        case .disconnected: return Theme.quiet
+        case .failed: return Theme.amber
+        case .connected, .disconnected: return Theme.quiet
         }
     }
 
@@ -186,6 +215,7 @@ struct DeckCard: View {
     }
 
     private var refText: String {
+        guard deck.isConnected else { return "—" }
         switch deck.transport.referenceLocked {
         case true?: return "LOCKED"
         case false?: return "NOT LOCKED"
@@ -194,7 +224,8 @@ struct DeckCard: View {
     }
 
     private var refColor: Color {
-        deck.transport.referenceLocked == false ? Theme.signal : Theme.paper
+        guard deck.isConnected else { return Theme.quiet }
+        return deck.transport.referenceLocked == false ? Theme.signal : Theme.paper
     }
 
     private var loggedText: String {

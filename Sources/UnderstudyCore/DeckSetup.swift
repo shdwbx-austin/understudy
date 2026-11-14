@@ -141,6 +141,34 @@ public struct DeckSlotInfo: Equatable, Sendable, Identifiable {
     }
 }
 
+/// Recording time left across a deck's mounted media (decks spill over to the next slot).
+public enum MediaTime {
+    public enum Level: Equatable, Sendable { case ok, low, critical, none }
+
+    /// Seconds left, or nil before the deck has reported any slot.
+    public static func secondsLeft(_ slots: [DeckSlotInfo]) -> Int? {
+        guard !slots.isEmpty else { return nil }
+        return slots.filter(\.isMounted).reduce(0) { $0 + max(0, $1.recordingTime ?? 0) }
+    }
+
+    /// Amber under 30 minutes, red under 10 or with no media mounted.
+    public static func level(_ seconds: Int?, low: Int = 30 * 60, critical: Int = 10 * 60) -> Level {
+        guard let seconds else { return .ok }
+        if seconds <= 0 { return .none }
+        if seconds < critical { return .critical }
+        if seconds < low { return .low }
+        return .ok
+    }
+
+    /// "2 h 05 min", "23 min", "NO MEDIA".
+    public static func text(_ seconds: Int?) -> String {
+        guard let seconds else { return "—" }
+        if seconds <= 0 { return "NO MEDIA" }
+        let h = seconds / 3600, m = (seconds % 3600) / 60
+        return h > 0 ? String(format: "%d h %02d min", h, m) : "\(m) min"
+    }
+}
+
 public enum DeckSetupCommand {
     public static let readConfiguration = "configuration"
     public static let deviceInfo = "device info"

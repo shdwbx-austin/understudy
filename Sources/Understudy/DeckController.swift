@@ -20,6 +20,13 @@ final class DeckController: ObservableObject, Identifiable {
     @Published private(set) var config: [String: String] = [:]
     @Published private(set) var deviceInfo: DeckDeviceInfo?
     @Published private(set) var slots: [DeckSlotInfo] = []
+    /// Has connected at least once to the current address, so a drop now is a fault.
+    @Published private(set) var everConnected = false
+
+    /// Was connected to this address and isn't any more.
+    var isLost: Bool { everConnected && !isConnected }
+    /// Recording time left across mounted media, in seconds.
+    var mediaSecondsLeft: Int? { MediaTime.secondsLeft(slots) }
 
     /// Called when a recording on this deck ends (status left `record`).
     var onRecordingFinished: (() -> Void)?
@@ -55,6 +62,10 @@ final class DeckController: ObservableObject, Identifiable {
         model = nil
         transport = TransportInfo()
         clips = []
+        slots = []
+        config = [:]
+        deviceInfo = nil
+        everConnected = false   // a new address starts clean
         let trimmed = host.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else {
             connection = .disconnected
@@ -75,15 +86,18 @@ final class DeckController: ObservableObject, Identifiable {
         client.connect()
     }
 
+    /// Deliberate disconnect (slot switched off or emptied): not a fault.
     func disconnect() {
         client?.disconnect()
         client = nil
         connection = .disconnected
+        everConnected = false
     }
 
     private func handleState(_ state: HyperDeckClient.State) {
         connection = state
         guard state == .connected else { return }
+        everConnected = true
         lastError = nil
         send(HyperDeckCommand.remoteOverride)
         send(HyperDeckCommand.notify)
@@ -120,10 +134,16 @@ final class DeckController: ObservableObject, Identifiable {
         sendQuietly(DeckSetupCommand.deviceInfo) { [weak self] r in
             guard let self, r.code == 204 else { return }
             self.deviceInfo = DeckDeviceInfo(fields: r.fields)
-            for id in 1...max(1, self.deviceInfo?.slotCount ?? 2) {
-                self.sendQuietly(DeckSetupCommand.slotInfo(id)) { [weak self] r in
-                    if r.code == 202, let slot = DeckSlotInfo(fields: r.fields) { self?.mergeSlot(slot) }
-                }
+            self.refreshSlots()
+        }
+    }
+
+    /// Re-reads every media slot (recording time left changes as the deck records).
+    func refreshSlots() {
+        guard isConnected else { return }
+        for id in 1...max(1, deviceInfo?.slotCount ?? 2) {
+            sendQuietly(DeckSetupCommand.slotInfo(id)) { [weak self] r in
+                if r.code == 202, let slot = DeckSlotInfo(fields: r.fields) { self?.mergeSlot(slot) }
             }
         }
     }

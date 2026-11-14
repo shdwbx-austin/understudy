@@ -63,6 +63,7 @@ final class AppModel: ObservableObject {
     private var lastInfoUpdate = 0.0
     private var takeRefreshScheduled = false
     private var lastAudioRestart = -Double.infinity
+    private var lastSlotRefresh = 0.0
     /// The device and channel the audio input is reading now.
     private var openInput: (uid: String?, channel: Int)?
 
@@ -208,6 +209,11 @@ final class AppModel: ObservableObject {
         guard restart else { return }
         confidence.stop()
         if settings.confidenceEnabled { confidence.start(deviceID: settings.confidenceDeviceID) }
+    }
+
+    /// The connected deck with the least recording time left, if any has reported.
+    var lowestMedia: (deck: Int, seconds: Int)? {
+        activeDecks.compactMap { d in d.mediaSecondsLeft.map { (d.id, $0) } }.min { $0.1 < $1.1 }
     }
 
     // MARK: Deck setup
@@ -549,6 +555,10 @@ final class AppModel: ObservableObject {
         if pollDue {
             watchAudio(now: now)
             confidence.checkStale(now: now)
+        }
+        if now - lastSlotRefresh >= 15 {
+            lastSlotRefresh = now
+            activeDecks.forEach { $0.refreshSlots() }
         }
         if pollDue && rateKnown { logTakes() }
         if mode == .playback { chase(snapshot, now: now, pollDue: pollDue) }

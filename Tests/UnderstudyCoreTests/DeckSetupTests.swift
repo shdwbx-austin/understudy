@@ -37,6 +37,23 @@ struct DeckSetupTests {
         #expect(DeckSetupCommand.set("record cache", "true") == "configuration: record cache: true")
     }
 
+    @Test func mediaTimeAcrossSlots() {
+        let a = DeckSlotInfo(fields: ["slot id": "1", "status": "mounted", "recording time": "1500"])!
+        let b = DeckSlotInfo(fields: ["slot id": "2", "status": "mounted", "recording time": "3600"])!
+        let empty = DeckSlotInfo(fields: ["slot id": "3", "status": "empty", "recording time": "0"])!
+        #expect(MediaTime.secondsLeft([a, b, empty]) == 5100)
+        #expect(MediaTime.secondsLeft([]) == nil)
+        #expect(MediaTime.secondsLeft([empty]) == 0)
+        #expect(MediaTime.level(5100) == .ok)
+        #expect(MediaTime.level(1500) == .low)
+        #expect(MediaTime.level(500) == .critical)
+        #expect(MediaTime.level(0) == .none)
+        #expect(MediaTime.level(nil) == .ok)
+        #expect(MediaTime.text(5100) == "1 h 25 min")
+        #expect(MediaTime.text(1500) == "25 min")
+        #expect(MediaTime.text(0) == "NO MEDIA")
+    }
+
     @Test func findsMismatches() {
         let m = deckSettingMismatches([
             0: ["file format": "QuickTimeProResHQ", "audio codec": "PCM", "timecode input": "internal"],
