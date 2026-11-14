@@ -189,6 +189,8 @@ Pushing a tag like `v0.2.0` runs CI and attaches the zipped universal app to a G
 
 The first launch of an ad-hoc signed build needs right-click → **Open**.
 
+The app icon is drawn by `swift scripts/make-icon.swift`, which writes `Resources/AppIcon.icns`. It needs Neue Haas Grotesk Display installed, so the `.icns` is committed and CI doesn't redraw it.
+
 ## Layout
 
 ```

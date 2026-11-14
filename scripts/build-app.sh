@@ -20,6 +20,8 @@ APP="dist/Understudy.app"
 rm -rf dist
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN_DIR/Understudy" "$APP/Contents/MacOS/Understudy"
+# App icon, drawn by scripts/make-icon.swift.
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 sed -e "s/__VERSION__/$VERSION/g" -e "s/__BUILD__/$BUILD/g" Resources/Info.plist > "$APP/Contents/Info.plist"
 # Login agent (Settings › Show machine): starts Understudy at login, relaunches it after a crash.
 mkdir -p "$APP/Contents/Library/LaunchAgents"
