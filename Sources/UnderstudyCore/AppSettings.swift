@@ -54,6 +54,14 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var recordMode: RecordMode = .continuous
     /// Seconds the show clock keeps counting after LTC disappears.
     public var freewheelSeconds: Double = 2.0
+    /// Network interface (BSD name, e.g. "en7") that deck discovery looks on; nil = all.
+    public var discoveryInterface: String?
+    /// Folder that take backups are copied into (e.g. inside Dropbox); nil until chosen.
+    public var backupFolder: String?
+    /// Stop the Mac sleeping while Understudy is open (a dedicated show machine).
+    public var keepAwake = true
+    /// After a restart or crash, go back to the mode Understudy was in (Record or Play) instead of Stop.
+    public var resumeLastMode = false
 
     public init() {}
 
@@ -72,6 +80,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         deckTimecodeAtVideoRate = (try? c.decodeIfPresent(Bool.self, forKey: .deckTimecodeAtVideoRate)) ?? d.deckTimecodeAtVideoRate
         recordMode = (try? c.decodeIfPresent(RecordMode.self, forKey: .recordMode)) ?? d.recordMode
         freewheelSeconds = (try? c.decodeIfPresent(Double.self, forKey: .freewheelSeconds)) ?? d.freewheelSeconds
+        discoveryInterface = (try? c.decodeIfPresent(String.self, forKey: .discoveryInterface)) ?? d.discoveryInterface
+        backupFolder = (try? c.decodeIfPresent(String.self, forKey: .backupFolder)) ?? d.backupFolder
+        keepAwake = (try? c.decodeIfPresent(Bool.self, forKey: .keepAwake)) ?? d.keepAwake
+        resumeLastMode = (try? c.decodeIfPresent(Bool.self, forKey: .resumeLastMode)) ?? d.resumeLastMode
         normalizeDecks()
     }
 

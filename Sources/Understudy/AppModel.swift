@@ -48,6 +48,11 @@ final class AppModel: ObservableObject {
 
     let decks: [DeckController]
     let discovery = DeckDiscovery()
+    let showMachine = ShowMachine()
+    let backup = TakeBackup()
+    /// Set when the app came back in Record or Play after a restart; shown as a banner until dismissed.
+    @Published var resumedMode: Mode?
+    private static let lastModeKey = "understudy.lastMode"
 
     private var clock: LTCClock
     private var rateDetector = LTCRateDetector()
@@ -84,9 +89,19 @@ final class AppModel: ObservableObject {
             guard let self else { return [] }
             return Set(self.decks.filter(\.isConnected).map { self.settings.decks[$0.id].host.trimmingCharacters(in: .whitespaces) })
         }
+        discovery.interface = { [weak self] in self?.settings.discoveryInterface }
         discovery.startBrowsing()
         if loaded.decks.allSatisfy({ $0.host.trimmingCharacters(in: .whitespaces).isEmpty }) {
             discovery.scan()
+        }
+        showMachine.keepAwake(loaded.keepAwake)
+        // Back into Record or Play after a restart, if asked. Decks are brought into the mode as
+        // they connect (deckReady); a deck that kept recording through the restart is left alone.
+        if loaded.resumeLastMode,
+           let raw = UserDefaults.standard.string(forKey: Self.lastModeKey),
+           let last = Mode(rawValue: raw), last != .stop {
+            resumedMode = last
+            setMode(last)
         }
         loop = Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -119,7 +134,11 @@ final class AppModel: ObservableObject {
     // MARK: Modes
 
     func setMode(_ newMode: Mode) {
+        // Never copy files off the decks while they record.
+        if newMode == .record, backup.isRunning { backup.cancel() }
         mode = newMode
+        UserDefaults.standard.set(newMode.rawValue, forKey: Self.lastModeKey)
+        if newMode != resumedMode { resumedMode = nil }
         let active = activeDecks
         switch newMode {
         case .stop:
@@ -168,6 +187,29 @@ final class AppModel: ObservableObject {
             decks[id].connect(host: config.host)
         } else {
             decks[id].disconnect()
+        }
+    }
+
+    // MARK: Backup
+
+    /// Copies the selected take's clip from every connected deck into the backup folder.
+    func backUpSelectedTake() {
+        guard mode != .record, let folder = settings.backupFolder else { return }
+        let items = activeDecks.compactMap { deck -> TakeBackup.Item? in
+            guard let clip = deck.clip(takeOffset: selectedTake) else { return nil }
+            let config = settings.decks[deck.id]
+            return TakeBackup.Item(
+                deckName: config.name,
+                host: config.host.trimmingCharacters(in: .whitespaces),
+                fileName: clip.name
+            )
+        }
+        backup.start(items, into: URL(fileURLWithPath: folder, isDirectory: true))
+    }
+
+    func chooseBackupFolder() {
+        if let path = TakeBackup.chooseFolder(startingAt: settings.backupFolder) {
+            settings.backupFolder = path
         }
     }
 
@@ -365,6 +407,9 @@ final class AppModel: ObservableObject {
 
     private func settingsChanged(from old: AppSettings) {
         syncClockRate()
+        if settings.keepAwake != old.keepAwake {
+            showMachine.keepAwake(settings.keepAwake)
+        }
         if settings.freewheelSeconds != old.freewheelSeconds {
             clock.freewheel = settings.freewheelSeconds
         }

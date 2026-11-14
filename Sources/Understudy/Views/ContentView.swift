@@ -46,6 +46,8 @@ struct ContentView: View {
                 .padding(.top, 14)
                 .padding(.bottom, 30)
             NetworkSection(index: model.mode == .playback ? 4 : 3, discovery: model.discovery)
+                .padding(.bottom, 30)
+            BackupSection(index: model.mode == .playback ? 5 : 4, backup: model.backup)
                 .padding(.bottom, 12)
     }
 }
@@ -88,6 +90,15 @@ private struct Header: View {
                 .tracking(1)
                 if let warning = model.ltcWarning {
                     Text(warning).font(Theme.mono(10)).foregroundStyle(Theme.amber)
+                }
+                if let resumed = model.resumedMode {
+                    HStack(spacing: 12) {
+                        Text("RESUMED \(resumed == .record ? "RECORD" : "PLAY TO CODE") AFTER A RESTART")
+                            .foregroundStyle(Theme.amber)
+                        TextButton(title: "OK", color: Theme.amber) { model.resumedMode = nil }
+                    }
+                    .font(Theme.mono(10))
+                    .tracking(1)
                 }
             }
         }
@@ -267,6 +278,7 @@ private struct NetworkSection: View {
         VStack(alignment: .leading, spacing: 0) {
             SectionHead(index: index, title: "Network") {
                 HStack(spacing: 18) {
+                    InterfacePicker()
                     Text(scanSummary)
                         .font(Theme.mono(10))
                         .foregroundStyle(Theme.quiet)
@@ -303,6 +315,42 @@ private struct NetworkSection: View {
         if discovery.isScanning { return "Looking for HyperDecks on the local network…" }
         if discovery.lastScanned == nil { return "Find decks scans the local network for HyperDecks." }
         return "No HyperDecks found. If macOS asked about local network access, allow it and scan again."
+    }
+}
+
+/// Which network interface discovery looks on.
+private struct InterfacePicker: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        let networks = DeckDiscovery.localNetworks()
+        let chosen = model.settings.discoveryInterface
+        Menu {
+            Button("All interfaces") { choose(nil) }
+            Divider()
+            ForEach(networks) { net in
+                Button("\(net.displayName) — \(net.address)  (\(net.cidr))") { choose(net.interface) }
+            }
+        } label: {
+            Text("ON: \(label(chosen, networks))".uppercased())
+                .font(Theme.mono(10, bold: true))
+                .tracking(1.2)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.visible)
+        .fixedSize()
+        .help("Which network to look for HyperDecks on")
+    }
+
+    private func label(_ chosen: String?, _ networks: [DeckDiscovery.LocalNetwork]) -> String {
+        guard let chosen else { return "All interfaces" }
+        return networks.first { $0.interface == chosen }?.displayName ?? "\(chosen) (not connected)"
+    }
+
+    private func choose(_ interface: String?) {
+        model.settings.discoveryInterface = interface
+        model.discovery.clear()
+        model.discovery.scan()
     }
 }
 
@@ -377,6 +425,9 @@ private struct Footer: View {
                     Text(LevelMeter.label(db)).foregroundStyle(Theme.grey).frame(width: 48, alignment: .leading)
                 }
                 Spacer()
+                if model.showMachine.keepingAwake {
+                    Text("AWAKE").foregroundStyle(Theme.quiet).help("This Mac won't idle-sleep while Understudy is open")
+                }
                 Text("⌘,  SETTINGS").foregroundStyle(Theme.quiet)
                 Text("shdwbx")
                     .font(Theme.grotesk(15, .medium))

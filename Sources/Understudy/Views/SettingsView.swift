@@ -58,6 +58,26 @@ struct SettingsView: View {
                 Button("Rescan devices") { model.refreshAudioDevices() }
             }
 
+            Section("Show machine") {
+                Toggle("Keep this Mac awake while Understudy is open", isOn: $model.settings.keepAwake)
+                ShowMachineAgent(machine: model.showMachine)
+                Toggle("After a restart, go back to Record or Play", isOn: $model.settings.resumeLastMode)
+                Text("For a dedicated Mac running rehearsals. Also set System Settings › Energy › “Start up automatically after a power failure”, automatic login, and Screen Sharing to watch it from your laptop.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Backup") {
+                HStack {
+                    Text(model.settings.backupFolder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "No folder chosen")
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Spacer()
+                    Button("Choose…") { model.chooseBackupFolder() }
+                }
+                Text("Takes are copied off the decks by FTP into dated folders here, one per deck. Choose a folder inside Dropbox and Dropbox syncs them.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
             Section("Recording") {
                 Picker("Record", selection: $model.settings.recordMode) {
                     Text("Continuously, REC to STOP (recommended)").tag(RecordMode.continuous)
@@ -120,5 +140,27 @@ private struct ChannelRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Start at login / relaunch after a crash, through the bundled launch agent.
+private struct ShowMachineAgent: View {
+    @ObservedObject var machine: ShowMachine
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Start at login and relaunch if it quits unexpectedly", isOn: Binding(
+                get: { machine.runsAtLogin },
+                set: { machine.setRunAtLogin($0) }
+            ))
+            .disabled(!machine.canManageAgent)
+            Text(machine.agentError ?? machine.agentStatusText)
+                .font(.caption)
+                .foregroundStyle(machine.agentError == nil ? Color.secondary : Theme.signal)
+            if machine.agentStatus == .requiresApproval {
+                Button("Open Login Items…") { machine.openLoginItemsSettings() }
+            }
+        }
+        .onAppear { machine.refresh() }
     }
 }

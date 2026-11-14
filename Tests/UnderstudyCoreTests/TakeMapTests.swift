@@ -149,6 +149,9 @@ struct SettingsTests {
         #expect(s.chase.prerollSeconds == 2)
         #expect(s.recordMode == .continuous)
         #expect(s.freewheelSeconds == 2.0)
+        #expect(s.keepAwake == true)
+        #expect(s.resumeLastMode == false)
+        #expect(s.ltcRateAuto == true)
     }
 
     @Test func repairsWrongDeckCount() throws {

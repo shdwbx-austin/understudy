@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import Network
+import SystemConfiguration
 import UnderstudyCore
 
 /// A HyperDeck found on the network.
@@ -39,6 +40,15 @@ final class DeckDiscovery: ObservableObject {
     private let queue = DispatchQueue(label: "understudy.discovery")
     /// Hosts never to probe (connected deck slots).
     var skip: () -> Set<String> = { [] }
+    /// Interface to look on (BSD name), nil for all.
+    var interface: () -> String? = { nil }
+
+    /// Only hosts on the chosen interface's network are kept.
+    private func onChosenNetwork(_ host: String) -> Bool {
+        guard let name = interface() else { return true }
+        guard let ip = Self.parse(host) else { return false }
+        return Self.localNetworks().contains { $0.interface == name && $0.contains(ip) }
+    }
 
     // MARK: Bonjour
 
@@ -95,12 +105,19 @@ final class DeckDiscovery: ObservableObject {
         q.asyncAfter(deadline: .now() + 3) { finish(nil) }
     }
 
+    /// Forgets what was found (e.g. after switching interface). Bonjour finds re-arrive.
+    func clear() {
+        found.removeAll()
+        lastScanned = nil
+    }
+
     // MARK: Subnet scan
 
     func scan() {
         guard !isScanning else { return }
         isScanning = true
-        let networks = Self.localNetworks()
+        let chosen = interface()
+        let networks = Self.localNetworks().filter { chosen == nil || $0.interface == chosen }
         scannedNetworks = networks.map(\.label)
         let skipping = skip()
         let hosts = networks.flatMap(\.hosts).filter { !skipping.contains($0) }
@@ -129,6 +146,7 @@ final class DeckDiscovery: ObservableObject {
     }
 
     private func check(_ host: String, name: String) async {
+        guard onChosenNetwork(host) else { return }
         if skip().contains(host) {
             add(host: host, name: name, greeting: nil)
             return
@@ -205,15 +223,51 @@ final class DeckDiscovery: ObservableObject {
 
     // MARK: Local networks
 
-    struct LocalNetwork {
-        var label: String
-        var hosts: [String]
+    struct LocalNetwork: Identifiable, Hashable {
+        /// BSD name, e.g. "en0".
+        var interface: String
+        /// What macOS calls the port, e.g. "Wi-Fi", "USB 10/100/1000 LAN".
+        var displayName: String
+        var address: String
+        var network: UInt32
+        var mask: UInt32
+
+        var id: String { interface }
+        var cidr: String { "\(DeckDiscovery.dotted(network))/\(mask.nonzeroBitCount)" }
+        var label: String { "\(cidr) · \(displayName)" }
+        func contains(_ ip: UInt32) -> Bool { ip & mask == network }
+
+        var hosts: [String] {
+            let broadcast = network | ~mask
+            guard broadcast > network + 1 else { return [] }
+            return (network + 1 ..< broadcast).map(DeckDiscovery.dotted)
+        }
+    }
+
+    /// macOS's names for network ports, by BSD name.
+    private nonisolated static func portNames() -> [String: String] {
+        var names: [String: String] = [:]
+        guard let all = SCNetworkInterfaceCopyAll() as? [SCNetworkInterface] else { return names }
+        for iface in all {
+            if let bsd = SCNetworkInterfaceGetBSDName(iface) as String?,
+               let name = SCNetworkInterfaceGetLocalizedDisplayName(iface) as String? {
+                names[bsd] = name
+            }
+        }
+        return names
+    }
+
+    nonisolated static func parse(_ host: String) -> UInt32? {
+        let parts = host.split(separator: ".").compactMap { UInt32($0) }
+        guard parts.count == 4, parts.allSatisfy({ $0 < 256 }) else { return nil }
+        return parts[0] << 24 | parts[1] << 16 | parts[2] << 8 | parts[3]
     }
 
     /// IPv4 subnets on the Mac's active interfaces (Ethernet, Wi-Fi, USB/Thunderbolt adaptors).
     /// Subnets larger than /22 are narrowed to the /24 around the Mac's own address.
     nonisolated static func localNetworks() -> [LocalNetwork] {
         var out: [LocalNetwork] = []
+        let names = portNames()
         var list: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&list) == 0, let first = list else { return [] }
         defer { freeifaddrs(list) }
@@ -231,15 +285,16 @@ final class DeckDiscovery: ObservableObject {
             if ip >> 16 == 0xA9FE { continue }   // 169.254 link-local
             if netmask.nonzeroBitCount < 22 { netmask = 0xFFFF_FF00 }
             let network = ip & netmask
-            let broadcast = network | ~netmask
-            guard broadcast > network + 1 else { continue }
-            let hosts = (network + 1 ..< broadcast).map(Self.dotted)
-            out.append(LocalNetwork(label: "\(dotted(network))/\(netmask.nonzeroBitCount) · \(name)", hosts: hosts))
+            guard (network | ~netmask) > network + 1, !out.contains(where: { $0.interface == name }) else { continue }
+            out.append(LocalNetwork(
+                interface: name, displayName: names[name] ?? name, address: dotted(ip),
+                network: network, mask: netmask
+            ))
         }
         return out
     }
 
-    private nonisolated static func dotted(_ v: UInt32) -> String {
+    nonisolated static func dotted(_ v: UInt32) -> String {
         "\(v >> 24 & 0xFF).\(v >> 16 & 0xFF).\(v >> 8 & 0xFF).\(v & 0xFF)"
     }
 }

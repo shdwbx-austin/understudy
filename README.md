@@ -48,6 +48,27 @@ HyperDecks can't chase LTC natively. Understudy reads the show LTC itself and ha
 3. It watches the deck's timecode ten times a second.
 4. It re-parks the deck if the deck drifts out of tolerance, or if code moves into a different recorded stretch.
 
+## Running on a dedicated Mac
+
+Understudy is meant to live on a Mac that stays at the rehearsal: a Mac mini on the show network is ideal. HyperDecks can't follow timecode in playback on their own, so a computer has to run it. In **Settings › Show machine**:
+
+- **Keep this Mac awake** (on by default). The app also always opts out of App Nap, so its timing isn't throttled when the window is hidden or the display sleeps.
+- **Start at login and relaunch if it quits unexpectedly** registers a launch agent bundled in the app. macOS may ask you to approve it under System Settings › General › Login Items. A normal Quit isn't relaunched.
+- **After a restart, go back to Record or Play** (off by default). When it happens, the header says so until you dismiss it. Decks that kept recording through the restart are left alone.
+
+Only one copy runs at a time: a second launch hands over to the running one.
+
+On the Mac itself: System Settings › Energy › *Start up automatically after a power failure*, automatic login, and Screen Sharing so you can watch and drive it from your laptop. Put it on a small UPS, and give LTC its own USB audio interface (the Mac mini's headphone jack is output only).
+
+## Backing up takes
+
+**Backup** copies the selected take off every connected deck into a folder on the Mac, by FTP, which HyperDecks serve on port 21 with no login. Choose a folder inside Dropbox and Dropbox syncs the files.
+
+- Files land in `<folder>/<date>/<deck name>/<clip>`.
+- Decks copy in parallel. A file already there at full size is skipped. An interrupted copy resumes.
+- Backup is blocked while recording, and pressing **Record** cancels a backup in progress. Copying off a deck while it records isn't safe.
+- Clips are found by name in the deck's media folders (slots, cache, USB), up to three levels deep.
+
 ## Signal flow
 
 ```
@@ -84,7 +105,7 @@ The Extreme uses the same Ethernet protocol as the Studio models, so Understudy 
 ## App setup
 
 1. Open **Settings** (`⌘,`) and pick the audio interface. Settings lists that device's input channels, by the device's own channel names, each with a live level meter. Click the one carrying LTC; it's marked **LTC** once code decodes. The show timecode rate is detected automatically (see below); you can fix it instead if you prefer. The main window's footer keeps a meter on the LTC channel.
-2. Assign the decks. Understudy looks for HyperDecks on the local network: by Bonjour, and by asking every address on the Mac's subnets on port 9993, keeping only those that answer like a HyperDeck. They're listed under **Network**. Use **Assign** on a row, the **▾** next to a deck's address, or **Fill empty slots**. You can still type an address and press return. The first scan makes macOS ask for local network access; allow it, then **Find decks** again. Decks already connected are never probed, so a deck in use never gets a second client.
+2. Assign the decks. Pick the network to look on (**Network › On:**, e.g. the Ethernet adapter on the show network rather than Wi-Fi). Understudy looks for HyperDecks there: by Bonjour, and by asking every address on the Mac's subnets on port 9993, keeping only those that answer like a HyperDeck. They're listed under **Network**. Use **Assign** on a row, the **▾** next to a deck's address, or **Fill empty slots**. You can still type an address and press return. The first scan makes macOS ask for local network access; allow it, then **Find decks** again. Decks already connected are never probed, so a deck in use never gets a second client.
 3. Check that each deck reads **Reference: LOCKED**.
 
 ## Operating
@@ -110,6 +131,8 @@ This build is unit-tested on the timecode, LTC, protocol, take-map and chase log
 7. **Pass-through.** In STOP / REC, confirm the deck's SDI out passes the live input to disguise.
 8. **Local network permission (macOS 15+).** On first launch, allow Understudy when macOS asks.
 9. **HyperDeck Extreme 8K.** Repeat 1–4 on an Extreme at 4320p and 2160p, and confirm `clips get: version: 2` lists clips recorded to its cache or USB-C drive.
+10. **FTP backup.** Back up a take from each deck model you use, and confirm the files open. Check the folder layout the deck's FTP shows.
+11. **Show machine.** Turn on *Start at login*, approve it, force-quit Understudy (⌥⌘⎋), and confirm it relaunches.
 
 ## Build
 
