@@ -162,7 +162,10 @@ final class AudioLTCInput {
             )
             guard status == noErr else { throw InputError.deviceSelect(status) }
         }
-        let format = input.outputFormat(forBus: 0)
+        // The device's own format: all of its channels, at its sample rate. After switching
+        // devices the node's output format still describes the old default device (often a
+        // one-channel mic at another rate); tapping with the hardware format applies the new one.
+        let format = input.inputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { throw InputError.noInput }
 
         let sampleRate = format.sampleRate
