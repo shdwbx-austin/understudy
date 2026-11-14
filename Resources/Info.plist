@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>Cam4Prog</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.shdwbx.cam4prog</string>
+    <key>CFBundleName</key>
+    <string>cam4prog</string>
+    <key>CFBundleDisplayName</key>
+    <string>cam4prog</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>__VERSION__</string>
+    <key>CFBundleVersion</key>
+    <string>__BUILD__</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.video</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>cam4prog reads show LTC timecode from an audio input.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>cam4prog controls HyperDeck recorders on your show network.</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Shdwbx · Design and Creative Support</string>
+</dict>
+</plist>
