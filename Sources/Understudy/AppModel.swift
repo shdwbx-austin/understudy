@@ -53,6 +53,7 @@ final class AppModel: ObservableObject {
     private var lastPoll = 0.0
     private var lastInfoUpdate = 0.0
     private var takeRefreshScheduled = false
+    private var lastAudioRestart = -Double.infinity
 
     init() {
         let loaded = AppSettings.load()
@@ -286,6 +287,21 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Reopens the input if it stops delivering audio (e.g. the interface glitched or was replugged).
+    private func watchAudio(now: Double) {
+        guard audio.isRunning, audio.secondsSinceLastBuffer > 1.5, now - lastAudioRestart > 5 else { return }
+        lastAudioRestart = now
+        NSLog("Understudy: audio input stalled; reopening")
+        openAudio()
+        if audioError == nil {
+            audioError = "Audio input stalled and was reopened."
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 8_000_000_000)
+                if self?.audioError == "Audio input stalled and was reopened." { self?.audioError = nil }
+            }
+        }
+    }
+
     private func ingestLevels(_ peaks: [Float]) {
         let fall: Float = 1.2   // dB per update (~24 dB/s)
         var levels = inputLevels.count == peaks.count ? inputLevels : Array(repeating: -60, count: peaks.count)
@@ -320,8 +336,12 @@ final class AppModel: ObservableObject {
         if settings.recordMode != old.recordMode {
             decks.forEach { $0.buildsTakeMaps = settings.recordMode == .continuous }
         }
-        if settings.audioDeviceUID != old.audioDeviceUID || settings.audioChannel != old.audioChannel {
+        if settings.audioDeviceUID != old.audioDeviceUID {
             openAudio()
+        } else if settings.audioChannel != old.audioChannel {
+            // Same device: just read a different channel. A new signal, so measure its rate afresh.
+            audio.setChannel(settings.audioChannel)
+            rateDetector = LTCRateDetector()
         }
         if settings.chase != old.chase || settings.deckTimecodeAtVideoRate != old.deckTimecodeAtVideoRate {
             decks.forEach { $0.resetChase() }
@@ -337,6 +357,7 @@ final class AppModel: ObservableObject {
         updateReadout(now: now, rolling: snapshot.rolling)
         let pollDue = now - lastPoll >= 0.1
         if pollDue { lastPoll = now }
+        if pollDue { watchAudio(now: now) }
         if pollDue && rateKnown { logTakes() }
         if mode == .playback { chase(snapshot, now: now, pollDue: pollDue) }
     }

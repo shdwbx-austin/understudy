@@ -1,6 +1,7 @@
 import AVFoundation
 import Accelerate
 import CoreAudio
+import os
 import UnderstudyCore
 
 enum HostClock {
@@ -99,20 +100,14 @@ enum AudioDeviceCatalog {
 }
 
 /// Reads an audio input on the audio thread: decodes LTC from one channel and meters every channel.
+///
+/// One engine is kept for the app's lifetime. Changing channel never touches it (the tap just
+/// reads a different channel); changing device stops it, points it at the new device and restarts
+/// it. Tearing engines down and building new ones in quick succession can leave the new one with
+/// no audio, which is why it's not done.
 final class AudioLTCInput {
     /// Peak level per channel (linear, 0…1), about 20 times a second.
     typealias LevelHandler = @Sendable ([Float]) -> Void
-
-    /// Peak accumulator, touched only on the audio thread.
-    private final class Meter: @unchecked Sendable {
-        var peaks: [Float]
-        var samples = 0
-        let interval: Int
-        init(channels: Int, interval: Int) {
-            peaks = Array(repeating: 0, count: channels)
-            self.interval = interval
-        }
-    }
 
     struct Event: Sendable {
         let timecode: Timecode
@@ -136,10 +131,46 @@ final class AudioLTCInput {
         }
     }
 
-    private var engine = AVAudioEngine()
-    private var running = false
+    /// State shared between the main thread and the audio thread.
+    private struct Shared {
+        var channel = 0
+        /// Bumped on every channel change so the audio thread resets its decoder.
+        var generation = 0
+        /// Host time of the last buffer received.
+        var lastBuffer = 0.0
+    }
+
+    /// Peak accumulator, touched only on the audio thread.
+    private final class Meter: @unchecked Sendable {
+        var peaks: [Float]
+        var samples = 0
+        let interval: Int
+        init(channels: Int, interval: Int) {
+            peaks = Array(repeating: 0, count: channels)
+            self.interval = interval
+        }
+    }
+
+    private let engine = AVAudioEngine()
+    private let shared = OSAllocatedUnfairLock(initialState: Shared())
+    private(set) var isRunning = false
     /// Channels on the open input (0 when closed).
     private(set) var channelCount = 0
+
+    /// Seconds since the input last delivered audio (0 when not running).
+    var secondsSinceLastBuffer: Double {
+        guard isRunning else { return 0 }
+        let last = shared.withLock { $0.lastBuffer }
+        return HostClock.now() - last
+    }
+
+    /// Switches the LTC channel without restarting the input.
+    func setChannel(_ channel: Int) {
+        shared.withLock {
+            $0.channel = channel
+            $0.generation += 1
+        }
+    }
 
     func start(
         deviceID: AudioDeviceID?,
@@ -148,10 +179,9 @@ final class AudioLTCInput {
         onLevels: @escaping LevelHandler
     ) throws {
         stop()
-        engine = AVAudioEngine()
         let input = engine.inputNode
-        if let deviceID, let unit = input.audioUnit {
-            var device = deviceID
+        var device = deviceID ?? AudioDeviceCatalog.defaultInputDeviceID() ?? 0
+        if device != 0, let unit = input.audioUnit {
             let status = AudioUnitSetProperty(
                 unit,
                 kAudioOutputUnitProperty_CurrentDevice,
@@ -163,22 +193,34 @@ final class AudioLTCInput {
             guard status == noErr else { throw InputError.deviceSelect(status) }
         }
         // The device's own format: all of its channels, at its sample rate. After switching
-        // devices the node's output format still describes the old default device (often a
-        // one-channel mic at another rate); tapping with the hardware format applies the new one.
+        // devices the node's output format can still describe the previous device; tapping
+        // with the hardware format applies the new one.
         let format = input.inputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else { throw InputError.noInput }
 
         let sampleRate = format.sampleRate
-        let channelIndex = min(max(0, channel), Int(format.channelCount) - 1)
-        let decoder = LTCDecoder(sampleRate: sampleRate)
         let channelTotal = Int(format.channelCount)
+        let decoder = LTCDecoder(sampleRate: sampleRate)
         let meter = Meter(channels: channelTotal, interval: Int(sampleRate / 20))
+        let shared = self.shared
+        var seenGeneration = -1
+
+        shared.withLock {
+            $0.channel = channel
+            $0.lastBuffer = HostClock.now()
+        }
 
         input.installTap(onBus: 0, bufferSize: 512, format: format) { buffer, when in
+            let now = HostClock.now()
+            let (selected, generation) = shared.withLock { state -> (Int, Int) in
+                state.lastBuffer = now
+                return (state.channel, state.generation)
+            }
             guard let channels = buffer.floatChannelData else { return }
             let count = Int(buffer.frameLength)
+            let available = min(channelTotal, Int(buffer.format.channelCount))
 
-            for c in 0..<min(channelTotal, Int(buffer.format.channelCount)) {
+            for c in 0..<available {
                 var peak: Float = 0
                 vDSP_maxmgv(channels[c], 1, &peak, vDSP_Length(count))
                 meter.peaks[c] = max(meter.peaks[c], peak)
@@ -190,11 +232,16 @@ final class AudioLTCInput {
                 meter.samples = 0
             }
 
+            if generation != seenGeneration {
+                seenGeneration = generation
+                decoder.reset()   // new channel, new signal
+            }
+            guard selected >= 0, selected < available else { return }
             let bufferStart = when.isHostTimeValid
                 ? AVAudioTime.seconds(forHostTime: when.hostTime)
-                : HostClock.now() - Double(count) / sampleRate
+                : now - Double(count) / sampleRate
             let firstSample = decoder.sampleCount
-            decoder.process(channels[channelIndex], count: count) { frame in
+            decoder.process(channels[selected], count: count) { frame in
                 let offset = Double(frame.boundarySample - firstSample) / sampleRate
                 onFrame(Event(
                     timecode: frame.timecode,
@@ -205,16 +252,21 @@ final class AudioLTCInput {
             }
         }
         engine.prepare()
-        try engine.start()
-        running = true
+        do {
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            throw error
+        }
+        isRunning = true
         channelCount = channelTotal
     }
 
     func stop() {
-        guard running else { return }
+        guard isRunning else { return }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        running = false
+        isRunning = false
         channelCount = 0
     }
 }

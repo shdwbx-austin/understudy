@@ -7,6 +7,7 @@
 - Playback looks show code up in the take's map: it holds at gaps, re-parks at jumps, and plays the latest pass of re-rolled code. Takes without a map play from clip timecode, as before.
 - **Show timecode rate is detected automatically** from incoming LTC (23.976, 24, 25, 29.97 DF/NDF, 30), and playback follows it. A fixed rate is still available.
 - LTC frames now reach the app strictly in order.
+- Fixed: changing the LTC channel could leave the whole input silent or crash. Changing channel no longer restarts audio at all, a device change reuses one audio engine, and a watchdog reopens the input if it ever stops delivering audio.
 - Fixed: picking an audio device other than the system default only showed one channel, and read the input at the default device's sample rate.
 - **Live input meters.** Settings lists only the selected device's channels, by name, each with a level meter; click one to use it for LTC. The main window shows the LTC channel's level.
 - The show clock freewheels through LTC dropouts (2 s by default, adjustable). The header shows FREEWHEEL while it does.
