@@ -104,6 +104,14 @@ public struct DeckChaseInput: Sendable {
 /// Decks can't chase code natively, so each one is parked ahead of incoming LTC, fired on time,
 /// then watched and re-parked if it drifts. Pure function: easy to test, no I/O.
 public enum ChaseEngine {
+    /// Pre-roll actually used. Never shorter than the deck's settle time after a goto plus its start
+    /// latency and a margin: with less, every cue is abandoned before the deck can arm, and the deck
+    /// is re-parked about once a second without ever playing.
+    public static func effectivePreroll(_ settings: ChaseSettings, startLatencyFrames: Double, fps: Double) -> Double {
+        let needed = settings.cueSettleSeconds + (max(0, startLatencyFrames) + 1) / max(fps, 1) + 0.25
+        return max(settings.prerollSeconds, needed)
+    }
+
     public static func step(
         _ s: inout DeckChaseState,
         ltc: LTCSnapshot,
@@ -136,7 +144,8 @@ public enum ChaseEngine {
 
         switch s.phase {
         case .idle, .outOfRange:
-            let target = Int(pos.rounded(.down) + (settings.prerollSeconds * ltc.fps).rounded())
+            let preroll = effectivePreroll(settings, startLatencyFrames: input.startLatencyFrames, fps: ltc.fps)
+            let target = Int(pos.rounded(.down) + (preroll * ltc.fps).rounded())
             if !covered(Double(target)) {
                 let wasOut = s.phase == .outOfRange
                 s.phase = .outOfRange
