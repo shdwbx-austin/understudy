@@ -83,7 +83,7 @@ private struct TimelineHeader: View {
 
 /// Song blocks to scale, lead-ins hatched, a marker and number at each song start, and the playhead.
 /// Drag anywhere to scrub; double-click a song to jump to its start.
-private struct TimelineTrack: View {
+struct TimelineTrack: View {
     @ObservedObject var timeline: TimelineModel
 
     var body: some View {
@@ -144,6 +144,12 @@ private struct TimelineTrack: View {
             )
         }
         .clipped()
+        // Two-finger swipe, side wheel or Shift + wheel scrubs across the set.
+        .background(HorizontalScrollReader { physical, precise, width in
+            let total = max(timeline.layout.totalDuration, 1)
+            let points = precise ? Double(physical) : Double(physical) * 12
+            timeline.scrub(by: points * total / Double(max(width, 1)))
+        })
         .overlay(alignment: .center) {
             if timeline.songs.isEmpty {
                 TextButton(title: "Import song list…") { timeline.chooseCSV() }
@@ -157,8 +163,10 @@ private struct TimelineTrack: View {
 
 // MARK: - Transport
 
-private struct TransportBar: View {
+struct TransportBar: View {
     @ObservedObject var timeline: TimelineModel
+    /// In the main window: no import (the playlist has it) and no show-code box (Timeline mode is the timeline).
+    var compact = false
 
     var body: some View {
         HStack(spacing: 18) {
@@ -183,12 +191,12 @@ private struct TransportBar: View {
             Text("\(clock(timeline.playhead)) / \(clock(timeline.layout.totalDuration))")
                 .font(Theme.mono(12)).monospacedDigit().foregroundStyle(Theme.grey)
             Spacer()
-            OutputStatus()
+            OutputStatus(showToggle: !compact)
             Stepper(value: $timeline.gap, in: 0...10, step: 0.5) {
                 Text(String(format: "LEAD-IN %.1f S", timeline.gap)).font(Theme.mono(10)).tracking(1.2)
             }
             .help("Gap before each song, so the decks can park on its footage and be rolling on its first frame")
-            TextButton(title: "Import CSV…") { timeline.chooseCSV() }
+            if !compact { TextButton(title: "Import CSV…") { timeline.chooseCSV() } }
         }
     }
 }
@@ -196,20 +204,21 @@ private struct TransportBar: View {
 /// Where the timeline's code goes: LTC out, and/or Understudy's own recorder.
 private struct OutputStatus: View {
     @EnvironmentObject private var model: AppModel
+    var showToggle = true
 
     var body: some View {
         HStack(spacing: 14) {
             Text(ltcText).font(Theme.mono(10)).tracking(1.2)
                 .foregroundStyle(model.settings.ltcOutputChannel == nil ? Theme.quiet : Theme.paper)
                 .help("Generated LTC follows the timeline. Set the device and channel in Settings › Timeline output.")
-            Toggle(isOn: Binding(
+            if showToggle { Toggle(isOn: Binding(
                 get: { model.settings.showCodeSource == .timeline },
                 set: { model.settings.showCodeSource = $0 ? .timeline : .input }
             )) {
                 Text("SHOW CODE FOR RECORD").font(Theme.mono(10)).tracking(1.2)
             }
             .toggleStyle(.checkbox)
-            .help("Stop and Record take show code from this timeline instead of the LTC input, so takes log against it with no cable.")
+            .help("Stop and Record take show code from this timeline instead of the LTC input, so takes log against it with no cable.") }
         }
     }
 
@@ -383,7 +392,7 @@ private struct SongRow: View {
 }
 
 /// `m:ss` or `h:mm:ss`.
-private func clock(_ seconds: Double) -> String {
+func clock(_ seconds: Double) -> String {
     let s = Int(max(0, seconds).rounded(.down))
     return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
 }

@@ -204,6 +204,30 @@ final class TimelineModel: ObservableObject {
         seek(to: playhead + Double(frames) / rate.exact)
     }
 
+    /// Horizontal scroll over the whole set: moves the playhead by `seconds` (pauses first).
+    func scrub(by seconds: Double) {
+        if isPlaying { pause() }
+        seek(to: playhead + seconds)
+    }
+
+    private var scrollRemainder = 0.0
+
+    /// Horizontal scroll over the current song: whole frames. Trackpad points accumulate
+    /// (`pointsPerFrame` each); a wheel notch is one frame.
+    func scrollFrames(_ physical: Double, precise: Bool, pointsPerFrame: Double = 5) {
+        let frames: Int
+        if precise {
+            scrollRemainder += physical / pointsPerFrame
+            // A hair of slack so 0.4 + 0.6 counts as a whole frame despite floating-point error.
+            frames = Int((scrollRemainder + (scrollRemainder >= 0 ? 1e-9 : -1e-9)).rounded(.towardZero))
+            scrollRemainder -= Double(frames)
+        } else {
+            frames = physical > 0 ? max(1, Int(physical.rounded())) : min(-1, Int(physical.rounded()))
+        }
+        guard frames != 0 else { return }
+        step(frames: frames)
+    }
+
     func nextSong() {
         if let t = layout.nextSongStart(after: playhead) { seek(to: t) }
     }

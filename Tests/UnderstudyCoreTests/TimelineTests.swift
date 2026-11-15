@@ -204,6 +204,14 @@ struct SongLibraryTests {
         #expect(merged.filter { !$0.inSet }.map(\.name) == ["Middle", "New"])
     }
 
+    @Test func aDifferentShowStartsFresh() {
+        let previous = [song("Old Opener", "01:00:00:00"), song("Old Closer", "02:00:00:00")]
+        let imported = [song("New A", "05:00:00:00"), song("New B", "06:00:00:00")]
+        let merged = SongLibrary.merge(imported, into: previous, rate: .fps30)
+        // Two songs isn't an alphabetical library, so it's the running order: all on the set.
+        #expect(merged.filter { $0.inSet }.map(\.name) == ["New A", "New B"])
+    }
+
     @Test func layoutUsesOnlyTheSetButTheWholeLibraryForLengths() {
         // A set song with no end or duration runs to the next song in the library, not the set.
         let a = Song(name: "A", start: Timecode("01:00:00:00")!)

@@ -13,6 +13,24 @@ struct ContentView: View {
             // Width of the four content columns, for sizing the hero timecode to fill them.
             let content = geo.size.width - Theme.marginLeading - Theme.marginTrailing - ShowGrid.labelWidth - Theme.gutter
             VStack(alignment: .leading, spacing: 0) {
+                if model.mode == .timeline {
+                    // Timeline mode: the playlist and timeline take the room the take and decks had.
+                    let column = (content - 3 * Theme.gutter) / 4
+                    VStack(alignment: .leading, spacing: 18) {
+                        Header(heroSize: min(120, (content - 3 * Theme.gutter) / 4 / 1.4, max(56, (geo.size.height - 800) / 1.12)))
+                        GridRow {
+                            VStack(alignment: .leading, spacing: 10) {
+                                RowLabel(index: 1, title: "Mode")
+                                ModeDescription()
+                            }
+                        } content: {
+                            ModeBar()
+                        }
+                        TimelineWorkspace(timeline: model.timeline, column: column)
+                            .frame(maxHeight: .infinity, alignment: .top)
+                    }
+                    .padding(.trailing, Theme.marginTrailing)
+                } else {
                 ScrollView(.vertical) {
                     VStack(alignment: .leading, spacing: 22) {
                         // The timecode blocks take the room that's left once all four decks fit: huge on a
@@ -46,6 +64,7 @@ struct ContentView: View {
                     .padding(.bottom, 12)
                 }
                 .scrollIndicators(.automatic)
+                }
                 Footer(backup: model.backup, openBackup: { showBackup = true })
                     .padding(.trailing, Theme.marginTrailing)
                     .padding(.top, 12)
@@ -237,7 +256,7 @@ private struct ModeDescription: View {
                 .foregroundStyle(Theme.grey)
                 .fixedSize(horizontal: false, vertical: true)
             if model.mode == .timeline {
-                TextButton(title: "Open timeline") { openWindow(id: "timeline") }
+                TextButton(title: "Open in window ⌘T") { openWindow(id: "timeline") }
             }
         }
     }
@@ -249,7 +268,7 @@ private struct ModeDescription: View {
             return model.settings.recordMode == .continuous
                 ? "Decks record until Stop. Show code is logged against the take." : "Decks record while show code runs."
         case .playback: return "Decks chase show timecode from the selected take."
-        case .timeline: return "The song timeline is the clock: audio plays and the decks follow. ⌘T opens it."
+        case .timeline: return "The song timeline is the clock: audio plays and the decks follow."
         }
     }
 }

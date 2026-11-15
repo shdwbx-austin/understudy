@@ -73,8 +73,10 @@ public enum SongLibrary {
     public static func merge(_ imported: [Song], into previous: [Song], rate: FrameRate) -> [Song] {
         let library = isAlphabetical(imported)
         let old = Dictionary(previous.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+        let importedNames = Set(imported.map(\.name))
         let setOrder = Dictionary(previous.filter(\.inSet).enumerated().map { ($1.name, $0) }, uniquingKeysWith: { a, _ in a })
-        let hadSet = !setOrder.isEmpty
+        // A set to keep only if the new file still has some of its songs (a different show starts fresh).
+        let hadSet = setOrder.keys.contains { importedNames.contains($0) }
         var songs = imported.map { song -> Song in
             var s = song
             if let before = old[s.name] {
