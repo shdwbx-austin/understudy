@@ -87,6 +87,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// LTC generated from the timeline: output device and channel (0-based); nil channel = off.
     public var ltcOutputUID: String?
     public var ltcOutputChannel: Int?
+    /// When a song's audio carries its own timecode, play that to LTC out instead of generated code.
+    public var ltcOutUseTrackTimecode = true
     /// Stop the Mac sleeping while Understudy is open (a dedicated show machine).
     public var keepAwake = true
     /// After a restart or crash, go back to the mode Understudy was in (Record or Play) instead of Stop.
@@ -126,6 +128,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         timelineOutputChannel = (try? c.decodeIfPresent(Int.self, forKey: .timelineOutputChannel)) ?? d.timelineOutputChannel
         ltcOutputUID = (try? c.decodeIfPresent(String.self, forKey: .ltcOutputUID)) ?? d.ltcOutputUID
         ltcOutputChannel = (try? c.decodeIfPresent(Int.self, forKey: .ltcOutputChannel)) ?? d.ltcOutputChannel
+        ltcOutUseTrackTimecode = (try? c.decodeIfPresent(Bool.self, forKey: .ltcOutUseTrackTimecode)) ?? d.ltcOutUseTrackTimecode
         keepAwake = (try? c.decodeIfPresent(Bool.self, forKey: .keepAwake)) ?? d.keepAwake
         resumeLastMode = (try? c.decodeIfPresent(Bool.self, forKey: .resumeLastMode)) ?? d.resumeLastMode
         normalizeDecks()

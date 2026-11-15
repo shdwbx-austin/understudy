@@ -13,8 +13,9 @@ struct ContentView: View {
             // Width of the four content columns, for sizing the hero timecode to fill them.
             let content = geo.size.width - Theme.marginLeading - Theme.marginTrailing - ShowGrid.labelWidth - Theme.gutter
             VStack(alignment: .leading, spacing: 0) {
-                if model.mode == .timeline {
-                    // Timeline mode: the playlist and timeline take the room the take and decks had.
+                if model.showsTimelineWorkspace {
+                    // Timeline mode (or Record from the timeline): the playlist and timeline take the
+                    // room the take and decks had.
                     let column = (content - 3 * Theme.gutter) / 4
                     VStack(alignment: .leading, spacing: 18) {
                         Header(heroSize: min(120, (content - 3 * Theme.gutter) / 4 / 1.4, max(56, (geo.size.height - 800) / 1.12)))

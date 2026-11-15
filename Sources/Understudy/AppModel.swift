@@ -24,6 +24,11 @@ final class AppModel: ObservableObject {
     /// Decks are playing footage back: chasing show code, or following the timeline.
     var isPlayingBack: Bool { mode == .playback || mode == .timeline }
 
+    /// The main window shows the timeline workspace: Timeline mode, or Record driven by the timeline.
+    var showsTimelineWorkspace: Bool {
+        mode == .timeline || (mode == .record && settings.showCodeSource == .timeline)
+    }
+
     /// Show code comes from the song timeline rather than the LTC input: always in Timeline mode,
     /// and in Stop and Record when Settings says so. Play to code always chases the LTC input.
     var showCodeFromTimeline: Bool {
@@ -603,7 +608,8 @@ final class AppModel: ObservableObject {
             syncInput()
         }
         if settings.timelineOutputUID != old.timelineOutputUID || settings.timelineOutputChannel != old.timelineOutputChannel
-            || settings.ltcOutputUID != old.ltcOutputUID || settings.ltcOutputChannel != old.ltcOutputChannel {
+            || settings.ltcOutputUID != old.ltcOutputUID || settings.ltcOutputChannel != old.ltcOutputChannel
+            || settings.ltcOutUseTrackTimecode != old.ltcOutUseTrackTimecode {
             applyTimelineOutputs()
         }
         if settings.chase != old.chase || settings.deckTimecodeAtVideoRate != old.deckTimecodeAtVideoRate {
@@ -641,6 +647,13 @@ final class AppModel: ObservableObject {
 
     // MARK: Timeline
 
+    /// Dev/test: record on the decks while the timeline runs. Show code comes from the timeline, so
+    /// takes log against each song's code; the timeline stays on screen. Leaving Record asks first.
+    func startTimelineRecording() {
+        settings.showCodeSource = .timeline
+        requestMode(.record)
+    }
+
     /// Show code (LTC frames) at host time `t` from whichever source is in charge.
     private func showPosition(at t: Double) -> Double? {
         showCodeFromTimeline ? timeline.showFrames(at: t) : clock.position(at: t)
@@ -662,6 +675,7 @@ final class AppModel: ObservableObject {
     }
 
     func applyTimelineOutputs() {
+        timeline.useTrackTimecode = settings.ltcOutUseTrackTimecode
         let ltcRoute = settings.ltcOutputChannel.map { AudioRoute(deviceUID: settings.ltcOutputUID, channel: $0) }
         timeline.player.configure(
             music: AudioRoute(deviceUID: settings.timelineOutputUID, channel: settings.timelineOutputChannel),

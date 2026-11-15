@@ -193,6 +193,8 @@ private struct TimelineOutputSettings: View {
                 ForEach(0..<max(1, channels(model.settings.ltcOutputUID)), id: \.self) { Text("Channel \($0 + 1)").tag(Optional($0)) }
             }
             if model.settings.ltcOutputChannel != nil {
+                Toggle("Use the track's own timecode", isOn: $model.settings.ltcOutUseTrackTimecode)
+                    .help("When a song's audio has timecode on a channel, play that to LTC out instead of generated code")
                 Picker("LTC device", selection: $model.settings.ltcOutputUID) {
                     Text("System default").tag(String?.none)
                     ForEach(devices) { Text("\($0.name) (\($0.channels) ch)").tag(Optional($0.uid)) }

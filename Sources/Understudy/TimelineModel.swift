@@ -21,8 +21,14 @@ final class TimelineModel: ObservableObject {
         didSet { if gap != oldValue { layoutChanged() } }
     }
     /// Waveform overviews (0…1 peaks) by audio file path, filled in the background.
-    @Published private(set) var waveforms: [String: [Float]] = [:]
-    private var loadingWaveforms: Set<String> = []
+    /// What's known about each audio file (timecode, clean copies, waveform), by path.
+    @Published private(set) var analyses: [String: AudioAnalysis] = [:]
+    private var analyzing: Set<String> = []
+    var waveforms: [String: [Float]] { analyses.mapValues(\.peaks) }
+    /// Play a track's own timecode to LTC out instead of generated code (Settings).
+    var useTrackTimecode = true {
+        didSet { if useTrackTimecode != oldValue, isPlaying { restartPlayback() } }
+    }
     /// Timeline seconds, refreshed by the app's loop.
     @Published private(set) var playhead: Double = 0
     @Published private(set) var isPlaying = false
@@ -30,7 +36,12 @@ final class TimelineModel: ObservableObject {
 
     /// Show timecode rate the songs and decks count in (the show LTC rate).
     var rate: FrameRate = .fps30 {
-        didSet { if rate != oldValue { layoutChanged() } }
+        didSet {
+            guard rate != oldValue else { return }
+            // Timecode found in files is read at the show rate: read them again.
+            analyses = [:]
+            layoutChanged()
+        }
     }
     private(set) var layout = TimelineLayout(ordered: [], rate: .fps30)
     private var transport = TimelineTransport()
@@ -79,6 +90,8 @@ final class TimelineModel: ObservableObject {
         }
         songs[i].audioPath = url.path
         songs[i].audioDuration = duration
+        songs[i].audioLTCChannel = nil
+        songs[i].audioOffset = nil
         message = nil
         layoutChanged()
     }
@@ -147,19 +160,74 @@ final class TimelineModel: ObservableObject {
         layoutChanged()
     }
 
-    /// Starts reading waveforms for any attached audio that doesn't have one yet.
-    private func loadWaveforms() {
-        for path in Set(songs.compactMap(\.audioPath)) where waveforms[path] == nil && !loadingWaveforms.contains(path) {
-            loadingWaveforms.insert(path)
+    /// Starts analysing any attached audio not analysed yet: timecode, clean copies, waveform.
+    private func analyzeAudio() {
+        let rate = self.rate
+        for path in Set(songs.compactMap(\.audioPath)) where analyses[path] == nil && !analyzing.contains(path) {
+            analyzing.insert(path)
             Task.detached(priority: .utility) {
-                let peaks = WaveformLoader.peaks(forFileAt: path)
+                let analysis = AudioAnalyzer.analyze(path: path, rate: rate)
                 await MainActor.run { [weak self] in
-                    guard let self else { return }
-                    self.loadingWaveforms.remove(path)
-                    if let peaks { self.waveforms[path] = peaks }
+                    guard let self, self.rate == rate else { return }
+                    self.analyzing.remove(path)
+                    if let analysis { self.apply(analysis, to: path) }
                 }
             }
         }
+    }
+
+    /// Takes in a finished analysis: which channel is timecode, and where the audio sits by it.
+    private func apply(_ analysis: AudioAnalysis, to path: String) {
+        analyses[path] = analysis
+        var changed = false
+        for i in songs.indices where songs[i].audioPath == path {
+            let channel = analysis.ltc?.channel
+            let offset = analysis.ltc?.offset(fromSongStart: songs[i].start.seconds(at: rate))
+            if songs[i].audioLTCChannel != channel || songs[i].audioOffset != offset {
+                songs[i].audioLTCChannel = channel
+                songs[i].audioOffset = offset
+                changed = true
+            }
+        }
+        if changed { layoutChanged() }
+        if analyzing.isEmpty { summarizeTimecode() }
+    }
+
+    /// One line on what the scans found, once they've all finished.
+    private func summarizeTimecode() {
+        let withCode = songs.filter { $0.audioLTCChannel != nil }
+        guard !withCode.isEmpty else { return }
+        let mismatched = withCode.filter { $0.audioOffset == nil }.map(\.name)
+        var text = "Timecode found in \(withCode.count) track\(withCode.count == 1 ? "" : "s"): muted on the music output"
+        text += useTrackTimecode ? ", played to LTC out, and the audio lined up by it." : ", and the audio lined up by it."
+        if !mismatched.isEmpty {
+            text += " The timecode in \(mismatched.joined(separator: ", ")) doesn't match the song list (over a minute apart), so those follow the song list."
+        }
+        message = text
+    }
+
+    /// Play the track's timecode channel to the music output anyway (normally muted).
+    func toggleKeepLTCChannel(_ id: UUID) {
+        guard let i = songs.firstIndex(where: { $0.id == id }) else { return }
+        songs[i].keepLTCChannel.toggle()
+        layoutChanged()
+    }
+
+    /// What plays for each song: its music without the timecode channel (unless kept), and its
+    /// own timecode for LTC out when that code is trusted and Settings says to use it.
+    private func playbackSources() -> [UUID: SongSources] {
+        var out: [UUID: SongSources] = [:]
+        for song in setSongs {
+            guard let path = song.audioPath else { continue }
+            let analysis = analyses[path]
+            var music: String? = path
+            if song.audioLTCChannel != nil, !song.keepLTCChannel, let analysis {
+                music = analysis.musicPath    // nil when the file is only timecode
+            }
+            let code = useTrackTimecode && song.audioOffset != nil ? analysis?.ltcPath : nil
+            out[song.id] = SongSources(music: music, timecode: code)
+        }
+        return out
     }
 
     // MARK: Finding audio
@@ -191,6 +259,8 @@ final class TimelineModel: ObservableObject {
                   let duration = TimelinePlayer.duration(of: URL(fileURLWithPath: path)), duration > 0 else { continue }
             songs[i].audioPath = path
             songs[i].audioDuration = duration
+            songs[i].audioLTCChannel = nil
+            songs[i].audioOffset = nil
             attached += 1
         }
         let missing = songs.filter { $0.audioPath == nil }
@@ -219,10 +289,15 @@ final class TimelineModel: ObservableObject {
     }
 
     private func layoutChanged() {
-        loadWaveforms()
+        analyzeAudio()
         layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, library: songs)
         player.update(layout: layout)
-        player.prune(keeping: songs)
+        var paths = Set(songs.compactMap(\.audioPath))
+        for analysis in analyses.values {
+            if let p = analysis.musicPath { paths.insert(p) }
+            if let p = analysis.ltcPath { paths.insert(p) }
+        }
+        player.prune(keeping: paths)
         if isPlaying { restartPlayback() }
         save()
     }
@@ -247,7 +322,7 @@ final class TimelineModel: ObservableObject {
         transport.seek(to: playhead, at: start)
         transport.play(at: start)
         isPlaying = true
-        player.start(layout: layout, from: playhead, at: start)
+        player.start(layout: layout, from: playhead, at: start, sources: playbackSources())
     }
 
     func pause() {
@@ -318,7 +393,7 @@ final class TimelineModel: ObservableObject {
     private func restartPlayback() {
         let start = HostClock.now() + 0.12
         transport.seek(to: playhead, at: start)
-        player.start(layout: layout, from: playhead, at: start)
+        player.start(layout: layout, from: playhead, at: start, sources: playbackSources())
     }
 
     /// Show code (LTC frames at the show rate) at host time `t`, while playing; nil when stopped
@@ -365,7 +440,7 @@ final class TimelineModel: ObservableObject {
         gap = stored.gap
         layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, library: songs)
         player.update(layout: layout)
-        loadWaveforms()
+        analyzeAudio()
     }
 
     private func save() {

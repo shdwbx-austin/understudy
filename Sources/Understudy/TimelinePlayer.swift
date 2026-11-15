@@ -4,6 +4,13 @@ import Foundation
 import os
 import UnderstudyCore
 
+/// What plays for one song: its music (nil = nothing to play), and its own timecode for LTC out
+/// (nil = generate code for it instead).
+struct SongSources {
+    var music: String?
+    var timecode: String?
+}
+
 /// Where an engine plays: a device (nil = system default) and the first device channel it uses.
 struct AudioRoute: Equatable {
     var deviceUID: String?
@@ -23,11 +30,15 @@ final class TimelinePlayer {
         var anchorPosition = 0.0
         var anchorTime = 0.0
         var layout: TimelineLayout?
+        /// Timeline time where a track's own timecode is playing: the generator stays silent there.
+        var trackCode: [Range<Double>] = []
     }
 
     private let music = AVAudioEngine()
     private let ltc = AVAudioEngine()
-    private var players: [UUID: AVAudioPlayerNode] = [:]
+    /// One player per file, on the music engine, and per timecode file, on the LTC engine.
+    private var players: [String: AVAudioPlayerNode] = [:]
+    private var codePlayers: [String: AVAudioPlayerNode] = [:]
     private var files: [String: AVAudioFile] = [:]
     private var ltcNode: AVAudioSourceNode?
     private let plan = OSAllocatedUnfairLock(initialState: LTCPlan())
@@ -116,7 +127,9 @@ final class TimelinePlayer {
             var position: Double?
             if current.playing, let layout = current.layout {
                 let t = current.anchorPosition + (host - current.anchorTime)
-                position = layout.showSeconds(at: t).map { $0 * layout.rate.ltcRate.exact }
+                if !current.trackCode.contains(where: { $0.contains(t) }) {
+                    position = layout.showSeconds(at: t).map { $0 * layout.rate.ltcRate.exact }
+                }
                 state.prepare(rate: layout.rate, sampleRate: sampleRate)
             }
             state.render(into: out, count: Int(frameCount), framePosition: position)
@@ -132,27 +145,37 @@ final class TimelinePlayer {
     // MARK: Transport
 
     /// Starts song audio and LTC from timeline time `t`, with `t` sounding at host time `at`.
-    func start(layout: TimelineLayout, from t: Double, at host: Double) {
+    /// `sources` says what to play per song (default: its audio file, generated timecode).
+    func start(layout: TimelineLayout, from t: Double, at host: Double, sources: [UUID: SongSources] = [:]) {
         stopMusic()
-        plan.withLock { $0 = LTCPlan(playing: true, anchorPosition: t, anchorTime: host, layout: layout) }
-        startLTC()
+        var trackCode: [Range<Double>] = []
         var scheduled: [AVAudioPlayerNode] = []
+        var scheduledCode: [AVAudioPlayerNode] = []
         for item in layout.items {
-            guard let path = item.song.audioPath, let file = file(at: path) else { continue }
-            let sampleRate = file.processingFormat.sampleRate
-            let fileSeconds = Double(file.length) / sampleRate
-            let length = min(item.duration, fileSeconds)
-            let into = t - item.timelineStart
-            guard into < length else { continue }
-            let from = max(0, into)
-            let frames = AVAudioFrameCount(((length - from) * sampleRate).rounded(.down))
-            guard frames > 0 else { continue }
-            let node = player(for: item.song.id, format: file.processingFormat)
-            let when = AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: host + max(0, -into)))
-            node.scheduleSegment(file, startingFrame: AVAudioFramePosition(from * sampleRate),
-                                 frameCount: frames, at: when)
-            scheduled.append(node)
+            let source = sources[item.song.id] ?? SongSources(music: item.song.audioPath, timecode: nil)
+            // Where the file's first sample falls on the timeline, from its own timecode if trusted.
+            let fileStart = item.timelineStart + (item.song.audioOffset ?? 0)
+            // Never before this song's lead-in, never past its end.
+            let earliest = item.timelineStart - layout.gap
+            if let path = source.music, let file = file(at: path),
+               let node = schedule(file, fileStart: fileStart, earliest: earliest, end: item.timelineEnd,
+                                   from: t, at: host, player: { self.player(path, format: $0, on: self.music, in: &self.players) }) {
+                scheduled.append(node)
+            }
+            if ltcRoute != nil, let path = source.timecode, let file = file(at: path) {
+                let fileEnd = fileStart + Double(file.length) / file.processingFormat.sampleRate
+                let range = max(fileStart, earliest)..<min(fileEnd, item.timelineEnd)
+                if !range.isEmpty, let node = schedule(file, fileStart: fileStart, earliest: earliest, end: item.timelineEnd,
+                                                       from: t, at: host,
+                                                       player: { self.player(path, format: $0, on: self.ltc, in: &self.codePlayers) }) {
+                    scheduledCode.append(node)
+                    trackCode.append(range)
+                }
+            }
         }
+        plan.withLock { $0 = LTCPlan(playing: true, anchorPosition: t, anchorTime: host, layout: layout, trackCode: trackCode) }
+        startLTC()
+        scheduledCode.forEach { $0.play() }
         guard !scheduled.isEmpty else { return }
         if !music.isRunning {
             do { try music.start() } catch {
@@ -161,6 +184,24 @@ final class TimelinePlayer {
             }
         }
         scheduled.forEach { $0.play() }
+    }
+
+    /// Schedules the part of `file` that falls in [max(earliest, fileStart), end) on the timeline,
+    /// from timeline time `t` sounding at host time `host`. Returns the player, or nil if nothing plays.
+    private func schedule(_ file: AVAudioFile, fileStart: Double, earliest: Double, end: Double, from t: Double,
+                          at host: Double, player: (AVAudioFormat) -> AVAudioPlayerNode) -> AVAudioPlayerNode? {
+        let sampleRate = file.processingFormat.sampleRate
+        let fileEnd = fileStart + Double(file.length) / sampleRate
+        let begin = max(t, earliest, fileStart)
+        let stop = min(end, fileEnd)
+        guard begin < stop else { return nil }
+        let frames = AVAudioFrameCount(((stop - begin) * sampleRate).rounded(.down))
+        guard frames > 0 else { return nil }
+        let node = player(file.processingFormat)
+        let when = AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: host + (begin - t)))
+        node.scheduleSegment(file, startingFrame: AVAudioFramePosition((begin - fileStart) * sampleRate),
+                             frameCount: frames, at: when)
+        return node
     }
 
     func stop() {
@@ -175,14 +216,16 @@ final class TimelinePlayer {
 
     private func stopMusic() {
         players.values.forEach { $0.stop() }
+        codePlayers.values.forEach { $0.stop() }
     }
 
-    private func player(for id: UUID, format: AVAudioFormat) -> AVAudioPlayerNode {
-        if let node = players[id] { return node }
+    private func player(_ path: String, format: AVAudioFormat, on engine: AVAudioEngine,
+                        in nodes: inout [String: AVAudioPlayerNode]) -> AVAudioPlayerNode {
+        if let node = nodes[path] { return node }
         let node = AVAudioPlayerNode()
-        music.attach(node)
-        music.connect(node, to: music.mainMixerNode, format: format)
-        players[id] = node
+        engine.attach(node)
+        engine.connect(node, to: engine.mainMixerNode, format: format)
+        nodes[path] = node
         return node
     }
 
@@ -193,15 +236,18 @@ final class TimelinePlayer {
         return file
     }
 
-    /// Forgets players and open files for songs no longer on the timeline.
-    func prune(keeping songs: [Song]) {
-        let ids = Set(songs.map(\.id))
-        for (id, node) in players where !ids.contains(id) {
+    /// Forgets players and open files no longer used by any song.
+    func prune(keeping paths: Set<String>) {
+        for (path, node) in players where !paths.contains(path) {
             node.stop()
             music.detach(node)
-            players[id] = nil
+            players[path] = nil
         }
-        let paths = Set(songs.compactMap(\.audioPath))
+        for (path, node) in codePlayers where !paths.contains(path) {
+            node.stop()
+            ltc.detach(node)
+            codePlayers[path] = nil
+        }
         files = files.filter { paths.contains($0.key) }
     }
 

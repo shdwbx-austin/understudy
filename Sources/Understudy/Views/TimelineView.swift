@@ -106,21 +106,32 @@ struct TimelineTrack: View {
                     ZStack(alignment: .topLeading) {
                         Rectangle().fill(current ? Theme.paper.opacity(0.14) : Theme.ink)
                         if let path = item.song.audioPath, let peaks = timeline.waveforms[path], let audio = item.song.audioDuration {
+                            let offset = item.song.audioOffset ?? 0
                             WaveformView(peaks: peaks, color: Theme.paper.opacity(current ? 0.35 : 0.22))
-                                .frame(width: max(1, min(audio, item.duration) * scale), height: (geo.size.height - 28) * 0.42)
+                                .frame(width: max(1, audio * scale), height: (geo.size.height - 28) * 0.42)
+                                .offset(x: offset * scale, y: (geo.size.height - 28) * 0.56)
+                                .frame(width: w, alignment: .leading)
                                 .clipped()
-                                .offset(y: (geo.size.height - 28) * 0.56)
                         }
                         Rectangle().strokeBorder(current ? Theme.paper : Theme.rule, lineWidth: 1)
-                        if w > 46 {
+                        // Names wrap and shrink to stay readable in narrow blocks; the smaller lines go first.
+                        if w > 22 {
                             VStack(alignment: .leading, spacing: 3) {
-                                Text(item.song.name).font(Theme.grotesk(13, .medium)).lineLimit(2)
-                                Text(item.song.start.description).font(Theme.mono(9)).foregroundStyle(Theme.grey)
-                                if item.song.audioPath == nil {
+                                Text(item.song.name)
+                                    .font(Theme.grotesk(13, .medium))
+                                    .lineLimit(w < 90 ? 3 : 2)
+                                    .minimumScaleFactor(0.6)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if w >= 90 {
+                                    Text(item.song.start.description).font(Theme.mono(9)).foregroundStyle(Theme.grey)
+                                }
+                                if item.song.audioPath == nil, w >= 70 {
                                     Text("NO AUDIO").font(Theme.mono(8, bold: true)).tracking(1).foregroundStyle(Theme.quiet)
                                 }
                             }
-                            .padding(6)
+                            .padding(.horizontal, w < 60 ? 3 : 6)
+                            .padding(.vertical, 5)
+                            .frame(width: w, alignment: .leading)
                         }
                     }
                     .frame(width: w, height: geo.size.height - 28)
@@ -391,7 +402,8 @@ private struct SongRow: View {
     @ViewBuilder private var audio: some View {
         if let path = song.audioPath {
             HStack(spacing: 6) {
-                Text(URL(fileURLWithPath: path).lastPathComponent).font(Theme.mono(10)).lineLimit(1).truncationMode(.middle)
+                Text(URL(fileURLWithPath: path).lastPathComponent + (song.audioLTCChannel.map { " · TC CH \($0 + 1) \(song.keepLTCChannel ? "PLAYING" : "MUTED")" } ?? ""))
+                    .font(Theme.mono(10)).lineLimit(1).truncationMode(.middle)
                 Button { timeline.removeAudio(from: song.id) } label: { Text("×").font(Theme.mono(12)) }
                     .buttonStyle(.plain).foregroundStyle(Theme.grey).help("Remove audio")
             }

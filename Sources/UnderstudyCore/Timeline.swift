@@ -18,10 +18,18 @@ public struct Song: Codable, Equatable, Identifiable, Sendable {
     public var audioDuration: Double?
     /// On tonight's set (plays on the timeline) or only in the library.
     public var inSet: Bool
+    /// Channel of the audio file carrying LTC (0-based), found by scanning; nil = none found.
+    public var audioLTCChannel: Int?
+    /// Where the file's first sample sits relative to the song start, in seconds, from its own
+    /// timecode (negative = the file has pre-roll). nil = the file starts at the song start.
+    public var audioOffset: Double?
+    /// Play the timecode channel to the music output anyway (normally it's muted).
+    public var keepLTCChannel: Bool
 
     public init(id: UUID = UUID(), name: String, start: Timecode, end: Timecode? = nil, duration: Double? = nil,
                 audioPath: String? = nil, audioDuration: Double? = nil, inSet: Bool = true) {
         self.inSet = inSet
+        self.keepLTCChannel = false
         self.id = id
         self.name = name
         self.start = start
@@ -34,7 +42,7 @@ public struct Song: Codable, Equatable, Identifiable, Sendable {
 
 extension Song {
     private enum CodingKeys: String, CodingKey {
-        case id, name, start, end, duration, audioPath, audioDuration, inSet
+        case id, name, start, end, duration, audioPath, audioDuration, inSet, audioLTCChannel, audioOffset, keepLTCChannel
     }
 
     /// Timelines saved before the set list existed load with every song in the set.
@@ -48,6 +56,9 @@ extension Song {
         audioPath = try c.decodeIfPresent(String.self, forKey: .audioPath)
         audioDuration = try c.decodeIfPresent(Double.self, forKey: .audioDuration)
         inSet = try c.decodeIfPresent(Bool.self, forKey: .inSet) ?? true
+        audioLTCChannel = try c.decodeIfPresent(Int.self, forKey: .audioLTCChannel)
+        audioOffset = try c.decodeIfPresent(Double.self, forKey: .audioOffset)
+        keepLTCChannel = try c.decodeIfPresent(Bool.self, forKey: .keepLTCChannel) ?? false
     }
 }
 

@@ -12,9 +12,10 @@ struct TimelineWorkspace: View {
     let column: CGFloat
 
     var body: some View {
+        GeometryReader { geo in
         HStack(alignment: .top, spacing: Theme.gutter) {
             PlaylistPanel(timeline: timeline)
-                .frame(width: ShowGrid.labelWidth + Theme.gutter + column)
+                .frame(width: playlistWidth(total: geo.size.width))
             VStack(alignment: .leading, spacing: 14) {
                 SectionCaption(text: "Set · drag or swipe to scrub · swipe the song below to step frames")
                 TimelineTrack(timeline: timeline)
@@ -24,7 +25,10 @@ struct TimelineWorkspace: View {
                     .frame(minHeight: 110, maxHeight: 300)
                 TransportBar(timeline: timeline, compact: true)
                 Rule()
-                TakePicker()
+                HStack(alignment: .firstTextBaseline, spacing: Theme.gutter) {
+                    DevRecordButton()
+                    TakePicker()
+                }
                 DeckChips()
                 if let message = timeline.message {
                     Text(message).font(Theme.mono(10)).foregroundStyle(Theme.grey).lineLimit(3)
@@ -32,6 +36,18 @@ struct TimelineWorkspace: View {
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
+        }
+    }
+
+    /// The playlist sits on the grid (label column plus one column) unless a song name needs more,
+    /// then widens to fit the longest name, up to 45% of the workspace.
+    private func playlistWidth(total: CGFloat) -> CGFloat {
+        let grid = ShowGrid.labelWidth + Theme.gutter + column
+        let font = NSFont(name: "NHaasGroteskTXPro-55Rg", size: 14) ?? NSFont(name: "HelveticaNeue", size: 14) ?? .systemFont(ofSize: 14)
+        let longest = timeline.songs.map { ($0.name as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
+        // Number, badges, duration and spacing around the name.
+        let needed = longest + 22 + 20 + 22 + 40 + 4 * 10 + 24
+        return min(max(grid, needed), total * 0.45)
     }
 }
 
@@ -141,7 +157,13 @@ private struct PlaylistRow: View {
                 .font(Theme.grotesk(14, current ? .medium : .regular))
                 .foregroundStyle(setIndex == nil ? Theme.grey : Theme.paper)
                 .lineLimit(1)
+                .minimumScaleFactor(0.75)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if let channel = song.audioLTCChannel {
+                Text("TC").font(Theme.mono(9, bold: true)).tracking(0.8)
+                    .foregroundStyle(song.audioOffset == nil ? Theme.amber : Theme.grey)
+                    .help(timecodeHelp(channel))
+            }
             if song.audioPath != nil {
                 Text("♪").font(Theme.mono(11)).foregroundStyle(Theme.grey).help(URL(fileURLWithPath: song.audioPath!).lastPathComponent)
             }
@@ -174,10 +196,25 @@ private struct PlaylistRow: View {
             }
             Button("Choose Audio…") { timeline.chooseAudio(for: song.id) }
             if song.audioPath != nil { Button("Remove Audio") { timeline.removeAudio(from: song.id) } }
+            if song.audioLTCChannel != nil {
+                Toggle("Play Timecode Channel", isOn: Binding(get: { song.keepLTCChannel },
+                                                             set: { _ in timeline.toggleKeepLTCChannel(song.id) }))
+            }
             Divider()
             Button("Delete from Library", role: .destructive) { timeline.remove(song.id) }
         }
         .help(song.start.description)
+    }
+
+    private func timecodeHelp(_ channel: Int) -> String {
+        var text = "Timecode on channel \(channel + 1): "
+        text += song.keepLTCChannel ? "playing (Play Timecode Channel is on)." : "muted on the music output."
+        if let offset = song.audioOffset {
+            text += abs(offset) < 0.02 ? " Starts on the song start." : String(format: " Lined up by it (the file starts %.2f s %@ the song).", abs(offset), offset < 0 ? "before" : "after")
+        } else {
+            text += " Its code doesn't match the song list, so the song list is used."
+        }
+        return text
     }
 }
 
@@ -204,10 +241,11 @@ struct SongDetailTrack: View {
                         .offset(y: 22)
                     // Song body, with its waveform.
                     if let path = item.song.audioPath, let peaks = timeline.waveforms[path], let audio = item.song.audioDuration {
+                        // Placed by the audio's own timecode (pre-roll shows in the lead-in).
+                        let offset = max(-timeline.gap, item.song.audioOffset ?? 0)
                         WaveformView(peaks: peaks, color: Theme.paper.opacity(0.32))
-                            .frame(width: max(1, min(audio, item.duration) * scale), height: (geo.size.height - 22) * 0.62)
-                            .clipped()
-                            .offset(x: timeline.gap * scale, y: 22 + (geo.size.height - 22) * 0.3)
+                            .frame(width: max(1, audio * scale), height: (geo.size.height - 22) * 0.62)
+                            .offset(x: (timeline.gap + offset) * scale, y: 22 + (geo.size.height - 22) * 0.3)
                     }
                     Rectangle().strokeBorder(Theme.paper, lineWidth: 1)
                         .frame(width: item.duration * scale, height: geo.size.height - 22)
@@ -265,6 +303,21 @@ struct SongDetailTrack: View {
 }
 
 // MARK: - Take and decks
+
+/// Dev/test: put the decks in Record with the timeline as show code, and back.
+struct DevRecordButton: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        if model.mode == .record {
+            TextButton(title: "● Rec · stop (dev)", color: Theme.signal) { model.requestMode(.timeline) }
+                .help("Stop recording and go back to Timeline mode")
+        } else {
+            TextButton(title: "Rec decks (dev)", color: Theme.quiet) { model.startTimelineRecording() }
+                .help("Test: record on the decks while the timeline plays. Show code comes from the timeline (⌥⌘R).")
+        }
+    }
+}
 
 /// The take the decks play from, as a compact menu.
 struct TakePicker: View {

@@ -28,6 +28,8 @@ struct UnderstudyApp: App {
                 Toggle("Record", isOn: modeBinding(.record)).keyboardShortcut("2", modifiers: .command)
                 Toggle("Play to code", isOn: modeBinding(.playback)).keyboardShortcut("3", modifiers: .command)
                 Toggle("Timeline", isOn: modeBinding(.timeline)).keyboardShortcut("4", modifiers: .command)
+                Button("Record from Timeline (Dev)") { model.startTimelineRecording() }
+                    .keyboardShortcut("r", modifiers: [.command, .option])
                 Divider()
                 OpenTimelineCommand()
                 Button("Refresh Takes") { model.refreshTakes() }.keyboardShortcut("r", modifiers: .command)
