@@ -42,7 +42,13 @@ final class AppModel: ObservableObject {
             settingsChanged(from: oldValue)
         }
     }
-    @Published private(set) var mode: Mode = .stop
+    @Published private(set) var mode: Mode = .stop {
+        // Dev Record sends the track timecode out (see devTimecodeChannel); other modes don't.
+        didSet { if mode != oldValue { applyTimelineOutputs() } }
+    }
+    /// While recording from the timeline (dev Record) with LTC out off: the song-audio device's
+    /// channel the songs' own timecode plays on, the one after the music pair (e.g. 3).
+    @Published private(set) var devTimecodeChannel: Int?
     /// Dante out through Dante Virtual Soundcard: off, sending, or what's stopping it.
     @Published private(set) var danteStatus: DanteOut.Status = .off
     private var danteSoundcard: DanteOut.Device?
@@ -636,7 +642,8 @@ final class AppModel: ObservableObject {
         if settings.timelineOutputUID != old.timelineOutputUID || settings.timelineOutputChannel != old.timelineOutputChannel
             || settings.ltcOutputUID != old.ltcOutputUID || settings.ltcOutputChannel != old.ltcOutputChannel
             || settings.ltcOutUseTrackTimecode != old.ltcOutUseTrackTimecode
-            || settings.danteOut != old.danteOut || settings.danteInterface != old.danteInterface {
+            || settings.danteOut != old.danteOut || settings.danteInterface != old.danteInterface
+            || settings.showCodeSource != old.showCodeSource {
             applyTimelineOutputs()
         }
         if settings.chase != old.chase || settings.deckTimecodeAtVideoRate != old.deckTimecodeAtVideoRate {
@@ -713,17 +720,29 @@ final class AppModel: ObservableObject {
         updateDanteStatus()
         if danteStatus.isRouted, let card = danteSoundcard {
             // Left and right on DVS 1–2, timecode on 3, on the one device so they stay locked.
-            timeline.player.configure(
-                music: AudioRoute(deviceUID: card.uid, channel: DanteOut.musicChannel),
-                ltc: AudioRoute(deviceUID: card.uid, channel: DanteOut.timecodeChannel)
-            )
+            if devTimecodeChannel != nil { devTimecodeChannel = nil }
+            reroute(music: AudioRoute(deviceUID: card.uid, channel: DanteOut.musicChannel),
+                    ltc: AudioRoute(deviceUID: card.uid, channel: DanteOut.timecodeChannel))
             return
         }
-        let ltcRoute = settings.ltcOutputChannel.map { AudioRoute(deviceUID: settings.ltcOutputUID, channel: $0) }
-        timeline.player.configure(
-            music: AudioRoute(deviceUID: settings.timelineOutputUID, channel: settings.timelineOutputChannel),
-            ltc: ltcRoute
+        var ltcRoute = settings.ltcOutputChannel.map { AudioRoute(deviceUID: settings.ltcOutputUID, channel: $0) }
+        // Dev Record with LTC out off: the songs' own timecode goes out on the song-audio device,
+        // on the channel after the music (3 for music on 1–2), so the decks or a recorder can take it.
+        let recordingFromTimeline = mode == .record && showCodeFromTimeline
+        let devChannel = DevTimecodeOut.channel(
+            recordingFromTimeline: recordingFromTimeline, ltcOutSet: ltcRoute != nil,
+            musicChannel: settings.timelineOutputChannel,
+            deviceChannels: recordingFromTimeline ? AudioDeviceCatalog.outputChannels(uid: settings.timelineOutputUID) : 0
         )
+        if let devChannel { ltcRoute = AudioRoute(deviceUID: settings.timelineOutputUID, channel: devChannel) }
+        if devChannel != devTimecodeChannel { devTimecodeChannel = devChannel }
+        reroute(music: AudioRoute(deviceUID: settings.timelineOutputUID, channel: settings.timelineOutputChannel),
+                ltc: ltcRoute)
+    }
+
+    /// Re-points the timeline's outputs; a playing timeline carries on through the change.
+    private func reroute(music: AudioRoute, ltc: AudioRoute?) {
+        if timeline.player.configure(music: music, ltc: ltc) { timeline.resumeAudioAfterReroute() }
     }
 
     /// Re-reads whether the preferred Dante port has a link (the soundcard is re-read on device changes).
@@ -740,6 +759,7 @@ final class AppModel: ObservableObject {
     /// Where the timeline's timecode is going, for status lines: "Dante 3", "LTC out ch 4" or nil (off).
     var timecodeOutLabel: String? {
         if danteStatus.isRouted { return "Dante ch \(DanteOut.timecodeChannel + 1)" }
+        if let channel = devTimecodeChannel { return "Track TC ch \(channel + 1) (dev)" }
         return settings.ltcOutputChannel.map { "LTC out ch \($0 + 1)" }
     }
 

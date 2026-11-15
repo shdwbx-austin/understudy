@@ -56,9 +56,12 @@ final class TimelinePlayer {
     /// needs re-pointing even though its UID is the same.
     private var routedDevices: [AudioDeviceID?] = []
 
-    func configure(music route: AudioRoute, ltc ltcRoute: AudioRoute?) {
+    /// Points music and LTC at their outputs. Returns true when anything changed (which stops
+    /// what's playing: the caller restarts it).
+    @discardableResult
+    func configure(music route: AudioRoute, ltc ltcRoute: AudioRoute?) -> Bool {
         let devices = [route.deviceUID, ltcRoute?.deviceUID].map { $0.flatMap(AudioDeviceCatalog.deviceID(forUID:)) }
-        guard !configured || route != musicRoute || ltcRoute != self.ltcRoute || devices != routedDevices else { return }
+        guard !configured || route != musicRoute || ltcRoute != self.ltcRoute || devices != routedDevices else { return false }
         musicRoute = route
         self.ltcRoute = ltcRoute
         routedDevices = devices
@@ -77,6 +80,7 @@ final class TimelinePlayer {
             }
             startLTC()
         }
+        return true
     }
 
     /// Points an engine's output at a device and maps its stereo output onto `channels` from the

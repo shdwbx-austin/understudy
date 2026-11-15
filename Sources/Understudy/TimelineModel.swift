@@ -476,6 +476,14 @@ final class TimelineModel: ObservableObject {
         if let t = layout.timelineTime(song: index) { seek(to: t) }
     }
 
+    /// The outputs changed under a playing timeline: start the audio again where the transport is
+    /// now, without moving the transport (decks and show code carry on undisturbed).
+    func resumeAudioAfterReroute() {
+        guard isPlaying else { return }
+        let start = HostClock.now() + 0.05
+        player.start(layout: layout, from: transport.position(at: start), at: start, sources: playbackSources())
+    }
+
     private func restartPlayback() {
         let start = HostClock.now() + 0.12
         transport.seek(to: playhead, at: start)

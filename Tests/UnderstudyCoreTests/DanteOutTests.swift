@@ -48,4 +48,16 @@ struct DanteOutTests {
         let old = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"ltcOutUseTrackTimecode": false}"#.utf8))
         #expect(!old.danteOut && old.danteInterface == nil && !old.ltcOutUseTrackTimecode)
     }
+
+    @Test func devRecordSendsTrackTimecodeAfterTheMusic() {
+        // SHDWBX-style 4-channel device, music on 1–2: timecode on 3.
+        #expect(DevTimecodeOut.channel(recordingFromTimeline: true, ltcOutSet: false, musicChannel: 0, deviceChannels: 4) == 2)
+        // Music on 3–4 of an 8-channel interface: timecode on 5.
+        #expect(DevTimecodeOut.channel(recordingFromTimeline: true, ltcOutSet: false, musicChannel: 2, deviceChannels: 8) == 4)
+        // A stereo device has no spare channel.
+        #expect(DevTimecodeOut.channel(recordingFromTimeline: true, ltcOutSet: false, musicChannel: 0, deviceChannels: 2) == nil)
+        // LTC out set: that wins. Not recording from the timeline: nothing.
+        #expect(DevTimecodeOut.channel(recordingFromTimeline: true, ltcOutSet: true, musicChannel: 0, deviceChannels: 4) == nil)
+        #expect(DevTimecodeOut.channel(recordingFromTimeline: false, ltcOutSet: false, musicChannel: 0, deviceChannels: 4) == nil)
+    }
 }

@@ -95,3 +95,14 @@ public enum DanteOut {
         return .sending(device: soundcard.name, port: port)
     }
 }
+
+/// Dev Record: where the songs' own timecode goes when LTC out is off.
+public enum DevTimecodeOut {
+    /// The song-audio device's channel after the music pair (0-based: 2 for music on 0–1), when
+    /// recording from the timeline with LTC out off and the device has that channel; else nil.
+    public static func channel(recordingFromTimeline: Bool, ltcOutSet: Bool, musicChannel: Int, deviceChannels: Int) -> Int? {
+        guard recordingFromTimeline, !ltcOutSet else { return nil }
+        let channel = musicChannel + 2
+        return deviceChannels > channel ? channel : nil
+    }
+}
