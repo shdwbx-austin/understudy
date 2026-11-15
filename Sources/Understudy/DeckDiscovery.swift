@@ -24,6 +24,8 @@ struct FoundDeck: Identifiable, Hashable, Sendable {
 /// - a scan of the Mac's local subnets on TCP 9993, keeping only hosts that greet like a HyperDeck.
 ///
 /// Hosts already connected to a deck slot are never probed, so a deck in use never gets a second client.
+/// This Mac's own addresses are never listed: anything answering on them (an emulator, a test
+/// server) runs on this Mac and would otherwise appear once per network interface.
 @MainActor
 final class DeckDiscovery: ObservableObject {
     @Published private(set) var found: [FoundDeck] = []
@@ -124,7 +126,7 @@ final class DeckDiscovery: ObservableObject {
         let chosen = interface()
         let networks = Self.localNetworks().filter { chosen == nil || $0.interface == chosen }
         scannedNetworks = networks.map(\.label)
-        let skipping = skip()
+        let skipping = skip().union(Self.ownAddresses())
         let hosts = networks.flatMap(\.hosts).filter { !skipping.contains($0) }
         let unique = Array(NSOrderedSet(array: hosts)).compactMap { $0 as? String }.prefix(Self.maxHostsPerScan)
         Task { [weak self] in
@@ -162,6 +164,7 @@ final class DeckDiscovery: ObservableObject {
     }
 
     private func add(host: String, name: String?, greeting: HyperDeckGreeting?) {
+        guard !Self.ownAddresses().contains(host) else { return }
         if let i = found.firstIndex(where: { $0.host == host }) {
             if let name { found[i].name = name }
             if let model = greeting?.model { found[i].model = model }
@@ -295,6 +298,20 @@ final class DeckDiscovery: ObservableObject {
                 interface: name, displayName: names[name] ?? name, address: dotted(ip),
                 network: network, mask: netmask
             ))
+        }
+        return out
+    }
+
+    /// Every IPv4 address on this Mac, loopback and link-local included.
+    nonisolated static func ownAddresses() -> Set<String> {
+        var out: Set<String> = ["127.0.0.1"]
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return out }
+        defer { freeifaddrs(list) }
+        for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            guard let addr = ptr.pointee.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET) else { continue }
+            let ip = addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { UInt32(bigEndian: $0.pointee.sin_addr.s_addr) }
+            out.insert(dotted(ip))
         }
         return out
     }
