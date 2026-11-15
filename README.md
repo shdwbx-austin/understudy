@@ -60,7 +60,7 @@ HyperDecks can't chase LTC natively. Understudy reads the show LTC itself and ha
 
 Timeline mode (**⌘4**) makes Understudy the clock instead of incoming LTC. Open the timeline with **⌘T**.
 
-1. **Import CSV…:** a song list, one song per row, `name, start timecode[, end timecode]`. A header row (Song/Name, Start, End) is optional. A song without an end runs to the next song's start.
+1. **Import CSV…:** a song list, one song per row: a name, a start timecode, and optionally an end or a Duration (`m:ss`). With a header row, columns are found by name (e.g. `SONG, Duration, LTC Start Point`). Starts can be `H:MM:SS` or full timecode. Songs with a blank or `n/a` start are skipped and listed after import. A song without an end or duration runs to the next song's start. An alphabetical list is laid out in timecode order.
 2. **Audio:** drop an audio file on each song, or right-click › Choose Audio…. It plays from the song's start timecode.
 3. **Order:** drag songs in the list. The timeline plays them back to back in that order. A lead-in before each song (2 s by default) gives the decks time to park on its footage.
 4. **Play:** space plays and pauses. Drag the playhead to scrub. ← → step one frame, ⇧← → one second, ⌥← → one song. While paused the decks seek to the frame under the playhead; while playing they chase it.

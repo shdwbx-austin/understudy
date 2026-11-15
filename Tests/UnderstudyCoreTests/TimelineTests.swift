@@ -24,6 +24,38 @@ struct SongListCSVTests {
         #expect(songs[1].start == Timecode("03:00:05:12"))
     }
 
+    /// The RKS26 programming sheet: "LTC Start Point" in H:MM:SS, a Duration in m:ss, a dashed
+    /// rule under the header, and songs with no start (blank or n/a) that can't be placed.
+    @Test func programmingSheetWithDurationsAndUnplacedSongs() throws {
+        let csv = """
+        SONG,Duration,LTC Start Point
+        ———,———,———
+        100 Summers,4:01,9:20:00
+        All's Well That Ends,3:30,1:00:00
+        Bare Bones,3:20,
+        Bare Bones (Acoustic),3:20,n/a
+        First Class,6:00,2:50:00
+        Mr. Brightside,3:37,12:10:00
+        """
+        let result = try SongListCSV.read(csv)
+        #expect(result.songs.map(\.name) == ["100 Summers", "All's Well That Ends", "First Class", "Mr. Brightside"])
+        #expect(result.skipped == ["Bare Bones", "Bare Bones (Acoustic)"])
+        #expect(result.songs[0].start == Timecode("09:20:00:00"))
+        #expect(result.songs[0].duration == 241)
+        #expect(result.songs[2].duration == 360)
+        #expect(result.songs[3].start == Timecode("12:10:00:00"))
+        // Durations set the song lengths on the timeline.
+        let layout = TimelineLayout(ordered: result.songs, rate: .fps30, gap: 2)
+        #expect(layout.items.map(\.duration) == [241, 210, 360, 217])
+    }
+
+    @Test func durationFormats() {
+        #expect(SongListCSV.seconds("4:01") == 241)
+        #expect(SongListCSV.seconds("1:02:03") == 3723)
+        #expect(SongListCSV.seconds("95") == 95)
+        #expect(SongListCSV.seconds("n/a") == nil)
+    }
+
     @Test func badRowNamesTheLine() {
         #expect(throws: SongListError.badRow(line: 3, reason: "start timecode should be HH:MM:SS:FF, got \"soon\".")) {
             try SongListCSV.parse("Name,Start\nA,01:00:00:00\nB,soon\n")

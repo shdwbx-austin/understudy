@@ -3,7 +3,7 @@
 ## Unreleased
 
 - **Timeline mode (⌘4) and a song timeline (⌘T).**
-  - **Songs:** import a song list (CSV: name, start timecode, optional end), then drop an audio file on each song.
+  - **Songs:** import a song list (CSV: name, start timecode, optional end or Duration), then drop an audio file on each song. Headers like "LTC Start Point" are recognised, ruled lines are ignored, and songs with no start (blank or n/a) are skipped and listed. An alphabetical list is laid out in timecode order.
   - **Clock:** the timeline is the master. It plays the song audio, drives the decks through the chase engine, and can output LTC that follows it (Settings › Timeline output).
   - **Reorder:** drag songs in the list to rehearse them in any order. Each song gets a lead-in so the decks are parked and rolling on its first frame.
   - **Scrub and step:** drag the playhead, or use frame steps (← →), one-second steps (⇧← →) and song jumps (⌥← →). While paused, the decks seek to the exact frame.

@@ -39,7 +39,15 @@ final class TimelineModel: ObservableObject {
     func importCSV(from url: URL) {
         do {
             let text = try String(contentsOf: url, encoding: .utf8)
-            let imported = try SongListCSV.parse(text)
+            let result = try SongListCSV.read(text)
+            var imported = result.songs
+            // An alphabetical list is a song library, not a running order: lay it out in timecode order.
+            let alphabetical = imported.count > 2 && zip(imported, imported.dropFirst()).allSatisfy {
+                $0.name.localizedCaseInsensitiveCompare($1.name) != .orderedDescending
+            }
+            if alphabetical {
+                imported.sort { $0.start.frameIndex(at: rate) < $1.start.frameIndex(at: rate) }
+            }
             // Keep audio already attached to songs of the same name.
             let audio = Dictionary(songs.map { ($0.name, ($0.audioPath, $0.audioDuration)) }, uniquingKeysWith: { a, _ in a })
             songs = imported.map { song in
@@ -48,6 +56,10 @@ final class TimelineModel: ObservableObject {
                 return s
             }
             message = "Imported \(songs.count) songs from \(url.lastPathComponent)."
+            if alphabetical { message! += " The list was alphabetical, so it's in timecode order." }
+            if !result.skipped.isEmpty {
+                message! += " Skipped \(result.skipped.count) with no start timecode: \(result.skipped.joined(separator: ", "))."
+            }
             stop()
             seek(to: 0)
             layoutChanged()

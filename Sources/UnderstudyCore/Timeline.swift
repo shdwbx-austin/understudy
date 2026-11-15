@@ -8,19 +8,22 @@ public struct Song: Codable, Equatable, Identifiable, Sendable {
     public var name: String
     /// Show timecode the song starts at (as in the CSV).
     public var start: Timecode
-    /// Show timecode the song ends at (exclusive). nil = runs to the next song, or its audio's length.
+    /// Show timecode the song ends at (exclusive). nil = runs for `duration`, else to the next song.
     public var end: Timecode?
+    /// Length in seconds, from a Duration column (used when there's no end).
+    public var duration: Double?
     /// Audio file played for this song, lined up with `start`.
     public var audioPath: String?
     /// Length of the audio file in seconds, read when it's attached.
     public var audioDuration: Double?
 
-    public init(id: UUID = UUID(), name: String, start: Timecode, end: Timecode? = nil,
+    public init(id: UUID = UUID(), name: String, start: Timecode, end: Timecode? = nil, duration: Double? = nil,
                 audioPath: String? = nil, audioDuration: Double? = nil) {
         self.id = id
         self.name = name
         self.start = start
         self.end = end
+        self.duration = duration
         self.audioPath = audioPath
         self.audioDuration = audioDuration
     }
@@ -38,13 +41,23 @@ public enum SongListError: Error, Equatable, CustomStringConvertible {
     }
 }
 
+/// What an import produced: the songs it could place, and the names of rows with no start timecode.
+public struct SongListImport: Equatable, Sendable {
+    public var songs: [Song]
+    public var skipped: [String]
+}
+
 /// Reads a song list: one song per row, `name, start timecode[, end timecode]`.
 ///
-/// A header row is optional; when present its column names decide the order (Name/Song/Title,
-/// Start/In/Timecode/TC, End/Out). Quoted fields, commas inside quotes, semicolon- or tab-separated
-/// files and `HH:MM:SS` (no frames) all work. Rows are kept in file order.
+/// A header row is optional; when present its column names decide the order: a name column
+/// (Song/Name/Title/Track), a start (Start, In, LTC, Timecode, TC — e.g. "LTC Start Point"), and an
+/// end (End/Out) or a Duration/Length. Quoted fields, commas inside quotes, semicolon- or
+/// tab-separated files and `H:MM:SS` (no frames) all work. Ruled lines (`———`) are ignored, and rows
+/// whose start is blank or n/a are skipped and listed. Rows are kept in file order.
 public enum SongListCSV {
-    public static func parse(_ text: String) throws -> [Song] {
+    public static func parse(_ text: String) throws -> [Song] { try read(text).songs }
+
+    public static func read(_ text: String) throws -> SongListImport {
         let lines = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
             .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         let separator = detectSeparator(lines.first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? "")
@@ -56,25 +69,39 @@ public enum SongListCSV {
 
         var nameColumn = 0, startColumn = 1
         var endColumn: Int? = 2
+        var durationColumn: Int?
         var body = rows[...]
         if !first.fields.contains(where: { timecode($0) != nil }) {
-            // Header row: find the columns by name.
-            let names = first.fields.map { $0.lowercased().trimmingCharacters(in: .whitespaces) }
-            func column(_ keys: [String]) -> Int? { names.firstIndex { n in keys.contains { n == $0 || n.hasPrefix($0 + " ") } } }
+            // Header row: find the columns by the words in their names.
+            let names = first.fields.map { header in
+                Set(header.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init))
+            }
+            func column(_ keys: Set<String>, except: Int? = nil) -> Int? {
+                names.indices.first { $0 != except && !names[$0].isDisjoint(with: keys) }
+            }
             nameColumn = column(["name", "song", "title", "track"]) ?? 0
-            startColumn = column(["start", "in", "timecode", "tc", "position", "time"]) ?? 1
-            endColumn = column(["end", "out", "stop"])
+            startColumn = column(["start", "in", "ltc", "timecode", "tc", "smpte", "position"], except: nameColumn) ?? 1
+            endColumn = column(["end", "out", "stop"], except: startColumn)
+            durationColumn = column(["duration", "length", "dur", "runtime"])
             body = rows.dropFirst()
         }
 
         var songs: [Song] = []
+        var skipped: [String] = []
         for row in body {
             let f = row.fields
-            guard f.indices.contains(startColumn), let start = timecode(f[startColumn]) else {
+            // A ruled line under the header, or an empty row.
+            if f.allSatisfy({ $0.allSatisfy { "-—–_=".contains($0) } }) { continue }
+            let name = f.indices.contains(nameColumn) ? f[nameColumn].trimmingCharacters(in: .whitespaces) : ""
+            let rawStart = f.indices.contains(startColumn) ? f[startColumn].trimmingCharacters(in: .whitespaces) : ""
+            if Self.blank(rawStart) {
+                skipped.append(name.isEmpty ? "Line \(row.line)" : name)
+                continue
+            }
+            guard let start = timecode(rawStart) else {
                 let got = f.indices.contains(startColumn) ? "\"\(f[startColumn])\"" : "nothing"
                 throw SongListError.badRow(line: row.line, reason: "start timecode should be HH:MM:SS:FF, got \(got).")
             }
-            let name = f.indices.contains(nameColumn) ? f[nameColumn].trimmingCharacters(in: .whitespaces) : ""
             var end: Timecode?
             if let endColumn, f.indices.contains(endColumn) {
                 let raw = f[endColumn].trimmingCharacters(in: .whitespaces)
@@ -85,10 +112,28 @@ public enum SongListCSV {
                     end = tc
                 }
             }
-            songs.append(Song(name: name.isEmpty ? "Song \(songs.count + 1)" : name, start: start, end: end))
+            var duration: Double?
+            if let durationColumn, f.indices.contains(durationColumn) { duration = seconds(f[durationColumn]) }
+            songs.append(Song(name: name.isEmpty ? "Song \(songs.count + 1)" : name, start: start, end: end, duration: duration))
         }
         guard !songs.isEmpty else { throw SongListError.empty }
-        return songs
+        return SongListImport(songs: songs, skipped: skipped)
+    }
+
+    /// No start timecode given.
+    private static func blank(_ s: String) -> Bool {
+        let v = s.lowercased()
+        return v.isEmpty || ["n/a", "na", "-", "—", "–", "none", "tbd", "tba", "x"].contains(v)
+    }
+
+    /// `m:ss`, `h:mm:ss` or plain seconds.
+    public static func seconds(_ raw: String) -> Double? {
+        let parts = raw.trimmingCharacters(in: .whitespaces).split(separator: ":").map(String.init)
+        guard (1...3).contains(parts.count), let last = Double(parts[parts.count - 1]), last >= 0 else { return nil }
+        let rest = parts.dropLast().compactMap { Int($0) }
+        guard rest.count == parts.count - 1, rest.allSatisfy({ $0 >= 0 }) else { return nil }
+        let value = rest.reduce(0) { $0 * 60 + Double($1) } * 60 + last
+        return value > 0 ? value : nil
     }
 
     /// `HH:MM:SS:FF` (any of : ; . before frames) or `HH:MM:SS`.
@@ -180,6 +225,8 @@ public struct TimelineLayout: Equatable, Sendable {
             var duration: Double
             if let end = song.end, end.seconds(at: rate) > start {
                 duration = end.seconds(at: rate) - start
+            } else if let length = song.duration, length > 0 {
+                duration = length
             } else if let next = byShow.first(where: { $0.start.seconds(at: rate) > start }) {
                 duration = next.start.seconds(at: rate) - start
                 if let audio = song.audioDuration { duration = min(duration, max(audio, 0.04)) }
