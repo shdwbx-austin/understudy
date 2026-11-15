@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fixed: Find decks could list this Mac's own network addresses as HyperDecks when something on the Mac answered on port 9993. Discovery now skips every address that belongs to this Mac.
 - **App icon** for the Dock and Finder: a lowercase u in Neue Haas Grotesk with the green the clock turns on lock, drawn by `scripts/make-icon.swift`.
 
 ## 0.2.0 — 2026-11-14
