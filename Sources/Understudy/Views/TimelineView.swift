@@ -230,8 +230,10 @@ private struct OutputStatus: View {
     var body: some View {
         HStack(spacing: 14) {
             Text(ltcText).font(Theme.mono(10)).tracking(1.2)
-                .foregroundStyle(model.settings.ltcOutputChannel == nil ? Theme.quiet : Theme.paper)
-                .help("Generated LTC follows the timeline. Set the device and channel in Settings › Timeline output.")
+                .foregroundStyle(model.danteStatus.isProblem ? Theme.amber
+                                 : model.timecodeOutLabel == nil ? Theme.quiet : Theme.paper)
+                .help(model.settings.danteOut ? model.danteStatus.message
+                      : "Generated LTC follows the timeline. Set the device and channel in Settings › Timeline output.")
             if showToggle { Toggle(isOn: Binding(
                 get: { model.settings.showCodeSource == .timeline },
                 set: { model.settings.showCodeSource = $0 ? .timeline : .input }
@@ -244,8 +246,14 @@ private struct OutputStatus: View {
     }
 
     private var ltcText: String {
-        guard let channel = model.settings.ltcOutputChannel else { return "LTC OUT OFF" }
-        return "LTC OUT CH \(channel + 1)"
+        switch model.danteStatus {
+        case .sending: return "DANTE OUT 1–3"
+        case .portDown: return "DANTE OUT · NO LINK"
+        case .noSoundcard: return "DANTE OUT · NO DVS"
+        case .tooFewChannels: return "DANTE OUT · DVS NEEDS 3 CH"
+        case .off: break
+        }
+        return model.timecodeOutLabel?.uppercased() ?? "LTC OUT OFF"
     }
 }
 

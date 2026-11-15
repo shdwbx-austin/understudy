@@ -426,7 +426,7 @@ private struct Footer: View {
             ColumnGrid {
                 Group {
                     if model.showCodeFromTimeline {
-                        Text("Song timeline · LTC out \(model.settings.ltcOutputChannel.map { "ch \($0 + 1)" } ?? "off")")
+                        Text("Song timeline · " + (model.danteStatus.isRouted ? "Dante out 1–3" : model.timecodeOutLabel ?? "LTC out off"))
                             .foregroundStyle(Theme.grey)
                             .lineLimit(1)
                     } else if let error = model.audioError {

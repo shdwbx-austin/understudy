@@ -51,10 +51,17 @@ final class TimelinePlayer {
 
     // MARK: Routing
 
+    /// Core Audio IDs the routes resolved to last time: a device that restarts (Dante Virtual
+    /// Soundcard after a channel change, an interface replugged) comes back with a new ID and
+    /// needs re-pointing even though its UID is the same.
+    private var routedDevices: [AudioDeviceID?] = []
+
     func configure(music route: AudioRoute, ltc ltcRoute: AudioRoute?) {
-        guard !configured || route != musicRoute || ltcRoute != self.ltcRoute else { return }
+        let devices = [route.deviceUID, ltcRoute?.deviceUID].map { $0.flatMap(AudioDeviceCatalog.deviceID(forUID:)) }
+        guard !configured || route != musicRoute || ltcRoute != self.ltcRoute || devices != routedDevices else { return }
         musicRoute = route
         self.ltcRoute = ltcRoute
+        routedDevices = devices
         configured = true
         problem = nil
         stopMusic()

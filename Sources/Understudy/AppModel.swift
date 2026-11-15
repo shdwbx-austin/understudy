@@ -43,6 +43,10 @@ final class AppModel: ObservableObject {
         }
     }
     @Published private(set) var mode: Mode = .stop
+    /// Dante out through Dante Virtual Soundcard: off, sending, or what's stopping it.
+    @Published private(set) var danteStatus: DanteOut.Status = .off
+    private var danteSoundcard: DanteOut.Device?
+    private var lastDanteCheck = 0.0
     @Published private(set) var ltcText = "--:--:--:--"
     @Published private(set) var ltcRolling = false
     @Published private(set) var ltcFreewheeling = false
@@ -555,6 +559,8 @@ final class AppModel: ObservableObject {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return }
         // Reopen if what's open isn't what's wanted (the interface came back) or nothing is open.
         if openInput?.uid != wantedInput().uid || !audio.isRunning { openAudio() }
+        // Dante Virtual Soundcard started, stopped or restarted; any output device came or went.
+        applyTimelineOutputs()
     }
 
     private func watchAudio(now: Double) {
@@ -629,7 +635,8 @@ final class AppModel: ObservableObject {
         }
         if settings.timelineOutputUID != old.timelineOutputUID || settings.timelineOutputChannel != old.timelineOutputChannel
             || settings.ltcOutputUID != old.ltcOutputUID || settings.ltcOutputChannel != old.ltcOutputChannel
-            || settings.ltcOutUseTrackTimecode != old.ltcOutUseTrackTimecode {
+            || settings.ltcOutUseTrackTimecode != old.ltcOutUseTrackTimecode
+            || settings.danteOut != old.danteOut || settings.danteInterface != old.danteInterface {
             applyTimelineOutputs()
         }
         if settings.chase != old.chase || settings.deckTimecodeAtVideoRate != old.deckTimecodeAtVideoRate {
@@ -652,6 +659,10 @@ final class AppModel: ObservableObject {
         if pollDue {
             watchAudio(now: now)
             confidence.checkStale(now: now)
+        }
+        if settings.danteOut, now - lastDanteCheck >= 2 {
+            lastDanteCheck = now
+            updateDanteStatus()
         }
         if now - lastSlotRefresh >= 15 {
             lastSlotRefresh = now
@@ -696,11 +707,40 @@ final class AppModel: ObservableObject {
 
     func applyTimelineOutputs() {
         timeline.useTrackTimecode = settings.ltcOutUseTrackTimecode
+        danteSoundcard = settings.danteOut ? DanteOut.soundcard(in: AudioDeviceCatalog.outputDevices().map {
+            DanteOut.Device(uid: $0.uid, name: $0.name, channels: $0.channels, model: $0.model)
+        }) : nil
+        updateDanteStatus()
+        if danteStatus.isRouted, let card = danteSoundcard {
+            // Left and right on DVS 1–2, timecode on 3, on the one device so they stay locked.
+            timeline.player.configure(
+                music: AudioRoute(deviceUID: card.uid, channel: DanteOut.musicChannel),
+                ltc: AudioRoute(deviceUID: card.uid, channel: DanteOut.timecodeChannel)
+            )
+            return
+        }
         let ltcRoute = settings.ltcOutputChannel.map { AudioRoute(deviceUID: settings.ltcOutputUID, channel: $0) }
         timeline.player.configure(
             music: AudioRoute(deviceUID: settings.timelineOutputUID, channel: settings.timelineOutputChannel),
             ltc: ltcRoute
         )
+    }
+
+    /// Re-reads whether the preferred Dante port has a link (the soundcard is re-read on device changes).
+    private func updateDanteStatus() {
+        let port = settings.danteInterface
+        let status = DanteOut.status(
+            enabled: settings.danteOut, soundcard: danteSoundcard,
+            port: port.map { bsd in DeckDiscovery.networkPorts().first { $0.bsd == bsd }?.label ?? bsd },
+            portLinked: port.map(DeckDiscovery.hasLink) ?? true
+        )
+        if status != danteStatus { danteStatus = status }
+    }
+
+    /// Where the timeline's timecode is going, for status lines: "Dante 3", "LTC out ch 4" or nil (off).
+    var timecodeOutLabel: String? {
+        if danteStatus.isRouted { return "Dante ch \(DanteOut.timecodeChannel + 1)" }
+        return settings.ltcOutputChannel.map { "LTC out ch \($0 + 1)" }
     }
 
     private func updateReadout(now: Double, rolling: Bool) {

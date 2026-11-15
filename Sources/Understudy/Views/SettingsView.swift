@@ -176,9 +176,26 @@ private struct ShowMachineAgent: View {
 private struct TimelineOutputSettings: View {
     @EnvironmentObject private var model: AppModel
     @State private var devices: [AudioInputDevice] = []
+    @State private var ports: [DeckDiscovery.NetworkPort] = []
 
     var body: some View {
-        Section("Timeline output") {
+        Section("Dante out") {
+            Toggle("Send to Dante (Dante Virtual Soundcard)", isOn: $model.settings.danteOut)
+                .help("Song audio left and right on DVS channels 1–2 and timecode on 3, sample-locked on one device")
+            if model.settings.danteOut {
+                Picker("Network port", selection: $model.settings.danteInterface) {
+                    Text("Any (as set in DVS)").tag(String?.none)
+                    ForEach(ports) { Text($0.label).tag(Optional($0.bsd)) }
+                }
+                .help("The port your Dante network is on. Understudy warns when it loses its link; choose the same port in DVS's settings.")
+                Text(model.danteStatus.message).font(.caption)
+                    .foregroundStyle(model.danteStatus.isProblem ? Theme.amber : Theme.lock)
+                Text("Dante Virtual Soundcard (from Audinate, licensed per Mac) sends the channels onto the network; DVS picks the network port itself. Set its channel count to 4 or more, start it, then subscribe receivers to this Mac's channels 1–3 in Dante Controller.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { ports = DeckDiscovery.networkPorts() }
+        Section(model.danteStatus.isRouted ? "Timeline output (when Dante out is off)" : "Timeline output") {
             Picker("Song audio", selection: $model.settings.timelineOutputUID) {
                 Text("System default").tag(String?.none)
                 ForEach(devices) { Text("\($0.name) (\($0.channels) ch)").tag(Optional($0.uid)) }
@@ -192,9 +209,11 @@ private struct TimelineOutputSettings: View {
                 Text("Off").tag(Int?.none)
                 ForEach(0..<max(1, channels(model.settings.ltcOutputUID)), id: \.self) { Text("Channel \($0 + 1)").tag(Optional($0)) }
             }
-            if model.settings.ltcOutputChannel != nil {
+            if model.settings.ltcOutputChannel != nil || model.settings.danteOut {
                 Toggle("Use the track's own timecode", isOn: $model.settings.ltcOutUseTrackTimecode)
                     .help("When a song's audio has timecode on a channel, play that to LTC out instead of generated code")
+            }
+            if model.settings.ltcOutputChannel != nil {
                 Picker("LTC device", selection: $model.settings.ltcOutputUID) {
                     Text("System default").tag(String?.none)
                     ForEach(devices) { Text("\($0.name) (\($0.channels) ch)").tag(Optional($0.uid)) }

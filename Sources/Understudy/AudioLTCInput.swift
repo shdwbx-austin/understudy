@@ -13,6 +13,8 @@ struct AudioInputDevice: Identifiable, Hashable {
     let uid: String
     let name: String
     let channels: Int
+    /// Core Audio model UID (identifies the driver, e.g. Dante Virtual Soundcard's).
+    var model = ""
 }
 
 enum AudioDeviceCatalog {
@@ -41,7 +43,8 @@ enum AudioDeviceCatalog {
                 id: id,
                 uid: stringProperty(id, kAudioDevicePropertyDeviceUID) ?? "\(id)",
                 name: stringProperty(id, kAudioObjectPropertyName) ?? "Device \(id)",
-                channels: channels
+                channels: channels,
+                model: stringProperty(id, kAudioDevicePropertyModelUID) ?? ""
             )
         }
     }

@@ -89,6 +89,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var ltcOutputChannel: Int?
     /// When a song's audio carries its own timecode, play that to LTC out instead of generated code.
     public var ltcOutUseTrackTimecode = true
+    /// Send song audio (DVS 1–2) and timecode (DVS 3) to Dante through Dante Virtual Soundcard.
+    public var danteOut = false
+    /// Network port (BSD name, e.g. "en8") Dante should be on, watched for a link; nil = any.
+    public var danteInterface: String?
     /// Stop the Mac sleeping while Understudy is open (a dedicated show machine).
     public var keepAwake = true
     /// After a restart or crash, go back to the mode Understudy was in (Record or Play) instead of Stop.
@@ -129,6 +133,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         ltcOutputUID = (try? c.decodeIfPresent(String.self, forKey: .ltcOutputUID)) ?? d.ltcOutputUID
         ltcOutputChannel = (try? c.decodeIfPresent(Int.self, forKey: .ltcOutputChannel)) ?? d.ltcOutputChannel
         ltcOutUseTrackTimecode = (try? c.decodeIfPresent(Bool.self, forKey: .ltcOutUseTrackTimecode)) ?? d.ltcOutUseTrackTimecode
+        danteOut = (try? c.decodeIfPresent(Bool.self, forKey: .danteOut)) ?? d.danteOut
+        danteInterface = (try? c.decodeIfPresent(String.self, forKey: .danteInterface)) ?? d.danteInterface
         keepAwake = (try? c.decodeIfPresent(Bool.self, forKey: .keepAwake)) ?? d.keepAwake
         resumeLastMode = (try? c.decodeIfPresent(Bool.self, forKey: .resumeLastMode)) ?? d.resumeLastMode
         normalizeDecks()
