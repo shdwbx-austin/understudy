@@ -88,7 +88,7 @@ struct SettingsView: View {
 
             Section("Chase") {
                 Stepper(String(format: "Pre-roll %.1f s", model.settings.chase.prerollSeconds),
-                        value: $model.settings.chase.prerollSeconds, in: 0.5...5, step: 0.25)
+                        value: $model.settings.chase.prerollSeconds, in: 1...5, step: 0.25)
                 Stepper(String(format: "Cue settle %.2f s", model.settings.chase.cueSettleSeconds),
                         value: $model.settings.chase.cueSettleSeconds, in: 0.1...2, step: 0.05)
                 Stepper(String(format: "Tolerance ±%.1f frames", model.settings.chase.toleranceFrames),

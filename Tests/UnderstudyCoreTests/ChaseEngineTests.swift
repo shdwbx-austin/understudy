@@ -39,6 +39,39 @@ struct ChaseEngineTests {
         }
     }
 
+    /// Found on a real HyperDeck: pre-roll 0.5 s with a 0.5 s settle never leaves the deck time to
+    /// arm, so every cue was abandoned and re-cued a second later and the deck never played; the
+    /// picture stepped forward once a second instead.
+    @Test func shortPrerollStillPlaysInsteadOfRecueingForever() {
+        var short = ChaseSettings()
+        short.prerollSeconds = 0.5
+        short.cueSettleSeconds = 0.5
+        var state = DeckChaseState()
+        let input = DeckChaseInput(startLatencyFrames: 0, coverage: nil, observedError: nil, deckIsPlaying: false)
+        var cues = 0
+        var played = false
+        for step in 0..<500 {
+            let t = Double(step) * 0.01
+            for action in ChaseEngine.step(&state, ltc: ltc(t), input: input, now: t, settings: short) {
+                if case .cue = action { cues += 1 }
+                if action == .play { played = true }
+            }
+        }
+        #expect(played)
+        #expect(cues == 1)
+    }
+
+    @Test func effectivePrerollCoversSettleAndStartLatency() {
+        var s = ChaseSettings()
+        s.prerollSeconds = 0.5
+        s.cueSettleSeconds = 0.5
+        // 0.5 s settle + 3 frames of start latency + 1 frame + margin, at 30 fps.
+        let floor: Double = 0.5 + 4.0 / 30.0 + 0.25
+        #expect(ChaseEngine.effectivePreroll(s, startLatencyFrames: 3, fps: 30) >= floor - 1e-9)
+        s.prerollSeconds = 2
+        #expect(ChaseEngine.effectivePreroll(s, startLatencyFrames: 3, fps: 30) == 2)
+    }
+
     @Test func stopsWhenCodeStops() {
         var state = DeckChaseState()
         state.phase = .playing(since: 0, segment: nil)

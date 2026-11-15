@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Fixed: with a short pre-roll (0.5 s) and the default 0.5 s cue settle, Play to code never armed the deck. It re-parked the deck about once a second instead, so the picture stepped forward a second at a time. Pre-roll is now always at least the settle time plus the deck's start offset and a margin, and Settings no longer offers less than 1 s.
 - Fixed: Find decks could list this Mac's own network addresses as HyperDecks when something on the Mac answered on port 9993. Discovery now skips every address that belongs to this Mac.
 - **App icon** for the Dock and Finder: a lowercase u in Neue Haas Grotesk with the green the clock turns on lock, drawn by `scripts/make-icon.swift`.
 
