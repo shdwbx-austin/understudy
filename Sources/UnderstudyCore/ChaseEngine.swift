@@ -69,6 +69,9 @@ public enum ChaseAction: Equatable, Sendable {
     case cue(target: Int)
     case play
     case stop
+    /// The deck sat steadily off by a consistent amount: a start delay. Add `by` frames to its
+    /// play offset (the same value Calibrate sets) and re-park once.
+    case learnOffset(by: Double)
 }
 
 public struct DeckChaseState: Equatable, Sendable {
@@ -79,6 +82,10 @@ public struct DeckChaseState: Equatable, Sendable {
     /// Drift re-locks in a row; each doubles the wait before the next cue (a persistent error,
     /// e.g. a wrong deck timecode setting, must not re-cue every few seconds forever).
     public var relocks = 0
+    /// Out-of-tolerance readings in the current run of strikes (most recent last, at most 8).
+    public var recentErrors: [Double] = []
+    /// Start delays learned on this take; after a few, a persistent error is treated as a fault.
+    public var learned = 0
 
     public init() {}
 }
@@ -107,6 +114,11 @@ public enum ChaseEngine {
     /// Pre-roll actually used. Never shorter than the deck's settle time after a goto plus its start
     /// latency and a margin: with less, every cue is abandoned before the deck can arm, and the deck
     /// is re-parked about once a second without ever playing.
+    /// A deck this far off (LTC frames) is re-parked after two readings, not four.
+    public static func farFrames(_ settings: ChaseSettings) -> Double { max(9, settings.toleranceFrames * 6) }
+    /// Most start delays learned per take before a persistent error counts as a fault again.
+    public static let maxLearned = 3
+
     public static func effectivePreroll(_ settings: ChaseSettings, startLatencyFrames: Double, fps: Double) -> Double {
         let needed = settings.cueSettleSeconds + (max(0, startLatencyFrames) + 1) / max(fps, 1) + 0.25
         return max(settings.prerollSeconds, needed)
@@ -196,13 +208,34 @@ public enum ChaseEngine {
             }
             guard let error = input.observedError, now - since >= settings.playGraceSeconds else { return [] }
             s.lastErrorFrames = error
-            s.strikes = abs(error) > settings.toleranceFrames ? s.strikes + 1 : 0
+            let off = abs(error) > settings.toleranceFrames
+            s.strikes = off ? s.strikes + 1 : 0
+            s.recentErrors = off ? Array((s.recentErrors + [error]).suffix(8)) : []
             if s.strikes == 0, now - since > 10 { s.relocks = 0 }   // holding fine: forgive past re-locks
-            if s.strikes >= settings.driftStrikes {
+
+            // Far off (a jump the deck missed, a stale play): re-park now, without growing the back-off.
+            let far = farFrames(settings)
+            if s.strikes >= 2, s.recentErrors.suffix(2).allSatisfy({ abs($0) > far }) {
                 s.phase = .idle
                 s.strikes = 0
-                s.relocks += 1
+                s.recentErrors = []
+                return []
             }
+
+            guard s.strikes >= settings.driftStrikes else { return [] }
+            let sorted = s.recentErrors.sorted()
+            let mid = sorted.count / 2
+            let median = sorted.count % 2 == 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
+            let spread = (sorted.last ?? 0) - (sorted.first ?? 0)
+            s.phase = .idle
+            s.strikes = 0
+            s.recentErrors = []
+            // Steady and consistent: the deck starts late (or early) by this much. Learn it once.
+            if spread <= 3, abs(median) <= far, s.learned < maxLearned {
+                s.learned += 1
+                return [.learnOffset(by: -median)]
+            }
+            s.relocks += 1
             return []
         }
     }

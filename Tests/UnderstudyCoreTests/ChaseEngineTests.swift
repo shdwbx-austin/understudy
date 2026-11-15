@@ -27,6 +27,7 @@ struct ChaseEngineTests {
                     cueAt = t
                 case .play: playAt = t
                 case .stop: Issue.record("unexpected stop")
+                case .learnOffset: Issue.record("unexpected offset change")
                 }
             }
         }
@@ -70,6 +71,59 @@ struct ChaseEngineTests {
         #expect(ChaseEngine.effectivePreroll(s, startLatencyFrames: 3, fps: 30) >= floor - 1e-9)
         s.prerollSeconds = 2
         #expect(ChaseEngine.effectivePreroll(s, startLatencyFrames: 3, fps: 30) == 2)
+    }
+
+    /// Measured on a HyperDeck Studio 4K Pro: it starts about 3–4 frames late, so with a 0 play offset
+    /// every play sat steadily behind code, tripped the drift check and was re-parked: a stutter
+    /// every few seconds. A steady, consistent lag is a start delay: learn it once instead.
+    @Test func steadyLagIsLearnedOnceInsteadOfRelocking() {
+        var state = DeckChaseState()
+        state.phase = .playing(since: 0, segment: nil)
+        var learned: [Double] = []
+        var t = 1.0
+        for k in 0..<12 {
+            let jitter = [0.0, 0.6, -0.5, 0.3][k % 4]
+            let input = DeckChaseInput(startLatencyFrames: 0, coverage: nil, observedError: -3.5 + jitter, deckIsPlaying: true)
+            for action in ChaseEngine.step(&state, ltc: ltc(t), input: input, now: t, settings: settings) {
+                if case .learnOffset(let by) = action { learned.append(by) }
+            }
+            t += 0.1
+            if state.phase == .idle { break }
+        }
+        #expect(learned.count == 1)
+        #expect(abs((learned.first ?? 0) - 3.5) < 0.6)
+        #expect(state.phase == .idle)
+        #expect(state.relocks == 0)
+    }
+
+    @Test func erraticErrorStillRelocksWithBackoff() {
+        var state = DeckChaseState()
+        state.phase = .playing(since: 0, segment: nil)
+        var learned = false
+        for (k, error) in [-2.0, 4.0, -6.0, 5.0].enumerated() {
+            let t = 1 + Double(k) * 0.1
+            let input = DeckChaseInput(startLatencyFrames: 0, coverage: nil, observedError: error, deckIsPlaying: true)
+            for action in ChaseEngine.step(&state, ltc: ltc(t), input: input, now: t, settings: settings) {
+                if case .learnOffset = action { learned = true }
+            }
+        }
+        #expect(!learned)
+        #expect(state.phase == .idle)
+        #expect(state.relocks == 1)
+    }
+
+    /// Seen on the same deck: playing 3 s behind code for 5.6 s, because earlier re-locks had
+    /// grown the back-off. A deck that far off is re-parked after two readings, back-off unchanged.
+    @Test func farOffDeckIsReparkedPromptly() {
+        var state = DeckChaseState()
+        state.phase = .playing(since: 0, segment: nil)
+        state.relocks = 3
+        let input = DeckChaseInput(startLatencyFrames: 0, coverage: nil, observedError: -92, deckIsPlaying: true)
+        _ = ChaseEngine.step(&state, ltc: ltc(1.0), input: input, now: 1.0, settings: settings)
+        #expect(state.phase != .idle)
+        _ = ChaseEngine.step(&state, ltc: ltc(1.1), input: input, now: 1.1, settings: settings)
+        #expect(state.phase == .idle)
+        #expect(state.relocks == 3)
     }
 
     @Test func stopsWhenCodeStops() {

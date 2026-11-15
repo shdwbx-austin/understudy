@@ -699,6 +699,10 @@ final class AppModel: ObservableObject {
                     deck.play()
                 case .stop:
                     deck.stopTransport()
+                case .learnOffset(let by):
+                    // Same setting Calibrate writes, shown in deck Setup; half-frame steps, ±30 frames.
+                    let adjusted = settings.decks[deck.id].playOffsetFrames + by
+                    settings.decks[deck.id].playOffsetFrames = max(-30, min(30, (adjusted * 2).rounded() / 2))
                 }
             }
 
