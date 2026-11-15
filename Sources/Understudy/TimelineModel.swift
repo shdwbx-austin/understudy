@@ -9,8 +9,13 @@ import UnderstudyCore
 /// (in place of incoming LTC) so the decks follow, and can output LTC for everything else.
 @MainActor
 final class TimelineModel: ObservableObject {
-    /// Playlist order.
+    /// The library: tonight's set first, in playing order, then the other songs in timecode order.
     @Published private(set) var songs: [Song] = []
+
+    /// The songs that play, in order.
+    var setSongs: [Song] { songs.filter(\.inSet) }
+    /// Songs imported but not on the set.
+    var librarySongs: [Song] { songs.filter { !$0.inSet } }
     /// Lead-in before each song, giving the decks time to park on its footage.
     @Published var gap: Double = 2 {
         didSet { if gap != oldValue { layoutChanged() } }
@@ -40,23 +45,11 @@ final class TimelineModel: ObservableObject {
         do {
             let text = try String(contentsOf: url, encoding: .utf8)
             let result = try SongListCSV.read(text)
-            var imported = result.songs
-            // An alphabetical list is a song library, not a running order: lay it out in timecode order.
-            let alphabetical = imported.count > 2 && zip(imported, imported.dropFirst()).allSatisfy {
-                $0.name.localizedCaseInsensitiveCompare($1.name) != .orderedDescending
-            }
-            if alphabetical {
-                imported.sort { $0.start.frameIndex(at: rate) < $1.start.frameIndex(at: rate) }
-            }
-            // Keep audio already attached to songs of the same name.
-            let audio = Dictionary(songs.map { ($0.name, ($0.audioPath, $0.audioDuration)) }, uniquingKeysWith: { a, _ in a })
-            songs = imported.map { song in
-                var s = song
-                if let (path, duration) = audio[s.name] { s.audioPath = path; s.audioDuration = duration }
-                return s
-            }
-            message = "Imported \(songs.count) songs from \(url.lastPathComponent)."
-            if alphabetical { message! += " The list was alphabetical, so it's in timecode order." }
+            // Keeps audio and tonight's set (by song name); an alphabetical list goes to the library.
+            songs = SongLibrary.merge(result.songs, into: songs, rate: rate)
+            let inSet = setSongs.count
+            message = "Imported \(songs.count) songs from \(url.lastPathComponent): \(inSet) on the set, \(songs.count - inSet) in the library."
+            if inSet == 0 { message! += " Add tonight's songs to the set with +." }
             if !result.skipped.isEmpty {
                 message! += " Skipped \(result.skipped.count) with no start timecode: \(result.skipped.joined(separator: ", "))."
             }
@@ -100,9 +93,12 @@ final class TimelineModel: ObservableObject {
         layoutChanged()
     }
 
+    /// Reorders the set. Offsets are positions within the set.
     func move(from source: IndexSet, to destination: Int) {
         let current = currentSongID
-        songs.move(fromOffsets: source, toOffset: destination)
+        var set = setSongs
+        set.move(fromOffsets: source, toOffset: destination)
+        songs = set + librarySongs
         layoutChanged()
         // Keep the playhead on the same song after a reorder.
         if let current, let i = layout.items.firstIndex(where: { $0.song.id == current }) {
@@ -110,19 +106,46 @@ final class TimelineModel: ObservableObject {
         }
     }
 
+    /// Deletes a song from the library altogether.
     func remove(_ id: UUID) {
         songs.removeAll { $0.id == id }
         layoutChanged()
     }
 
-    /// Back to show order (by start timecode).
+    /// Adds a library song to the end of the set.
+    func addToSet(_ id: UUID) {
+        guard let i = songs.firstIndex(where: { $0.id == id }), !songs[i].inSet else { return }
+        var song = songs.remove(at: i)
+        song.inSet = true
+        songs = setSongs + [song] + librarySongs
+        layoutChanged()
+    }
+
+    /// Takes a song off the set; it stays in the library.
+    func removeFromSet(_ id: UUID) {
+        guard let i = songs.firstIndex(where: { $0.id == id }), songs[i].inSet else { return }
+        songs[i].inSet = false
+        songs = SongLibrary.arranged(songs, rate: rate)
+        layoutChanged()
+    }
+
+    func clearSet() {
+        for i in songs.indices { songs[i].inSet = false }
+        songs = SongLibrary.arranged(songs, rate: rate)
+        stop()
+        seek(to: 0)
+        layoutChanged()
+    }
+
+    /// Puts the set in show order (by start timecode).
     func sortByShowOrder() {
-        songs.sort { $0.start.seconds(at: rate) < $1.start.seconds(at: rate) }
+        let set = setSongs.sorted { $0.start.frameIndex(at: rate) < $1.start.frameIndex(at: rate) }
+        songs = set + librarySongs
         layoutChanged()
     }
 
     private func layoutChanged() {
-        layout = TimelineLayout(ordered: songs, rate: rate, gap: gap)
+        layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, library: songs)
         player.update(layout: layout)
         player.prune(keeping: songs)
         if isPlaying { restartPlayback() }
@@ -229,9 +252,9 @@ final class TimelineModel: ObservableObject {
     private func load() {
         guard let data = try? Data(contentsOf: Self.fileURL),
               let stored = try? JSONDecoder().decode(Stored.self, from: data) else { return }
-        songs = stored.songs
+        songs = SongLibrary.arranged(stored.songs, rate: rate)
         gap = stored.gap
-        layout = TimelineLayout(ordered: songs, rate: rate, gap: gap)
+        layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, library: songs)
         player.update(layout: layout)
     }
 

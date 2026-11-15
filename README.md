@@ -62,9 +62,10 @@ Timeline mode (**⌘4**) makes Understudy the clock instead of incoming LTC. Ope
 
 1. **Import CSV…:** a song list, one song per row: a name, a start timecode, and optionally an end or a Duration (`m:ss`). With a header row, columns are found by name (e.g. `SONG, Duration, LTC Start Point`). Starts can be `H:MM:SS` or full timecode. Songs with a blank or `n/a` start are skipped and listed after import. A song without an end or duration runs to the next song's start. An alphabetical list is laid out in timecode order.
 2. **Audio:** drop an audio file on each song, or right-click › Choose Audio…. It plays from the song's start timecode.
-3. **Order:** drag songs in the list. The timeline plays them back to back in that order. A lead-in before each song (2 s by default) gives the decks time to park on its footage.
-4. **Play:** space plays and pauses. Drag the playhead to scrub. ← → step one frame, ⇧← → one second, ⌥← → one song. While paused the decks seek to the frame under the playhead; while playing they chase it.
-5. **Outputs:** Settings › Timeline output picks the device and channels for song audio. **LTC out** generates timecode that follows the timeline, so disguise (or anything else) can chase the reordered playlist too.
+3. **Set:** imported songs form the **Library**. Add tonight's songs to the **Set** with **+**. Only the set plays, and **Remove** takes a song off it (it stays in the library). An alphabetical sheet lands in the library; a list in running order becomes the set directly. Re-importing a corrected sheet keeps your set, its order and any audio.
+4. **Order:** drag songs in the set. The timeline plays them back to back in that order. A lead-in before each song (2 s by default) gives the decks time to park on its footage.
+5. **Play:** space plays and pauses. Drag the playhead to scrub. ← → step one frame, ⇧← → one second, ⌥← → one song. While paused the decks seek to the frame under the playhead; while playing they chase it.
+6. **Outputs:** Settings › Timeline output picks the device and channels for song audio. **LTC out** generates timecode that follows the timeline, so disguise (or anything else) can chase the reordered playlist too.
 
 The footage comes from the selected take, so record a full run-through first.
 

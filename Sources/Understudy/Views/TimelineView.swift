@@ -58,7 +58,8 @@ private struct TimelineHeader: View {
     private var subtitle: String {
         if timeline.songs.isEmpty { return "IMPORT A SONG LIST TO START" }
         let mode = model.mode == .timeline ? "DRIVING THE DECKS" : "SWITCH TO TIMELINE MODE (⌘4) TO DRIVE THE DECKS"
-        return "\(timeline.songs.count) SONGS · \(clock(timeline.layout.totalDuration)) · \(mode)"
+        let set = timeline.setSongs.count
+        return "\(set) ON THE SET · \(clock(timeline.layout.totalDuration)) · \(timeline.songs.count - set) IN THE LIBRARY · \(mode)"
     }
 
     private var currentName: String {
@@ -137,6 +138,9 @@ private struct TimelineTrack: View {
         .overlay(alignment: .center) {
             if timeline.songs.isEmpty {
                 TextButton(title: "Import song list…") { timeline.chooseCSV() }
+            } else if timeline.setSongs.isEmpty {
+                Text("ADD SONGS TO THE SET FROM THE LIBRARY BELOW")
+                    .font(Theme.mono(10, bold: true)).tracking(1.2).foregroundStyle(Theme.grey)
             }
         }
     }
@@ -174,8 +178,6 @@ private struct TransportBar: View {
                 Text(String(format: "LEAD-IN %.1f S", timeline.gap)).font(Theme.mono(10)).tracking(1.2)
             }
             .help("Gap before each song, so the decks can park on its footage and be rolling on its first frame")
-            TextButton(title: "Show order") { timeline.sortByShowOrder() }
-                .help("Put the songs back in show timecode order")
             TextButton(title: "Import CSV…") { timeline.chooseCSV() }
         }
     }
@@ -204,19 +206,44 @@ private struct TransportButton: View {
 
 // MARK: - Song list
 
-/// Playlist order. Drag rows to reorder; drop an audio file on a row (or use Audio…) to give it sound.
+/// Tonight's set, in playing order (drag to reorder, − to take off), then the library (+ to add).
+/// Drop an audio file on any row, or right-click › Choose Audio…, to give a song its sound.
 private struct SongList: View {
     @ObservedObject var timeline: TimelineModel
 
     var body: some View {
         List {
-            ForEach(Array(timeline.songs.enumerated()), id: \.element.id) { index, song in
-                SongRow(timeline: timeline, index: index, song: song,
-                        duration: timeline.layout.items.indices.contains(index) ? timeline.layout.items[index].duration : nil,
-                        current: timeline.currentSongID == song.id)
-                    .listRowBackground(timeline.currentSongID == song.id ? Theme.fill : Theme.ink)
+            Section {
+                ForEach(Array(timeline.setSongs.enumerated()), id: \.element.id) { index, song in
+                    SongRow(timeline: timeline, song: song, setIndex: index,
+                            duration: timeline.layout.items.indices.contains(index) ? timeline.layout.items[index].duration : nil,
+                            current: timeline.currentSongID == song.id)
+                        .listRowBackground(timeline.currentSongID == song.id ? Theme.fill : Theme.ink)
+                }
+                .onMove { timeline.move(from: $0, to: $1) }
+                if timeline.setSongs.isEmpty {
+                    Text("Nothing on the set yet. Add songs from the library with +.")
+                        .font(Theme.grotesk(14, .light)).foregroundStyle(Theme.grey)
+                        .listRowBackground(Theme.ink)
+                }
+            } header: {
+                ListHeader(title: "Set", detail: "\(timeline.setSongs.count) songs · drag to reorder") {
+                    if !timeline.setSongs.isEmpty {
+                        TextButton(title: "Show order", color: Theme.grey) { timeline.sortByShowOrder() }
+                        TextButton(title: "Clear set", color: Theme.grey) { timeline.clearSet() }
+                    }
+                }
             }
-            .onMove { timeline.move(from: $0, to: $1) }
+            if !timeline.librarySongs.isEmpty {
+                Section {
+                    ForEach(timeline.librarySongs) { song in
+                        SongRow(timeline: timeline, song: song, setIndex: nil, duration: song.duration, current: false)
+                            .listRowBackground(Theme.ink)
+                    }
+                } header: {
+                    ListHeader(title: "Library", detail: "\(timeline.librarySongs.count) songs · timecode order") { EmptyView() }
+                }
+            }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
@@ -225,27 +252,63 @@ private struct SongList: View {
     }
 }
 
+private struct ListHeader<Trailing: View>: View {
+    let title: String
+    let detail: String
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 14) {
+            Text(title).font(Theme.grotesk(15, .medium)).foregroundStyle(Theme.paper)
+            Text(detail.uppercased()).font(Theme.mono(9)).tracking(1.2).foregroundStyle(Theme.grey)
+            Spacer()
+            trailing
+        }
+        .padding(.top, 14)
+        .padding(.bottom, 4)
+    }
+}
+
 private struct SongRow: View {
     @ObservedObject var timeline: TimelineModel
-    let index: Int
     let song: Song
+    /// Position on the set, or nil for a library song.
+    let setIndex: Int?
     let duration: Double?
     let current: Bool
     @State private var dropTarget = false
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: Theme.gutter) {
-            Text(String(format: "%02d", index + 1))
-                .font(Theme.grotesk(20, current ? .medium : .light))
-                .frame(width: 36, alignment: .leading)
+            if let setIndex {
+                Text(String(format: "%02d", setIndex + 1))
+                    .font(Theme.grotesk(20, current ? .medium : .light))
+                    .frame(width: 36, alignment: .leading)
+            } else {
+                Button { timeline.addToSet(song.id) } label: {
+                    Text("+").font(Theme.grotesk(22, .light)).frame(width: 36, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .help("Add to the end of the set")
+            }
             Text(song.name).font(Theme.grotesk(15, current ? .medium : .regular)).lineLimit(1)
+                .foregroundStyle(setIndex == nil ? Theme.grey : Theme.paper)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Text(song.start.description).font(Theme.mono(11)).foregroundStyle(Theme.grey)
                 .frame(width: 96, alignment: .leading)
             Text(duration.map(clock) ?? "—").font(Theme.mono(11)).foregroundStyle(Theme.grey)
                 .frame(width: 64, alignment: .trailing)
             audio.frame(width: 220, alignment: .leading)
-            TextButton(title: "Play from", color: Theme.grey) { timeline.jump(toSong: index) }
+            HStack(spacing: 16) {
+                if let setIndex {
+                    TextButton(title: "Play from", color: Theme.grey) { timeline.jump(toSong: setIndex) }
+                    TextButton(title: "Remove", color: Theme.grey) { timeline.removeFromSet(song.id) }
+                        .help("Take off the set (stays in the library)")
+                } else {
+                    TextButton(title: "Add to set", color: Theme.grey) { timeline.addToSet(song.id) }
+                }
+            }
+            .frame(width: 170, alignment: .trailing)
         }
         .padding(.vertical, 4)
         .overlay(Rectangle().strokeBorder(dropTarget ? Theme.paper : .clear, lineWidth: 1))
@@ -258,10 +321,15 @@ private struct SongRow: View {
             return true
         }
         .contextMenu {
+            if song.inSet {
+                Button("Take Off the Set") { timeline.removeFromSet(song.id) }
+            } else {
+                Button("Add to the Set") { timeline.addToSet(song.id) }
+            }
             Button("Choose Audio…") { timeline.chooseAudio(for: song.id) }
             if song.audioPath != nil { Button("Remove Audio") { timeline.removeAudio(from: song.id) } }
             Divider()
-            Button("Remove Song", role: .destructive) { timeline.remove(song.id) }
+            Button("Delete from Library", role: .destructive) { timeline.remove(song.id) }
         }
     }
 

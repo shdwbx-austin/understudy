@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import UnderstudyCore
 
@@ -165,5 +166,59 @@ struct LTCGeneratorTests {
         var samples = [Float](repeating: 1, count: 64)
         samples.withUnsafeMutableBufferPointer { generator.render(into: $0.baseAddress!, count: 64, framePosition: nil) }
         #expect(samples.allSatisfy { $0 == 0 })
+    }
+}
+
+struct SongLibraryTests {
+    private func song(_ name: String, _ tc: String, inSet: Bool = true) -> Song {
+        Song(name: name, start: Timecode(tc)!, duration: 200, inSet: inSet)
+    }
+
+    @Test func alphabeticalImportFillsTheLibraryNotTheSet() {
+        let imported = [song("Bearwalk", "01:30:00:00"), song("Cold Love", "01:50:00:00"), song("All's Well", "01:00:00:00")]
+            .sorted { $0.name < $1.name }
+        let merged = SongLibrary.merge(imported, into: [], rate: .fps30)
+        #expect(merged.allSatisfy { !$0.inSet })
+        // Library in timecode order.
+        #expect(merged.map(\.name) == ["All's Well", "Bearwalk", "Cold Love"])
+    }
+
+    @Test func runningOrderImportIsTheSet() {
+        let imported = [song("Cold Love", "01:50:00:00"), song("All's Well", "01:00:00:00"), song("Bearwalk", "01:30:00:00")]
+        let merged = SongLibrary.merge(imported, into: [], rate: .fps30)
+        #expect(merged.allSatisfy { $0.inSet })
+        #expect(merged.map(\.name) == ["Cold Love", "All's Well", "Bearwalk"])
+    }
+
+    @Test func reimportKeepsTheSetItsOrderAndAudio() {
+        var opener = song("Opener", "01:00:00:00")
+        opener.audioPath = "/audio/opener.wav"
+        opener.audioDuration = 210
+        let previous = [song("Closer", "03:00:00:00"), opener, song("Middle", "02:00:00:00", inSet: false)]
+        let imported = [song("Closer", "03:00:00:01"), song("Middle", "02:00:00:00"), song("New", "04:00:00:00"),
+                        song("Opener", "01:00:00:00")]
+        let merged = SongLibrary.merge(imported, into: previous, rate: .fps30)
+        #expect(merged.filter(\.inSet).map(\.name) == ["Closer", "Opener"])
+        #expect(merged.first { $0.name == "Opener" }?.audioPath == "/audio/opener.wav")
+        #expect(merged.first { $0.name == "Closer" }?.start == Timecode("03:00:00:01"))
+        #expect(merged.filter { !$0.inSet }.map(\.name) == ["Middle", "New"])
+    }
+
+    @Test func layoutUsesOnlyTheSetButTheWholeLibraryForLengths() {
+        // A set song with no end or duration runs to the next song in the library, not the set.
+        let a = Song(name: "A", start: Timecode("01:00:00:00")!)
+        let b = Song(name: "B", start: Timecode("01:04:00:00")!, inSet: false)
+        let c = Song(name: "C", start: Timecode("02:00:00:00")!, duration: 100)
+        let songs = SongLibrary.arranged([a, b, c], rate: .fps30)
+        let layout = TimelineLayout(ordered: songs.filter(\.inSet), rate: .fps30, gap: 2, library: songs)
+        #expect(layout.items.map(\.song.name) == ["A", "C"])
+        #expect(layout.items.first?.duration == 240)
+    }
+
+    @Test func oldSavedSongsLoadIntoTheSet() throws {
+        let json = #"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","name":"Old","start":{"hours":1,"minutes":0,"seconds":0,"frames":0}}"#
+        let song = try JSONDecoder().decode(Song.self, from: Data(json.utf8))
+        #expect(song.inSet)
+        #expect(song.name == "Old")
     }
 }

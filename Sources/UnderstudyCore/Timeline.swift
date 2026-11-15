@@ -16,9 +16,12 @@ public struct Song: Codable, Equatable, Identifiable, Sendable {
     public var audioPath: String?
     /// Length of the audio file in seconds, read when it's attached.
     public var audioDuration: Double?
+    /// On tonight's set (plays on the timeline) or only in the library.
+    public var inSet: Bool
 
     public init(id: UUID = UUID(), name: String, start: Timecode, end: Timecode? = nil, duration: Double? = nil,
-                audioPath: String? = nil, audioDuration: Double? = nil) {
+                audioPath: String? = nil, audioDuration: Double? = nil, inSet: Bool = true) {
+        self.inSet = inSet
         self.id = id
         self.name = name
         self.start = start
@@ -26,6 +29,67 @@ public struct Song: Codable, Equatable, Identifiable, Sendable {
         self.duration = duration
         self.audioPath = audioPath
         self.audioDuration = audioDuration
+    }
+}
+
+extension Song {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, start, end, duration, audioPath, audioDuration, inSet
+    }
+
+    /// Timelines saved before the set list existed load with every song in the set.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        start = try c.decode(Timecode.self, forKey: .start)
+        end = try c.decodeIfPresent(Timecode.self, forKey: .end)
+        duration = try c.decodeIfPresent(Double.self, forKey: .duration)
+        audioPath = try c.decodeIfPresent(String.self, forKey: .audioPath)
+        audioDuration = try c.decodeIfPresent(Double.self, forKey: .audioDuration)
+        inSet = try c.decodeIfPresent(Bool.self, forKey: .inSet) ?? true
+    }
+}
+
+/// The library of songs and tonight's set within it.
+///
+/// Stored as one array: the set first, in playing order, then the rest of the library in timecode
+/// order. `arranged` restores that shape after any change.
+public enum SongLibrary {
+    public static func arranged(_ songs: [Song], rate: FrameRate) -> [Song] {
+        songs.filter(\.inSet) + songs.filter { !$0.inSet }.sorted { $0.start.frameIndex(at: rate) < $1.start.frameIndex(at: rate) }
+    }
+
+    /// A list in alphabetical order is a library, not a running order.
+    public static func isAlphabetical(_ songs: [Song]) -> Bool {
+        songs.count > 2 && zip(songs, songs.dropFirst()).allSatisfy {
+            $0.name.localizedCaseInsensitiveCompare($1.name) != .orderedDescending
+        }
+    }
+
+    /// Folds a fresh import into what was there. Songs keep their audio and, if they were on the
+    /// set, their place in it (matched by name). New songs join the set when the file is a running
+    /// order, or the library when it's an alphabetical list.
+    public static func merge(_ imported: [Song], into previous: [Song], rate: FrameRate) -> [Song] {
+        let library = isAlphabetical(imported)
+        let old = Dictionary(previous.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+        let setOrder = Dictionary(previous.filter(\.inSet).enumerated().map { ($1.name, $0) }, uniquingKeysWith: { a, _ in a })
+        let hadSet = !setOrder.isEmpty
+        var songs = imported.map { song -> Song in
+            var s = song
+            if let before = old[s.name] {
+                s.audioPath = before.audioPath
+                s.audioDuration = before.audioDuration
+            }
+            s.inSet = hadSet ? setOrder[s.name] != nil : !library
+            return s
+        }
+        if hadSet {
+            // Kept set songs in their old order; then new running-order songs in file order.
+            let kept = songs.filter { setOrder[$0.name] != nil }.sorted { setOrder[$0.name]! < setOrder[$1.name]! }
+            songs = kept + songs.filter { setOrder[$0.name] == nil }
+        }
+        return arranged(songs, rate: rate)
     }
 }
 
@@ -212,12 +276,13 @@ public struct TimelineLayout: Equatable, Sendable {
     /// Used for a last song with no end and no audio.
     public static let openEndedDuration = 300.0
 
-    /// `ordered` is the playlist order; durations come from each song's end, else the next song in
-    /// show order, else its audio, else five minutes.
-    public init(ordered: [Song], rate: FrameRate, gap: Double = 2) {
+    /// `ordered` is the playlist order; durations come from each song's end or duration, else the
+    /// next song in show order among `library` (all known songs; defaults to `ordered`), else its
+    /// audio, else five minutes.
+    public init(ordered: [Song], rate: FrameRate, gap: Double = 2, library: [Song]? = nil) {
         self.gap = max(0, gap)
         self.rate = rate
-        let byShow = ordered.sorted { $0.start.seconds(at: rate) < $1.start.seconds(at: rate) }
+        let byShow = (library ?? ordered).sorted { $0.start.seconds(at: rate) < $1.start.seconds(at: rate) }
         var t = 0.0
         var items: [Item] = []
         for song in ordered {
