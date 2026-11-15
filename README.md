@@ -67,6 +67,8 @@ Timeline mode (**⌘4**) makes Understudy the clock instead of incoming LTC. Ope
 5. **Play:** space plays and pauses. Drag the playhead to scrub. ← → step one frame, ⇧← → one second, ⌥← → one song. While paused the decks seek to the frame under the playhead; while playing they chase it.
 6. **Outputs:** Settings › Timeline output picks the device and channels for song audio. **LTC out** generates timecode that follows the timeline, so disguise (or anything else) can chase the reordered playlist too.
 
+**Recording from the timeline.** Set **Show code** to **Song timeline** (Settings › Timecode input, or tick **Show code for record** in the timeline window). In Stop and Record, show code then comes from the timeline instead of the LTC input. Press Record, then play the set: takes log against each song's own timecode with no cable. The song audio plays, and LTC out sends the same code to the decks' timecode inputs, disguise or another recorder. Play to code still chases the LTC input.
+
 The footage comes from the selected take, so record a full run-through first.
 
 ## Running on a dedicated Mac

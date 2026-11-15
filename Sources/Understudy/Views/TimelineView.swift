@@ -57,9 +57,18 @@ private struct TimelineHeader: View {
 
     private var subtitle: String {
         if timeline.songs.isEmpty { return "IMPORT A SONG LIST TO START" }
-        let mode = model.mode == .timeline ? "DRIVING THE DECKS" : "SWITCH TO TIMELINE MODE (⌘4) TO DRIVE THE DECKS"
         let set = timeline.setSongs.count
-        return "\(set) ON THE SET · \(clock(timeline.layout.totalDuration)) · \(timeline.songs.count - set) IN THE LIBRARY · \(mode)"
+        return "\(set) ON THE SET · \(clock(timeline.layout.totalDuration)) · \(timeline.songs.count - set) IN THE LIBRARY · \(role)"
+    }
+
+    /// What the timeline's code is feeding right now.
+    private var role: String {
+        switch model.mode {
+        case .timeline: return "DRIVING THE DECKS"
+        case .record where model.showCodeFromTimeline: return "SHOW CODE FOR THE RECORDING"
+        case .stop where model.showCodeFromTimeline: return "SHOW CODE"
+        default: return "⌘4 DRIVES THE DECKS"
+        }
     }
 
     private var currentName: String {
@@ -174,12 +183,39 @@ private struct TransportBar: View {
             Text("\(clock(timeline.playhead)) / \(clock(timeline.layout.totalDuration))")
                 .font(Theme.mono(12)).monospacedDigit().foregroundStyle(Theme.grey)
             Spacer()
+            OutputStatus()
             Stepper(value: $timeline.gap, in: 0...10, step: 0.5) {
                 Text(String(format: "LEAD-IN %.1f S", timeline.gap)).font(Theme.mono(10)).tracking(1.2)
             }
             .help("Gap before each song, so the decks can park on its footage and be rolling on its first frame")
             TextButton(title: "Import CSV…") { timeline.chooseCSV() }
         }
+    }
+}
+
+/// Where the timeline's code goes: LTC out, and/or Understudy's own recorder.
+private struct OutputStatus: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Text(ltcText).font(Theme.mono(10)).tracking(1.2)
+                .foregroundStyle(model.settings.ltcOutputChannel == nil ? Theme.quiet : Theme.paper)
+                .help("Generated LTC follows the timeline. Set the device and channel in Settings › Timeline output.")
+            Toggle(isOn: Binding(
+                get: { model.settings.showCodeSource == .timeline },
+                set: { model.settings.showCodeSource = $0 ? .timeline : .input }
+            )) {
+                Text("SHOW CODE FOR RECORD").font(Theme.mono(10)).tracking(1.2)
+            }
+            .toggleStyle(.checkbox)
+            .help("Stop and Record take show code from this timeline instead of the LTC input, so takes log against it with no cable.")
+        }
+    }
+
+    private var ltcText: String {
+        guard let channel = model.settings.ltcOutputChannel else { return "LTC OUT OFF" }
+        return "LTC OUT CH \(channel + 1)"
     }
 }
 

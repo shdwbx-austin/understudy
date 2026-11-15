@@ -7,6 +7,7 @@
   - **Clock:** the timeline is the master. It plays the song audio, drives the decks through the chase engine, and can output LTC that follows it (Settings › Timeline output).
   - **Set list:** imported songs form a library; tonight's set is the songs you add (+), in your order. Only the set plays. An alphabetical sheet lands in the library; a running-order list becomes the set. Re-importing keeps the set, its order and attached audio.
   - **Reorder:** drag songs in the set to rehearse them in any order. Each song gets a lead-in so the decks are parked and rolling on its first frame.
+  - **Timecode source for recording:** Settings › Timecode input › Show code: Song timeline (or the SHOW CODE FOR RECORD box in the timeline window). Stop and Record then take show code from the timeline, so takes log against it with no cable, while LTC out sends the same code to the decks' timecode inputs, disguise or another recorder.
   - **Scrub and step:** drag the playhead, or use frame steps (← →), one-second steps (⇧← →) and song jumps (⌥← →). While paused, the decks seek to the exact frame.
 
 - **Learns each deck's start delay.** A HyperDeck starts a few frames late after Play, so with a 0 play offset it sat steadily behind code and was re-parked every few seconds: a visible stutter. When a deck holds a steady, consistent offset, Understudy now adds it to that deck's play offset (the value Calibrate sets) and re-parks once. A deck far off code (about 9 frames or more) is re-parked after two readings instead of waiting out the back-off.

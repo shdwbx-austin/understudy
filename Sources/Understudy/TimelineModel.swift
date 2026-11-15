@@ -222,6 +222,13 @@ final class TimelineModel: ObservableObject {
         player.start(layout: layout, from: playhead, at: start)
     }
 
+    /// Show code (LTC frames at the show rate) at host time `t`, while playing; nil when stopped
+    /// or past the set. Same code LTC out is sending.
+    func showFrames(at t: Double) -> Double? {
+        guard isPlaying, let show = layout.showSeconds(at: transport.position(at: t)) else { return nil }
+        return show * rate.exact
+    }
+
     /// Called by the app's loop: what the chase engine sees, and the playhead for the UI.
     func snapshot(at now: Double) -> LTCSnapshot {
         let snap = transport.snapshot(at: now, layout: layout)

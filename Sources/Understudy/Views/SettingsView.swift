@@ -22,6 +22,15 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Timecode input") {
+                Picker("Show code", selection: $model.settings.showCodeSource) {
+                    Text("LTC input").tag(ShowCodeSource.input)
+                    Text("Song timeline").tag(ShowCodeSource.timeline)
+                }
+                .pickerStyle(.segmented)
+                Text(model.settings.showCodeSource == .timeline
+                     ? "Stop and Record take show code from the song timeline (⌘T), so takes log against it with no cable. Play to code still chases the LTC input."
+                     : "Show code arrives on an audio input as LTC (e.g. from CuePoints or a timecode DA).")
+                    .font(.caption).foregroundStyle(.secondary)
                 LTCInputPicker(
                     title: "Show timecode",
                     detail: model.settings.separatePlaybackInput ? "Used in Stop and Record." : "Used in every mode.",

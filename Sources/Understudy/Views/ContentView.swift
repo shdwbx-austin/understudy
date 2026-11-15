@@ -153,7 +153,7 @@ private struct Header: View {
 
     /// LOCKED green, ACQUIRING off-white, FREEWHEEL amber, NO LTC grey (red in Record/Play).
     private var state: String {
-        if model.mode == .timeline { return model.ltcRolling ? "Timeline" : "Timeline paused" }
+        if model.showCodeFromTimeline { return model.ltcRolling ? "Timeline" : "Timeline paused" }
         if !model.ltcRolling { return model.ltcText.hasPrefix("--") ? "Waiting for code" : "No LTC" }
         if model.ltcFreewheeling { return "Freewheel" }
         return model.ltcLocked ? "Locked" : "Acquiring"
@@ -400,12 +400,16 @@ private struct Footer: View {
 
     var body: some View {
         GridRow {
-            Label8(text: model.settings.separatePlaybackInput
+            Label8(text: model.showCodeFromTimeline ? "Show code" : model.settings.separatePlaybackInput
                    ? (model.inputRole == .playback ? "Playback LTC" : "Show LTC") : "LTC in")
         } content: {
             ColumnGrid {
                 Group {
-                    if let error = model.audioError {
+                    if model.showCodeFromTimeline {
+                        Text("Song timeline · LTC out \(model.settings.ltcOutputChannel.map { "ch \($0 + 1)" } ?? "off")")
+                            .foregroundStyle(Theme.grey)
+                            .lineLimit(1)
+                    } else if let error = model.audioError {
                         Text(error).foregroundStyle(Theme.amber).lineLimit(2)
                     } else {
                         let channel = model.activeChannel

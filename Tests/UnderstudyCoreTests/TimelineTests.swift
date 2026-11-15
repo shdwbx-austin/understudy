@@ -222,3 +222,16 @@ struct SongLibraryTests {
         #expect(song.name == "Old")
     }
 }
+
+struct ShowCodeSourceTests {
+    @Test func defaultsToTheLTCInputAndSurvivesASaveRoundTrip() throws {
+        #expect(AppSettings().showCodeSource == .input)
+        var settings = AppSettings()
+        settings.showCodeSource = .timeline
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+        #expect(decoded.showCodeSource == .timeline)
+        // Settings saved before this option existed load with the LTC input.
+        let old = try JSONDecoder().decode(AppSettings.self, from: Data("{}".utf8))
+        #expect(old.showCodeSource == .input)
+    }
+}

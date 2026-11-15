@@ -37,6 +37,12 @@ public struct DeckConfig: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// Show code from the LTC input (e.g. CuePoints, a timecode DA) or from Understudy's own song timeline.
+public enum ShowCodeSource: String, Codable, CaseIterable, Sendable {
+    case input
+    case timeline
+}
+
 public struct AppSettings: Codable, Equatable, Sendable {
     public static let deckCount = 4
 
@@ -74,6 +80,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var confidenceSingleDeck = 0
     public var pictureCheck = PictureCheckSettings()
     /// Timeline song audio: output device (nil = system default) and the first of its two channels (0 = 1–2).
+    /// Where show code comes from in Stop and Record: the LTC input, or the song timeline.
+    public var showCodeSource: ShowCodeSource = .input
     public var timelineOutputUID: String?
     public var timelineOutputChannel = 0
     /// LTC generated from the timeline: output device and channel (0-based); nil channel = off.
@@ -113,6 +121,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         if confidenceQuadrants.count != Self.deckCount { confidenceQuadrants = d.confidenceQuadrants }
         confidenceSingleDeck = (try? c.decodeIfPresent(Int.self, forKey: .confidenceSingleDeck)) ?? d.confidenceSingleDeck
         pictureCheck = (try? c.decodeIfPresent(PictureCheckSettings.self, forKey: .pictureCheck)) ?? d.pictureCheck
+        showCodeSource = (try? c.decodeIfPresent(ShowCodeSource.self, forKey: .showCodeSource)) ?? d.showCodeSource
         timelineOutputUID = (try? c.decodeIfPresent(String.self, forKey: .timelineOutputUID)) ?? d.timelineOutputUID
         timelineOutputChannel = (try? c.decodeIfPresent(Int.self, forKey: .timelineOutputChannel)) ?? d.timelineOutputChannel
         ltcOutputUID = (try? c.decodeIfPresent(String.self, forKey: .ltcOutputUID)) ?? d.ltcOutputUID

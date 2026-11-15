@@ -24,6 +24,12 @@ final class AppModel: ObservableObject {
     /// Decks are playing footage back: chasing show code, or following the timeline.
     var isPlayingBack: Bool { mode == .playback || mode == .timeline }
 
+    /// Show code comes from the song timeline rather than the LTC input: always in Timeline mode,
+    /// and in Stop and Record when Settings says so. Play to code always chases the LTC input.
+    var showCodeFromTimeline: Bool {
+        mode == .timeline || (mode != .playback && settings.showCodeSource == .timeline)
+    }
+
     @Published var settings: AppSettings {
         didSet {
             guard settings != oldValue else { return }
@@ -611,6 +617,9 @@ final class AppModel: ObservableObject {
         let now = HostClock.now()
         var snapshot = clock.snapshot(at: now)
         if !rateKnown { snapshot = LTCSnapshot(rolling: false, position: nil, jumped: false, fps: snapshot.fps) }
+        // The timeline keeps its playhead (and end-of-set stop) current in every mode.
+        timeline.rate = ltcRate
+        let timelineSnapshot = timeline.snapshot(at: now)
         updateReadout(now: now, rolling: snapshot.rolling)
         let pollDue = now - lastPoll >= 0.1
         if pollDue { lastPoll = now }
@@ -622,17 +631,20 @@ final class AppModel: ObservableObject {
             lastSlotRefresh = now
             activeDecks.forEach { $0.refreshSlots() }
         }
-        if pollDue && rateKnown { logTakes() }
+        if pollDue && (rateKnown || showCodeFromTimeline) { logTakes() }
         if mode == .playback { chase(snapshot, now: now, pollDue: pollDue) }
         if mode == .timeline {
-            timeline.rate = ltcRate
-            let timelineSnapshot = timeline.snapshot(at: now)
             chase(timelineSnapshot, now: now, pollDue: pollDue)
             if !timeline.isPlaying { seekDecksToPlayhead(now: now) }
         }
     }
 
     // MARK: Timeline
+
+    /// Show code (LTC frames) at host time `t` from whichever source is in charge.
+    private func showPosition(at t: Double) -> Double? {
+        showCodeFromTimeline ? timeline.showFrames(at: t) : clock.position(at: t)
+    }
 
     /// Paused timeline: park every deck on the frame under the playhead (scrub, frame step).
     /// Throttled; the latest position always goes out.
@@ -658,7 +670,7 @@ final class AppModel: ObservableObject {
     }
 
     private func updateReadout(now: Double, rolling: Bool) {
-        if mode == .timeline {
+        if showCodeFromTimeline {
             // The timeline is the clock: show its code, not whatever arrives on the LTC input.
             let text = timeline.showTimecode?.display(dropFrame: ltcRate.isDropFrame) ?? "--:--:--:--"
             if text != ltcText { ltcText = text }
@@ -707,7 +719,7 @@ final class AppModel: ObservableObject {
             let dropFrame = deckDropFrame(deck)
             guard let rate = deckTimecodeRate(deck, dropFrame: dropFrame) else { continue }
             deck.poll { [weak self, weak deck] timecode, observedAt in
-                guard let self, let deck, let ltcAt = self.clock.position(at: observedAt) else { return }
+                guard let self, let deck, let ltcAt = self.showPosition(at: observedAt) else { return }
                 deck.logTakeReading(
                     ltcSeconds: ltcAt / ltcFPS,
                     deckSeconds: self.deckSeconds(timecode, rate: rate),
