@@ -20,6 +20,9 @@ final class TimelineModel: ObservableObject {
     @Published var gap: Double = 2 {
         didSet { if gap != oldValue { layoutChanged() } }
     }
+    /// Waveform overviews (0…1 peaks) by audio file path, filled in the background.
+    @Published private(set) var waveforms: [String: [Float]] = [:]
+    private var loadingWaveforms: Set<String> = []
     /// Timeline seconds, refreshed by the app's loop.
     @Published private(set) var playhead: Double = 0
     @Published private(set) var isPlaying = false
@@ -144,7 +147,79 @@ final class TimelineModel: ObservableObject {
         layoutChanged()
     }
 
+    /// Starts reading waveforms for any attached audio that doesn't have one yet.
+    private func loadWaveforms() {
+        for path in Set(songs.compactMap(\.audioPath)) where waveforms[path] == nil && !loadingWaveforms.contains(path) {
+            loadingWaveforms.insert(path)
+            Task.detached(priority: .utility) {
+                let peaks = WaveformLoader.peaks(forFileAt: path)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.loadingWaveforms.remove(path)
+                    if let peaks { self.waveforms[path] = peaks }
+                }
+            }
+        }
+    }
+
+    // MARK: Finding audio
+
+    func chooseAudioFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.message = "A folder with the songs' audio. Files are matched to songs by name, including subfolders."
+        if panel.runModal() == .OK, let url = panel.url { findAudio(in: url) }
+    }
+
+    /// Searches `folder` (and its subfolders) for audio files and attaches them by name to songs
+    /// that don't have audio yet.
+    func findAudio(in folder: URL) {
+        message = "Looking for audio in \(folder.lastPathComponent)…"
+        Task.detached(priority: .userInitiated) {
+            let files = Self.audioFiles(in: folder)
+            await MainActor.run { [weak self] in self?.attachFound(files, folder: folder) }
+        }
+    }
+
+    private func attachFound(_ files: [String], folder: URL) {
+        let needing = songs.filter { $0.audioPath == nil }
+        let matched = AudioMatcher.match(songs: needing.map(\.name), files: files)
+        var attached = 0
+        for song in needing {
+            guard let path = matched[song.name], let i = songs.firstIndex(where: { $0.id == song.id }),
+                  let duration = TimelinePlayer.duration(of: URL(fileURLWithPath: path)), duration > 0 else { continue }
+            songs[i].audioPath = path
+            songs[i].audioDuration = duration
+            attached += 1
+        }
+        let missing = songs.filter { $0.audioPath == nil }
+        let missingOnSet = missing.filter(\.inSet).map(\.name)
+        var text = "Found audio for \(attached) song\(attached == 1 ? "" : "s") in \(folder.lastPathComponent) (\(files.count) audio files)."
+        if !missingOnSet.isEmpty {
+            text += " Still no audio on the set: \(missingOnSet.joined(separator: ", "))."
+        } else if !missing.isEmpty {
+            text += " \(missing.count) library songs still have no audio."
+        }
+        message = text
+        if attached > 0 { layoutChanged() }
+    }
+
+    nonisolated private static func audioFiles(in folder: URL) -> [String] {
+        guard let walker = FileManager.default.enumerator(
+            at: folder, includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return [] }
+        var out: [String] = []
+        for case let url as URL in walker where AudioMatcher.extensions.contains(url.pathExtension.lowercased()) {
+            out.append(url.path)
+            if out.count >= 20_000 { break }
+        }
+        return out
+    }
+
     private func layoutChanged() {
+        loadWaveforms()
         layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, library: songs)
         player.update(layout: layout)
         player.prune(keeping: songs)
@@ -275,10 +350,13 @@ final class TimelineModel: ObservableObject {
         var gap: Double
     }
 
-    private static var fileURL: URL {
+    /// Understudy's folder in Application Support.
+    nonisolated static var storeDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("Understudy", isDirectory: true).appendingPathComponent("timeline.json")
+        return base.appendingPathComponent("Understudy", isDirectory: true)
     }
+
+    private static var fileURL: URL { storeDirectory.appendingPathComponent("timeline.json") }
 
     private func load() {
         guard let data = try? Data(contentsOf: Self.fileURL),
@@ -287,6 +365,7 @@ final class TimelineModel: ObservableObject {
         gap = stored.gap
         layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, library: songs)
         player.update(layout: layout)
+        loadWaveforms()
     }
 
     private func save() {

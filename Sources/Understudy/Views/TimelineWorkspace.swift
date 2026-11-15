@@ -55,6 +55,8 @@ struct PlaylistPanel: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("Playlist").font(Theme.grotesk(18, .medium))
                 Spacer()
+                TextButton(title: "Find audio…") { timeline.chooseAudioFolder() }
+                    .help("Pick a folder: audio files are matched to songs by name")
                 TextButton(title: "Import CSV…") { timeline.chooseCSV() }
             }
             HStack(spacing: 14) {
@@ -200,7 +202,13 @@ struct SongDetailTrack: View {
                     Rectangle().fill(Theme.rule.opacity(0.35))
                         .frame(width: timeline.gap * scale, height: geo.size.height - 22)
                         .offset(y: 22)
-                    // Song body.
+                    // Song body, with its waveform.
+                    if let path = item.song.audioPath, let peaks = timeline.waveforms[path], let audio = item.song.audioDuration {
+                        WaveformView(peaks: peaks, color: Theme.paper.opacity(0.32))
+                            .frame(width: max(1, min(audio, item.duration) * scale), height: (geo.size.height - 22) * 0.62)
+                            .clipped()
+                            .offset(x: timeline.gap * scale, y: 22 + (geo.size.height - 22) * 0.3)
+                    }
                     Rectangle().strokeBorder(Theme.paper, lineWidth: 1)
                         .frame(width: item.duration * scale, height: geo.size.height - 22)
                         .offset(x: timeline.gap * scale, y: 22)
@@ -378,5 +386,32 @@ struct HorizontalScrollReader: NSViewRepresentable {
 
         /// Never takes clicks; the monitor is removed when the view leaves its window.
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+}
+
+// MARK: - Waveform
+
+/// A song's waveform, mirrored about the centre line, one bar per point of width.
+struct WaveformView: View {
+    let peaks: [Float]
+    var color: Color = Theme.paper.opacity(0.35)
+
+    var body: some View {
+        Canvas { context, size in
+            guard !peaks.isEmpty, size.width > 0 else { return }
+            let mid = size.height / 2
+            let columns = max(1, Int(size.width))
+            var path = Path()
+            for x in 0..<columns {
+                let lo = x * peaks.count / columns
+                let hi = max(lo + 1, (x + 1) * peaks.count / columns)
+                var peak: Float = 0
+                for i in lo..<min(hi, peaks.count) { peak = max(peak, peaks[i]) }
+                let h = max(0.5, CGFloat(peak) * mid)
+                path.addRect(CGRect(x: CGFloat(x), y: mid - h, width: 1, height: h * 2))
+            }
+            context.fill(path, with: .color(color))
+        }
+        .allowsHitTesting(false)
     }
 }

@@ -105,6 +105,12 @@ struct TimelineTrack: View {
                     // Song.
                     ZStack(alignment: .topLeading) {
                         Rectangle().fill(current ? Theme.paper.opacity(0.14) : Theme.ink)
+                        if let path = item.song.audioPath, let peaks = timeline.waveforms[path], let audio = item.song.audioDuration {
+                            WaveformView(peaks: peaks, color: Theme.paper.opacity(current ? 0.35 : 0.22))
+                                .frame(width: max(1, min(audio, item.duration) * scale), height: (geo.size.height - 28) * 0.42)
+                                .clipped()
+                                .offset(y: (geo.size.height - 28) * 0.56)
+                        }
                         Rectangle().strokeBorder(current ? Theme.paper : Theme.rule, lineWidth: 1)
                         if w > 46 {
                             VStack(alignment: .leading, spacing: 3) {
@@ -196,7 +202,11 @@ struct TransportBar: View {
                 Text(String(format: "LEAD-IN %.1f S", timeline.gap)).font(Theme.mono(10)).tracking(1.2)
             }
             .help("Gap before each song, so the decks can park on its footage and be rolling on its first frame")
-            if !compact { TextButton(title: "Import CSV…") { timeline.chooseCSV() } }
+            if !compact {
+                TextButton(title: "Find audio…") { timeline.chooseAudioFolder() }
+                    .help("Pick a folder: audio files are matched to songs by name")
+                TextButton(title: "Import CSV…") { timeline.chooseCSV() }
+            }
         }
     }
 }
