@@ -173,7 +173,8 @@ final class TimelinePlayer {
                 }
             }
         }
-        plan.withLock { $0 = LTCPlan(playing: true, anchorPosition: t, anchorTime: host, layout: layout, trackCode: trackCode) }
+        let codeRanges = trackCode
+        plan.withLock { $0 = LTCPlan(playing: true, anchorPosition: t, anchorTime: host, layout: layout, trackCode: codeRanges) }
         startLTC()
         scheduledCode.forEach { $0.play() }
         guard !scheduled.isEmpty else { return }

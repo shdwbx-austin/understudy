@@ -65,6 +65,7 @@ private struct SectionCaption: View {
 /// Drop an audio file on any row to give the song its sound.
 struct PlaylistPanel: View {
     @ObservedObject var timeline: TimelineModel
+    @EnvironmentObject private var model: AppModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -75,6 +76,7 @@ struct PlaylistPanel: View {
                     .help("Pick a folder: audio files are matched to songs by name")
                 TextButton(title: "Import CSV…") { timeline.chooseCSV() }
             }
+            SetlistMenu(timeline: timeline)
             HStack(spacing: 14) {
                 Text("\(timeline.setSongs.count) ON THE SET · \(clock(timeline.layout.totalDuration))")
                     .font(Theme.mono(9)).tracking(1.2).foregroundStyle(Theme.grey)
@@ -117,6 +119,71 @@ struct PlaylistPanel: View {
             .background(Theme.ink)
             .environment(\.defaultMinListRowHeight, 30)
         }
+    }
+}
+
+/// The saved setlists: pick one, start or save one, rename or delete it, and order the set by
+/// where its songs played in a recorded take.
+private struct SetlistMenu: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject var timeline: TimelineModel
+
+    var body: some View {
+        // A macOS menu shows only the first text of a composite label, so the caption and the
+        // auto-order badge sit beside the menu and the menu's label is just the setlist's name.
+        HStack(spacing: 6) {
+            Text("SETLIST").font(Theme.mono(9)).tracking(1.2).foregroundStyle(Theme.grey)
+            menu
+            if timeline.autoOrderFromTakes {
+                Text("AUTO-ORDER").font(Theme.mono(8, bold: true)).tracking(1).foregroundStyle(Theme.lock)
+            }
+        }
+    }
+
+    private var menu: some View {
+        Menu {
+            if !timeline.setlists.isEmpty {
+                ForEach(timeline.setlists) { list in
+                    Button((list.id == timeline.currentSetlistID ? "✓ " : "   ") + list.name + "  (\(list.songs.count))") {
+                        timeline.selectSetlist(list.id)
+                    }
+                }
+                Divider()
+            }
+            Button("New Setlist…") { if let name = ask("New setlist", default: "Set \(timeline.setlists.count + 1)") { timeline.newSetlist(named: name) } }
+            Button("Save Set As…") { if let name = ask("Save the set as", default: "Set \(timeline.setlists.count + 1)") { timeline.saveSetAs(name) } }
+            if let current = timeline.currentSetlist {
+                Button("Rename “\(current.name)”…") { if let name = ask("Rename setlist", default: current.name) { timeline.renameSetlist(current.id, to: name) } }
+                Button("Delete “\(current.name)”") { timeline.deleteSetlist(current.id) }
+            }
+            Divider()
+            Button("Order Set by Latest Take") { model.orderSetByTake(0) }
+                .disabled(model.takes.isEmpty)
+            if model.selectedTake != 0, !model.takes.isEmpty {
+                Button("Order Set by Selected Take") { model.orderSetByTake(model.selectedTake) }
+            }
+            Toggle("Auto-Order After Each Take", isOn: $timeline.autoOrderFromTakes)
+        } label: {
+            Text(timeline.currentSetlist?.name ?? "Unsaved set").font(Theme.grotesk(14, .medium)).lineLimit(1)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Saved setlists, and ordering the set by where songs played in a take")
+    }
+
+    /// A one-line name prompt.
+    private func ask(_ title: String, default value: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = title
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = value
+        alert.accessoryView = field
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let name = field.stringValue.trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? nil : name
     }
 }
 

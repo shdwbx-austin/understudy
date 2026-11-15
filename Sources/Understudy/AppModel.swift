@@ -379,6 +379,26 @@ final class AppModel: ObservableObject {
         if settings.followLatestTake || selectedTake >= takes.count {
             selectedTake = 0
         }
+        // A new recording: put the set in the order it played, if asked (once per take).
+        if timeline.autoOrderFromTakes, let latest = takes.first, latest.clipID != lastAutoOrderedClip,
+           latest.logged == true {
+            lastAutoOrderedClip = latest.clipID
+            orderSetByTake(0)
+        }
+    }
+
+    private var lastAutoOrderedClip: Int?
+
+    /// Puts the timeline's set in the order its songs played in a take (0 = latest), read from the
+    /// take's show-code map on the first deck that has one.
+    @discardableResult
+    func orderSetByTake(_ offset: Int) -> Bool {
+        for deck in activeDecks {
+            guard let clip = deck.clip(takeOffset: offset), let map = deck.maps.map(for: clip), !map.isEmpty else { continue }
+            return timeline.orderSet(by: map, takeName: "take #\(clip.id) (\(clip.name))") > 0
+        }
+        timeline.message = "That take has no show-code map yet (record with continuous recording to make one)."
+        return false
     }
 
     // MARK: Timecode

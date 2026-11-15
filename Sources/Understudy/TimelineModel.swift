@@ -20,6 +20,14 @@ final class TimelineModel: ObservableObject {
     @Published var gap: Double = 2 {
         didSet { if gap != oldValue { layoutChanged() } }
     }
+    /// Saved sets. The current one follows every change to the set.
+    @Published private(set) var setlists: [Setlist] = []
+    @Published private(set) var currentSetlistID: UUID?
+    /// After each recording, put the set in the order the songs played in it.
+    @Published var autoOrderFromTakes = false {
+        didSet { if autoOrderFromTakes != oldValue { save() } }
+    }
+    var currentSetlist: Setlist? { setlists.first { $0.id == currentSetlistID } }
     /// Waveform overviews (0…1 peaks) by audio file path, filled in the background.
     /// What's known about each audio file (timecode, clean copies, waveform), by path.
     @Published private(set) var analyses: [String: AudioAnalysis] = [:]
@@ -288,7 +296,85 @@ final class TimelineModel: ObservableObject {
         return out
     }
 
+    // MARK: Setlists
+
+    /// Starts an empty setlist and makes it current.
+    func newSetlist(named name: String) {
+        let list = Setlist(name: name.isEmpty ? "Set \(setlists.count + 1)" : name)
+        setlists.append(list)
+        currentSetlistID = list.id
+        songs = SongLibrary.applying(list, to: songs, rate: rate)
+        stop()
+        seek(to: 0)
+        layoutChanged()
+    }
+
+    /// Saves the set as it stands under a new name and makes that current.
+    func saveSetAs(_ name: String) {
+        let list = Setlist(name: name.isEmpty ? "Set \(setlists.count + 1)" : name, songs: setSongs.map(\.name))
+        setlists.append(list)
+        currentSetlistID = list.id
+        save()
+    }
+
+    func selectSetlist(_ id: UUID) {
+        guard let list = setlists.first(where: { $0.id == id }) else { return }
+        currentSetlistID = id
+        songs = SongLibrary.applying(list, to: songs, rate: rate)
+        stop()
+        seek(to: 0)
+        layoutChanged()
+    }
+
+    func renameSetlist(_ id: UUID, to name: String) {
+        guard let i = setlists.firstIndex(where: { $0.id == id }), !name.isEmpty else { return }
+        setlists[i].name = name
+        save()
+    }
+
+    /// Deletes a saved setlist. The set on screen stays as it is, unsaved.
+    func deleteSetlist(_ id: UUID) {
+        setlists.removeAll { $0.id == id }
+        if currentSetlistID == id { currentSetlistID = nil }
+        save()
+    }
+
+    // MARK: Running order
+
+    /// Puts the set in the order its songs played in a recorded take, from the take's map: songs
+    /// the take recorded go on the set by where they started in it; the rest go to the library.
+    @discardableResult
+    func orderSet(by map: TakeMap, takeName: String) -> Int {
+        let lengths = TimelineLayout(ordered: songs, rate: rate, gap: 0, library: songs).items
+        let candidates = lengths.map { (id: $0.song.id, start: $0.showStart, length: $0.duration) }
+        let placed = RunningOrder.placed(songs: candidates, in: map)
+        guard !placed.isEmpty else {
+            message = "\(takeName) has no song timecode in it, so the set wasn't reordered."
+            return 0
+        }
+        let order = placed.map(\.id)
+        var set: [Song] = []
+        for id in order {
+            guard let i = songs.firstIndex(where: { $0.id == id }) else { continue }
+            var song = songs[i]
+            song.inSet = true
+            set.append(song)
+        }
+        let rest = songs.filter { !order.contains($0.id) }.map { s -> Song in var song = s; song.inSet = false; return song }
+        songs = set + SongLibrary.arranged(rest, rate: rate)
+        message = "Set ordered by \(takeName): \(set.count) song\(set.count == 1 ? "" : "s") in the order they played."
+        stop()
+        seek(to: 0)
+        layoutChanged()
+        return set.count
+    }
+
     private func layoutChanged() {
+        // The current setlist follows the set.
+        if let i = setlists.firstIndex(where: { $0.id == currentSetlistID }) {
+            let names = setSongs.map(\.name)
+            if setlists[i].songs != names { setlists[i].songs = names }
+        }
         analyzeAudio()
         layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, library: songs)
         player.update(layout: layout)
@@ -423,6 +509,9 @@ final class TimelineModel: ObservableObject {
     private struct Stored: Codable {
         var songs: [Song]
         var gap: Double
+        var setlists: [Setlist]?
+        var currentSetlist: UUID?
+        var autoOrderFromTakes: Bool?
     }
 
     /// Understudy's folder in Application Support.
@@ -438,6 +527,9 @@ final class TimelineModel: ObservableObject {
               let stored = try? JSONDecoder().decode(Stored.self, from: data) else { return }
         songs = SongLibrary.arranged(stored.songs, rate: rate)
         gap = stored.gap
+        setlists = stored.setlists ?? []
+        currentSetlistID = stored.currentSetlist.flatMap { id in setlists.contains { $0.id == id } ? id : nil }
+        autoOrderFromTakes = stored.autoOrderFromTakes ?? false
         layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, library: songs)
         player.update(layout: layout)
         analyzeAudio()
@@ -446,7 +538,9 @@ final class TimelineModel: ObservableObject {
     private func save() {
         let url = Self.fileURL
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if let data = try? JSONEncoder().encode(Stored(songs: songs, gap: gap)) {
+        let stored = Stored(songs: songs, gap: gap, setlists: setlists, currentSetlist: currentSetlistID,
+                            autoOrderFromTakes: autoOrderFromTakes)
+        if let data = try? JSONEncoder().encode(stored) {
             try? data.write(to: url, options: .atomic)
         }
     }

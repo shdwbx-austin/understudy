@@ -243,3 +243,31 @@ struct ShowCodeSourceTests {
         #expect(old.showCodeSource == .input)
     }
 }
+
+struct SetlistTests {
+    private func song(_ name: String, _ tc: String) -> Song {
+        Song(name: name, start: Timecode(tc)!, duration: 200, inSet: false)
+    }
+
+    @Test func applyingASetlistPutsItsSongsOnTheSetInOrder() {
+        let songs = [song("A", "01:00:00:00"), song("B", "02:00:00:00"), song("C", "03:00:00:00")]
+        let result = SongLibrary.applying(Setlist(name: "Night 1", songs: ["C", "Missing", "A"]), to: songs, rate: .fps30)
+        #expect(result.filter { $0.inSet }.map(\.name) == ["C", "A"])
+        #expect(result.filter { !$0.inSet }.map(\.name) == ["B"])
+    }
+
+    /// A take recorded C first (deck 0–200 s), then A (deck 230–430 s), and only 4 s of B.
+    @Test func runningOrderComesFromWhereEachSongLandedInTheTake() {
+        let a = song("A", "01:00:00:00"), b = song("B", "02:00:00:00"), c = song("C", "03:00:00:00")
+        let sec = { (s: Song) in s.start.seconds(at: .fps30) }
+        let map = TakeMap(segments: [
+            .init(ltcStart: sec(c) - 2, ltcEnd: sec(c) + 200, offset: 2 - sec(c)),     // deck 0 → 202
+            .init(ltcStart: sec(a), ltcEnd: sec(a) + 200, offset: 230 - sec(a)),       // deck 230 → 430
+            .init(ltcStart: sec(b), ltcEnd: sec(b) + 4, offset: 440 - sec(b)),         // a false start
+        ])
+        let placed = RunningOrder.placed(songs: [a, b, c].map { ($0.id, sec($0), 200) }, in: map)
+        #expect(placed.map(\.id) == [c.id, a.id])
+        #expect(abs(placed[0].takeTime - 2) < 1e-6)
+        #expect(abs(placed[1].takeTime - 230) < 1e-6)
+    }
+}
