@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Timeline mode (⌘4) and a song timeline (⌘T).**
+  - **Songs:** import a song list (CSV: name, start timecode, optional end), then drop an audio file on each song.
+  - **Clock:** the timeline is the master. It plays the song audio, drives the decks through the chase engine, and can output LTC that follows it (Settings › Timeline output).
+  - **Reorder:** drag songs in the list to rehearse them in any order. Each song gets a lead-in so the decks are parked and rolling on its first frame.
+  - **Scrub and step:** drag the playhead, or use frame steps (← →), one-second steps (⇧← →) and song jumps (⌥← →). While paused, the decks seek to the exact frame.
+
 - **Learns each deck's start delay.** A HyperDeck starts a few frames late after Play, so with a 0 play offset it sat steadily behind code and was re-parked every few seconds: a visible stutter. When a deck holds a steady, consistent offset, Understudy now adds it to that deck's play offset (the value Calibrate sets) and re-parks once. A deck far off code (about 9 frames or more) is re-parked after two readings instead of waiting out the back-off.
 - Fixed: with a short pre-roll (0.5 s) and the default 0.5 s cue settle, Play to code never armed the deck. It re-parked the deck about once a second instead, so the picture stepped forward a second at a time. Pre-roll is now always at least the settle time plus the deck's start offset and a margin, and Settings no longer offers less than 1 s.
 - Fixed: Find decks could list this Mac's own network addresses as HyperDecks when something on the Mac answered on port 9993. Discovery now skips every address that belongs to this Mac.

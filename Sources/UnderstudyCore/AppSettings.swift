@@ -73,6 +73,12 @@ public struct AppSettings: Codable, Equatable, Sendable {
     /// With the single layout, which deck the image is.
     public var confidenceSingleDeck = 0
     public var pictureCheck = PictureCheckSettings()
+    /// Timeline song audio: output device (nil = system default) and the first of its two channels (0 = 1–2).
+    public var timelineOutputUID: String?
+    public var timelineOutputChannel = 0
+    /// LTC generated from the timeline: output device and channel (0-based); nil channel = off.
+    public var ltcOutputUID: String?
+    public var ltcOutputChannel: Int?
     /// Stop the Mac sleeping while Understudy is open (a dedicated show machine).
     public var keepAwake = true
     /// After a restart or crash, go back to the mode Understudy was in (Record or Play) instead of Stop.
@@ -107,6 +113,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         if confidenceQuadrants.count != Self.deckCount { confidenceQuadrants = d.confidenceQuadrants }
         confidenceSingleDeck = (try? c.decodeIfPresent(Int.self, forKey: .confidenceSingleDeck)) ?? d.confidenceSingleDeck
         pictureCheck = (try? c.decodeIfPresent(PictureCheckSettings.self, forKey: .pictureCheck)) ?? d.pictureCheck
+        timelineOutputUID = (try? c.decodeIfPresent(String.self, forKey: .timelineOutputUID)) ?? d.timelineOutputUID
+        timelineOutputChannel = (try? c.decodeIfPresent(Int.self, forKey: .timelineOutputChannel)) ?? d.timelineOutputChannel
+        ltcOutputUID = (try? c.decodeIfPresent(String.self, forKey: .ltcOutputUID)) ?? d.ltcOutputUID
+        ltcOutputChannel = (try? c.decodeIfPresent(Int.self, forKey: .ltcOutputChannel)) ?? d.ltcOutputChannel
         keepAwake = (try? c.decodeIfPresent(Bool.self, forKey: .keepAwake)) ?? d.keepAwake
         resumeLastMode = (try? c.decodeIfPresent(Bool.self, forKey: .resumeLastMode)) ?? d.resumeLastMode
         normalizeDecks()

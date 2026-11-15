@@ -56,6 +56,18 @@ HyperDecks can't chase LTC natively. Understudy reads the show LTC itself and ha
 3. It watches the deck's timecode ten times a second.
 4. It re-parks the deck if the deck drifts out of tolerance, or if code moves into a different recorded stretch.
 
+## Timeline (rehearsing songs out of order)
+
+Timeline mode (**⌘4**) makes Understudy the clock instead of incoming LTC. Open the timeline with **⌘T**.
+
+1. **Import CSV…:** a song list, one song per row, `name, start timecode[, end timecode]`. A header row (Song/Name, Start, End) is optional. A song without an end runs to the next song's start.
+2. **Audio:** drop an audio file on each song, or right-click › Choose Audio…. It plays from the song's start timecode.
+3. **Order:** drag songs in the list. The timeline plays them back to back in that order. A lead-in before each song (2 s by default) gives the decks time to park on its footage.
+4. **Play:** space plays and pauses. Drag the playhead to scrub. ← → step one frame, ⇧← → one second, ⌥← → one song. While paused the decks seek to the frame under the playhead; while playing they chase it.
+5. **Outputs:** Settings › Timeline output picks the device and channels for song audio. **LTC out** generates timecode that follows the timeline, so disguise (or anything else) can chase the reordered playlist too.
+
+The footage comes from the selected take, so record a full run-through first.
+
 ## Running on a dedicated Mac
 
 Understudy is meant to live on a Mac that stays at the rehearsal: a Mac mini on the show network is ideal. HyperDecks can't follow timecode in playback on their own, so a computer has to run it. In **Settings › Show machine**:

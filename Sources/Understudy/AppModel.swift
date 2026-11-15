@@ -18,8 +18,11 @@ struct Take: Identifiable, Hashable {
 @MainActor
 final class AppModel: ObservableObject {
     enum Mode: String, CaseIterable {
-        case stop, record, playback
+        case stop, record, playback, timeline
     }
+
+    /// Decks are playing footage back: chasing show code, or following the timeline.
+    var isPlayingBack: Bool { mode == .playback || mode == .timeline }
 
     @Published var settings: AppSettings {
         didSet {
@@ -49,6 +52,10 @@ final class AppModel: ObservableObject {
 
     let decks: [DeckController]
     let discovery = DeckDiscovery()
+    let timeline = TimelineModel()
+    /// Last paused timeline seek sent to the decks.
+    private var sentSeek = -1
+    private var lastSeekSent = 0.0
     let showMachine = ShowMachine()
     let backup = TakeBackup()
     let confidence = ConfidenceMonitor()
@@ -110,6 +117,7 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(Mode.stop.rawValue, forKey: lastModeKey)
         }
         applyConfidence()
+        applyTimelineOutputs()
         // Back into Record or Play after a restart, if asked. Decks are brought into the mode as
         // they connect (deckReady); a deck that kept recording through the restart is left alone.
         if loaded.resumeLastMode,
@@ -171,6 +179,7 @@ final class AppModel: ObservableObject {
         // Re-sending the current mode would split a recording or re-cue every deck.
         guard newMode != mode || newMode == .stop else { return }
         pendingMode = nil
+        if mode == .timeline, newMode != .timeline { timeline.stop() }
         // Never copy files off the decks while they record.
         if newMode == .record, backup.isRunning { backup.cancel() }
         mode = newMode
@@ -186,7 +195,8 @@ final class AppModel: ObservableObject {
             scheduleTakeRefresh()
         case .record:
             active.forEach { arm($0) }
-        case .playback:
+        case .playback, .timeline:
+            sentSeek = -1
             guard !active.isEmpty else {
                 rebuildTakes()
                 return
@@ -217,8 +227,9 @@ final class AppModel: ObservableObject {
         case .record:
             deck.owesStop = false
             if deck.transport.status != .record { arm(deck) }
-        case .playback:
+        case .playback, .timeline:
             deck.owesStop = false
+            sentSeek = -1
             deck.enterPlayback { [weak self] in self?.rebuildTakes() }
         }
     }
@@ -585,6 +596,10 @@ final class AppModel: ObservableObject {
             || settings.playbackAudioChannel != old.playbackAudioChannel {
             syncInput()
         }
+        if settings.timelineOutputUID != old.timelineOutputUID || settings.timelineOutputChannel != old.timelineOutputChannel
+            || settings.ltcOutputUID != old.ltcOutputUID || settings.ltcOutputChannel != old.ltcOutputChannel {
+            applyTimelineOutputs()
+        }
         if settings.chase != old.chase || settings.deckTimecodeAtVideoRate != old.deckTimecodeAtVideoRate {
             decks.forEach { $0.resetChase() }
         }
@@ -609,9 +624,52 @@ final class AppModel: ObservableObject {
         }
         if pollDue && rateKnown { logTakes() }
         if mode == .playback { chase(snapshot, now: now, pollDue: pollDue) }
+        if mode == .timeline {
+            timeline.rate = ltcRate
+            let timelineSnapshot = timeline.snapshot(at: now)
+            chase(timelineSnapshot, now: now, pollDue: pollDue)
+            if !timeline.isPlaying { seekDecksToPlayhead(now: now) }
+        }
+    }
+
+    // MARK: Timeline
+
+    /// Paused timeline: park every deck on the frame under the playhead (scrub, frame step).
+    /// Throttled; the latest position always goes out.
+    private func seekDecksToPlayhead(now: Double) {
+        guard timeline.seekCount != sentSeek, now - lastSeekSent >= 0.06,
+              let show = timeline.layout.showSeconds(at: timeline.playhead) else { return }
+        sentSeek = timeline.seekCount
+        lastSeekSent = now
+        let ltcFrames = show * ltcRate.exact
+        for deck in activeDecks {
+            guard let target = playbackTarget(deck, ltcFrames: ltcFrames) else { continue }
+            deck.resetChase()
+            deck.cue(clipID: target.clipID, frame: target.frame)
+        }
+    }
+
+    func applyTimelineOutputs() {
+        let ltcRoute = settings.ltcOutputChannel.map { AudioRoute(deviceUID: settings.ltcOutputUID, channel: $0) }
+        timeline.player.configure(
+            music: AudioRoute(deviceUID: settings.timelineOutputUID, channel: settings.timelineOutputChannel),
+            ltc: ltcRoute
+        )
     }
 
     private func updateReadout(now: Double, rolling: Bool) {
+        if mode == .timeline {
+            // The timeline is the clock: show its code, not whatever arrives on the LTC input.
+            let text = timeline.showTimecode?.display(dropFrame: ltcRate.isDropFrame) ?? "--:--:--:--"
+            if text != ltcText { ltcText = text }
+            let playing = timeline.isPlaying
+            if playing != ltcRolling { ltcRolling = playing }
+            if playing != ltcLocked { ltcLocked = playing }
+            if ltcFreewheeling { ltcFreewheeling = false }
+            if ltcInfo != "TIMELINE" { ltcInfo = "TIMELINE" }
+            if ltcWarning != nil { ltcWarning = nil }
+            return
+        }
         let text = clock.timecode(at: now)?.display(dropFrame: ltcRate.isDropFrame) ?? "--:--:--:--"
         if text != ltcText { ltcText = text }
         if rolling != ltcRolling { ltcRolling = rolling }
@@ -660,25 +718,47 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The selected take on a deck, and how show code maps onto it.
+    private struct PlaybackContext {
+        let clip: DeckClip
+        let map: TakeMap
+        let clipStart: Double
+        let video: FrameRate
+        let tcRate: FrameRate
+    }
+
+    private func playbackContext(_ deck: DeckController) -> PlaybackContext? {
+        let logged = deck.clip(takeOffset: selectedTake).flatMap { deck.maps.map(for: $0) }
+        // Read deck timecode the way the deck counted when this take was recorded.
+        let dropFrame = logged?.deckDropFrame ?? deckDropFrame(deck)
+        guard let clip = deck.clip(takeOffset: selectedTake),
+              let video = deck.videoRate(dropFrame: dropFrame),
+              let tcRate = deckTimecodeRate(deck, dropFrame: dropFrame)
+        else { return nil }
+        let (clipStart, clipEnd) = deckSpan(clip, rate: tcRate)
+        // Logged show code if this take has it; otherwise assume the clip was stamped with show code.
+        let map = (logged ?? .identity(deckStart: clipStart, duration: clipEnd - clipStart))
+            .clipped(toDeck: clipStart, clipEnd)
+        return PlaybackContext(clip: clip, map: map, clipStart: clipStart, video: video, tcRate: tcRate)
+    }
+
+    /// Clip and frame on a deck for show code `ltcFrames`, or nil if the take has no footage there.
+    private func playbackTarget(_ deck: DeckController, ltcFrames: Double) -> (clipID: Int, frame: Int)? {
+        guard let context = playbackContext(deck),
+              let deckAt = context.map.deckSeconds(atLTC: ltcFrames / ltcRate.exact) else { return nil }
+        return (context.clip.id, Int(((deckAt - context.clipStart) * context.video.exact).rounded()))
+    }
+
     private func chase(_ snapshot: LTCSnapshot, now: Double, pollDue: Bool) {
         let ltcFPS = ltcRate.exact
 
         for deck in activeDecks {
             let config = settings.decks[deck.id]
-            let logged = deck.clip(takeOffset: selectedTake).flatMap { deck.maps.map(for: $0) }
-            // Read deck timecode the way the deck counted when this take was recorded.
-            let dropFrame = logged?.deckDropFrame ?? deckDropFrame(deck)
-            guard let clip = deck.clip(takeOffset: selectedTake),
-                  let video = deck.videoRate(dropFrame: dropFrame),
-                  let tcRate = deckTimecodeRate(deck, dropFrame: dropFrame)
-            else {
+            guard let context = playbackContext(deck) else {
                 if deck.chase != DeckChaseState() { deck.resetChase() }
                 continue
             }
-            let (clipStart, clipEnd) = deckSpan(clip, rate: tcRate)
-            // Logged show code if this take has it; otherwise assume the clip was stamped with show code.
-            let map = (logged ?? .identity(deckStart: clipStart, duration: clipEnd - clipStart))
-                .clipped(toDeck: clipStart, clipEnd)
+            let (clip, map, clipStart, video, tcRate) = (context.clip, context.map, context.clipStart, context.video, context.tcRate)
             let input = DeckChaseInput(
                 startLatencyFrames: config.playOffsetFrames,
                 coverage: map.segments.map { ($0.ltcStart * ltcFPS)..<($0.ltcEnd * ltcFPS) },

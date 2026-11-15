@@ -16,7 +16,14 @@ struct AudioInputDevice: Identifiable, Hashable {
 }
 
 enum AudioDeviceCatalog {
-    static func inputDevices() -> [AudioInputDevice] {
+    static func inputDevices() -> [AudioInputDevice] { devices(scope: kAudioDevicePropertyScopeInput) }
+    static func outputDevices() -> [AudioInputDevice] { devices(scope: kAudioDevicePropertyScopeOutput) }
+
+    static func deviceID(forUID uid: String) -> AudioDeviceID? {
+        (outputDevices() + inputDevices()).first { $0.uid == uid }?.id
+    }
+
+    private static func devices(scope: AudioObjectPropertyScope) -> [AudioInputDevice] {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -28,7 +35,7 @@ enum AudioDeviceCatalog {
         var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
         guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &ids) == noErr else { return [] }
         return ids.compactMap { id in
-            let channels = inputChannelCount(id)
+            let channels = channelCount(id, scope: scope)
             guard channels > 0 else { return nil }
             return AudioInputDevice(
                 id: id,
@@ -83,10 +90,10 @@ enum AudioDeviceCatalog {
         }
     }
 
-    private static func inputChannelCount(_ id: AudioDeviceID) -> Int {
+    static func channelCount(_ id: AudioDeviceID, scope: AudioObjectPropertyScope) -> Int {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamConfiguration,
-            mScope: kAudioDevicePropertyScopeInput,
+            mScope: scope,
             mElement: kAudioObjectPropertyElementMain
         )
         var size: UInt32 = 0

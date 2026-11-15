@@ -102,7 +102,7 @@ struct DeckCard: View {
                 MetaRow(label: "Reference", value: refText, color: refColor, inverted: inverted)
                 MetaRow(label: "Media left", value: deck.isConnected ? MediaTime.text(deck.mediaSecondsLeft) : "—",
                         color: mediaColor, inverted: inverted)
-                if model.mode == .playback {
+                if model.isPlayingBack {
                     MetaRow(label: "Error Δ", value: errorText, color: errorColor, inverted: inverted)
                 }
             }
@@ -148,12 +148,14 @@ struct DeckCard: View {
             }
         }
         if deck.transport.status == .record { return ("● Rec", Theme.signal) }
-        if model.mode == .playback {
+        if model.isPlayingBack {
             switch deck.chase.phase {
             case .playing: return ("Chasing", Theme.lock)
             case .cueing, .armed: return ("Cueing", Theme.paper)
             case .outOfRange: return ("No media at TC", Theme.amber)
-            case .idle: return (model.ltcRolling ? "Waiting" : "Waiting for LTC", Theme.grey)
+            case .idle:
+                if model.mode == .timeline { return (model.ltcRolling ? "Waiting" : "Parked", Theme.grey) }
+                return (model.ltcRolling ? "Waiting" : "Waiting for LTC", Theme.grey)
             }
         }
         switch deck.transport.status {

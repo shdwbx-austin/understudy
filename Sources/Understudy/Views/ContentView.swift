@@ -21,7 +21,10 @@ struct ContentView: View {
                         let byHeight = (geo.size.height - 860) / 1.12
                         Header(heroSize: min(150, byWidth, max(56, byHeight)))
                         GridRow {
-                            RowLabel(index: 1, title: "Mode")
+                            VStack(alignment: .leading, spacing: 10) {
+                                RowLabel(index: 1, title: "Mode")
+                                ModeDescription()
+                            }
                         } content: {
                             ModeBar()
                         }
@@ -122,7 +125,7 @@ private struct Header: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         if let resumed = model.resumedMode {
-                            Text("RESUMED \(resumed == .record ? "RECORD" : "PLAY TO CODE") AFTER A RESTART")
+                            Text("RESUMED \(resumed == .record ? "RECORD" : resumed == .timeline ? "TIMELINE" : "PLAY TO CODE") AFTER A RESTART")
                                 .font(Theme.mono(10)).tracking(1.2).foregroundStyle(Theme.amber)
                                 .fixedSize(horizontal: false, vertical: true)
                             TextButton(title: "OK", color: Theme.amber) { model.resumedMode = nil }
@@ -145,10 +148,12 @@ private struct Header: View {
     }
 
     /// Code missing while recording or playing is a fault, not a calm state.
-    private var alarm: Bool { model.mode != .stop && !model.ltcRolling }
+    /// Missing code is a fault only when the decks depend on incoming LTC.
+    private var alarm: Bool { (model.mode == .record || model.mode == .playback) && !model.ltcRolling }
 
     /// LOCKED green, ACQUIRING off-white, FREEWHEEL amber, NO LTC grey (red in Record/Play).
     private var state: String {
+        if model.mode == .timeline { return model.ltcRolling ? "Timeline" : "Timeline paused" }
         if !model.ltcRolling { return model.ltcText.hasPrefix("--") ? "Waiting for code" : "No LTC" }
         if model.ltcFreewheeling { return "Freewheel" }
         return model.ltcLocked ? "Locked" : "Acquiring"
@@ -212,19 +217,39 @@ private struct ModeBar: View {
             ModeBlock(title: "Play to code", key: "⌘3", active: model.mode == .playback, fill: Theme.lock) {
                 model.requestMode(.playback)
             }
-            Text(description(continuous))
-                .font(Theme.grotesk(13, .light))
-                .foregroundStyle(Theme.grey)
-                .fixedSize(horizontal: false, vertical: true)
+            ModeBlock(title: "Timeline", key: "⌘4", active: model.mode == .timeline, fill: Theme.paper) {
+                model.requestMode(.timeline)
+            }
         }
         .frame(height: 76)
     }
+}
 
-    private func description(_ continuous: Bool) -> String {
+/// One line on what the current mode does, under the Mode label.
+private struct ModeDescription: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(text)
+                .font(Theme.grotesk(12, .light))
+                .foregroundStyle(Theme.grey)
+                .fixedSize(horizontal: false, vertical: true)
+            if model.mode == .timeline {
+                TextButton(title: "Open timeline") { openWindow(id: "timeline") }
+            }
+        }
+    }
+
+    private var text: String {
         switch model.mode {
         case .stop: return "Decks idle. The live feed passes through to disguise."
-        case .record: return continuous ? "Decks record until Stop. Show code is logged against the take." : "Decks record while show code runs."
+        case .record:
+            return model.settings.recordMode == .continuous
+                ? "Decks record until Stop. Show code is logged against the take." : "Decks record while show code runs."
         case .playback: return "Decks chase show timecode from the selected take."
+        case .timeline: return "The song timeline is the clock: audio plays and the decks follow. ⌘T opens it."
         }
     }
 }
@@ -300,7 +325,7 @@ private struct TakeBar: View {
                 .font(Theme.mono(10))
                 .help("Play the newest take after each recording")
         }
-        .opacity(model.mode == .playback ? 1 : 0.5)
+        .opacity(model.isPlayingBack ? 1 : 0.5)
     }
 
     private var current: Take? { model.takes.first { $0.offset == model.selectedTake } }

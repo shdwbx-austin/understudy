@@ -1,0 +1,344 @@
+import Foundation
+
+// MARK: - Songs
+
+/// One song of the show: where it sits in show timecode, and the audio that plays for it.
+public struct Song: Codable, Equatable, Identifiable, Sendable {
+    public var id: UUID
+    public var name: String
+    /// Show timecode the song starts at (as in the CSV).
+    public var start: Timecode
+    /// Show timecode the song ends at (exclusive). nil = runs to the next song, or its audio's length.
+    public var end: Timecode?
+    /// Audio file played for this song, lined up with `start`.
+    public var audioPath: String?
+    /// Length of the audio file in seconds, read when it's attached.
+    public var audioDuration: Double?
+
+    public init(id: UUID = UUID(), name: String, start: Timecode, end: Timecode? = nil,
+                audioPath: String? = nil, audioDuration: Double? = nil) {
+        self.id = id
+        self.name = name
+        self.start = start
+        self.end = end
+        self.audioPath = audioPath
+        self.audioDuration = audioDuration
+    }
+}
+
+public enum SongListError: Error, Equatable, CustomStringConvertible {
+    case empty
+    case badRow(line: Int, reason: String)
+
+    public var description: String {
+        switch self {
+        case .empty: return "The file has no songs in it."
+        case let .badRow(line, reason): return "Line \(line): \(reason)"
+        }
+    }
+}
+
+/// Reads a song list: one song per row, `name, start timecode[, end timecode]`.
+///
+/// A header row is optional; when present its column names decide the order (Name/Song/Title,
+/// Start/In/Timecode/TC, End/Out). Quoted fields, commas inside quotes, semicolon- or tab-separated
+/// files and `HH:MM:SS` (no frames) all work. Rows are kept in file order.
+public enum SongListCSV {
+    public static func parse(_ text: String) throws -> [Song] {
+        let lines = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+            .split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let separator = detectSeparator(lines.first { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? "")
+        var rows: [(line: Int, fields: [String])] = []
+        for (i, line) in lines.enumerated() where !line.trimmingCharacters(in: .whitespaces).isEmpty {
+            rows.append((i + 1, fields(of: line, separator: separator)))
+        }
+        guard let first = rows.first else { throw SongListError.empty }
+
+        var nameColumn = 0, startColumn = 1
+        var endColumn: Int? = 2
+        var body = rows[...]
+        if !first.fields.contains(where: { timecode($0) != nil }) {
+            // Header row: find the columns by name.
+            let names = first.fields.map { $0.lowercased().trimmingCharacters(in: .whitespaces) }
+            func column(_ keys: [String]) -> Int? { names.firstIndex { n in keys.contains { n == $0 || n.hasPrefix($0 + " ") } } }
+            nameColumn = column(["name", "song", "title", "track"]) ?? 0
+            startColumn = column(["start", "in", "timecode", "tc", "position", "time"]) ?? 1
+            endColumn = column(["end", "out", "stop"])
+            body = rows.dropFirst()
+        }
+
+        var songs: [Song] = []
+        for row in body {
+            let f = row.fields
+            guard f.indices.contains(startColumn), let start = timecode(f[startColumn]) else {
+                let got = f.indices.contains(startColumn) ? "\"\(f[startColumn])\"" : "nothing"
+                throw SongListError.badRow(line: row.line, reason: "start timecode should be HH:MM:SS:FF, got \(got).")
+            }
+            let name = f.indices.contains(nameColumn) ? f[nameColumn].trimmingCharacters(in: .whitespaces) : ""
+            var end: Timecode?
+            if let endColumn, f.indices.contains(endColumn) {
+                let raw = f[endColumn].trimmingCharacters(in: .whitespaces)
+                if !raw.isEmpty {
+                    guard let tc = timecode(raw) else {
+                        throw SongListError.badRow(line: row.line, reason: "end timecode should be HH:MM:SS:FF, got \"\(raw)\".")
+                    }
+                    end = tc
+                }
+            }
+            songs.append(Song(name: name.isEmpty ? "Song \(songs.count + 1)" : name, start: start, end: end))
+        }
+        guard !songs.isEmpty else { throw SongListError.empty }
+        return songs
+    }
+
+    /// `HH:MM:SS:FF` (any of : ; . before frames) or `HH:MM:SS`.
+    static func timecode(_ raw: String) -> Timecode? {
+        let s = raw.trimmingCharacters(in: .whitespaces)
+        if let tc = Timecode(s) { return tc }
+        let parts = s.split(separator: ":")
+        guard parts.count == 3, let h = Int(parts[0]), let m = Int(parts[1]), let sec = Int(parts[2]),
+              h >= 0, h < 100, m >= 0, m < 60, sec >= 0, sec < 60 else { return nil }
+        return Timecode(hours: h, minutes: m, seconds: sec, frames: 0)
+    }
+
+    private static func detectSeparator(_ line: String) -> Character {
+        let candidates: [Character] = [",", ";", "\t"]
+        var best: Character = ","
+        var bestCount = 0
+        for c in candidates {
+            var count = 0, quoted = false
+            for ch in line {
+                if ch == "\"" { quoted.toggle() } else if ch == c, !quoted { count += 1 }
+            }
+            if count > bestCount { best = c; bestCount = count }
+        }
+        return best
+    }
+
+    private static func fields(of line: String, separator: Character) -> [String] {
+        var out: [String] = []
+        var current = ""
+        var quoted = false
+        var chars = Array(line)[...]
+        while let ch = chars.popFirst() {
+            if quoted {
+                if ch == "\"" {
+                    if chars.first == "\"" { current.append("\""); chars = chars.dropFirst() } else { quoted = false }
+                } else {
+                    current.append(ch)
+                }
+            } else if ch == "\"" {
+                quoted = true
+            } else if ch == separator {
+                out.append(current)
+                current = ""
+            } else {
+                current.append(ch)
+            }
+        }
+        out.append(current)
+        return out.map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+}
+
+// MARK: - Layout
+
+/// Songs laid end to end in playlist order, each with a lead-in gap before it, and the mapping
+/// between timeline time and show timecode.
+///
+/// During a gap the timeline keeps counting show code up to the next song's start, so the decks
+/// are cued to that song and rolling by its first frame, whatever came before it.
+public struct TimelineLayout: Equatable, Sendable {
+    public struct Item: Equatable, Sendable {
+        public var song: Song
+        /// Where the song itself (after its lead-in) starts on the timeline, seconds.
+        public var timelineStart: Double
+        public var duration: Double
+        /// Show timecode at the song's start, in seconds at the show rate.
+        public var showStart: Double
+
+        public var timelineEnd: Double { timelineStart + duration }
+    }
+
+    public let items: [Item]
+    public let gap: Double
+    public let rate: FrameRate
+
+    /// Used for a last song with no end and no audio.
+    public static let openEndedDuration = 300.0
+
+    /// `ordered` is the playlist order; durations come from each song's end, else the next song in
+    /// show order, else its audio, else five minutes.
+    public init(ordered: [Song], rate: FrameRate, gap: Double = 2) {
+        self.gap = max(0, gap)
+        self.rate = rate
+        let byShow = ordered.sorted { $0.start.seconds(at: rate) < $1.start.seconds(at: rate) }
+        var t = 0.0
+        var items: [Item] = []
+        for song in ordered {
+            let start = song.start.seconds(at: rate)
+            var duration: Double
+            if let end = song.end, end.seconds(at: rate) > start {
+                duration = end.seconds(at: rate) - start
+            } else if let next = byShow.first(where: { $0.start.seconds(at: rate) > start }) {
+                duration = next.start.seconds(at: rate) - start
+                if let audio = song.audioDuration { duration = min(duration, max(audio, 0.04)) }
+            } else if let audio = song.audioDuration, audio > 0 {
+                duration = audio
+            } else {
+                duration = Self.openEndedDuration
+            }
+            t += self.gap
+            items.append(Item(song: song, timelineStart: t, duration: duration, showStart: start))
+            t += duration
+        }
+        self.items = items
+    }
+
+    public var totalDuration: Double { items.last?.timelineEnd ?? 0 }
+
+    /// The song playing (or about to, during its lead-in) at timeline time `t`.
+    public func index(at t: Double) -> Int? {
+        guard !items.isEmpty, t >= 0, t < totalDuration else { return nil }
+        return items.firstIndex { t < $0.timelineEnd }
+    }
+
+    /// Show timecode at timeline time `t`, seconds. Counts on through the lead-in gaps.
+    public func showSeconds(at t: Double) -> Double? {
+        guard let i = index(at: t) else { return nil }
+        let item = items[i]
+        return item.showStart + (t - item.timelineStart)
+    }
+
+    /// Timeline time of `offset` seconds into song `index`.
+    public func timelineTime(song index: Int, offset: Double = 0) -> Double? {
+        guard items.indices.contains(index) else { return nil }
+        return items[index].timelineStart + offset
+    }
+
+    /// Start of the song after the one at `t`, or nil at the last.
+    public func nextSongStart(after t: Double) -> Double? {
+        items.first { $0.timelineStart > t + 0.001 }?.timelineStart
+    }
+
+    /// Start of the song at `t`, or of the one before if `t` is within its first second.
+    public func previousSongStart(before t: Double) -> Double? {
+        let starts = items.map(\.timelineStart)
+        return starts.last { $0 < t - 1 } ?? starts.first
+    }
+}
+
+// MARK: - Transport
+
+/// The timeline's own clock. Pure: give it host times; it never reads a clock itself.
+///
+/// While the timeline is master it stands in for incoming LTC: `snapshot` hands the chase engine
+/// the same kind of reading the LTC clock does, with `jumped` set on a seek or a reordered song.
+public struct TimelineTransport: Equatable, Sendable {
+    public private(set) var isPlaying = false
+    /// Timeline position at `anchorTime` (host seconds); while playing it advances in real time.
+    public private(set) var anchorPosition = 0.0
+    public private(set) var anchorTime = 0.0
+    private var lastFrames: Double?
+    private var lastTime: Double?
+
+    public init() {}
+
+    public func position(at now: Double) -> Double {
+        isPlaying ? anchorPosition + (now - anchorTime) : anchorPosition
+    }
+
+    public mutating func play(at now: Double) {
+        guard !isPlaying else { return }
+        anchorTime = now
+        isPlaying = true
+    }
+
+    public mutating func pause(at now: Double) {
+        guard isPlaying else { return }
+        anchorPosition = position(at: now)
+        isPlaying = false
+    }
+
+    public mutating func seek(to t: Double, at now: Double) {
+        anchorPosition = max(0, t)
+        anchorTime = now
+    }
+
+    /// What the chase engine sees at `now`. Rolling only while playing inside the playlist.
+    public mutating func snapshot(at now: Double, layout: TimelineLayout) -> LTCSnapshot {
+        let fps = layout.rate.exact
+        let t = position(at: now)
+        guard isPlaying, let show = layout.showSeconds(at: t) else {
+            lastFrames = nil
+            lastTime = nil
+            return LTCSnapshot(rolling: false, position: nil, jumped: false, fps: fps)
+        }
+        let frames = show * fps
+        var jumped = false
+        if let lastFrames, let lastTime {
+            let expected = lastFrames + (now - lastTime) * fps
+            jumped = abs(frames - expected) > 2
+        }
+        lastFrames = frames
+        lastTime = now
+        return LTCSnapshot(rolling: true, position: frames, jumped: jumped, fps: fps)
+    }
+}
+
+// MARK: - LTC output
+
+/// Streams LTC audio sample by sample, following a frame position that can jump at any time.
+/// Not thread-safe: keep one per audio render thread.
+public struct LTCGenerator: Sendable {
+    public let rate: FrameRate
+    public let sampleRate: Double
+    public var amplitude: Float
+
+    private var level: Float = 1
+    private var frameIndex = Int.min
+    private var bits = [UInt8](repeating: 0, count: 80)
+    private var lastBit = -1
+    private var lastHalf = -1
+
+    public init(rate: FrameRate, sampleRate: Double, amplitude: Float = 0.5) {
+        self.rate = rate.ltcRate
+        self.sampleRate = sampleRate
+        self.amplitude = amplitude
+    }
+
+    /// Fills `count` samples. `framePosition` is the LTC frame position (fractional frame index)
+    /// at the first sample; nil writes silence (timeline stopped).
+    public mutating func render(into out: UnsafeMutablePointer<Float>, count: Int, framePosition: Double?) {
+        guard let start = framePosition else {
+            for i in 0..<count { out[i] = 0 }
+            frameIndex = Int.min
+            lastBit = -1
+            lastHalf = -1
+            return
+        }
+        let step = rate.exact / sampleRate
+        for i in 0..<count {
+            let p = start + Double(i) * step
+            let f = Int(p.rounded(.down))
+            if f != frameIndex {
+                frameIndex = f
+                LTCEncoder.write(Timecode(frameIndex: f, rate: rate), rate: rate, into: &bits)
+                lastBit = -1
+                lastHalf = -1
+            }
+            let within = (p - Double(f)) * 80
+            let bit = min(79, Int(within))
+            let half = within - Double(bit) >= 0.5 ? 1 : 0
+            if bit != lastBit {
+                level = -level              // every bit starts with a transition
+                lastBit = bit
+                lastHalf = half
+            } else if half != lastHalf {
+                if bits[bit] == 1 { level = -level }   // a 1 also transitions mid-bit
+                lastHalf = half
+            }
+            out[i] = level * amplitude
+        }
+    }
+}

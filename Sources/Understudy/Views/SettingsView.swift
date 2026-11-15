@@ -55,6 +55,7 @@ struct SettingsView: View {
 
             ConfidenceSettings(monitor: model.confidence)
 
+            TimelineOutputSettings()
             Section("Show machine") {
                 Toggle("Keep this Mac awake while Understudy is open", isOn: $model.settings.keepAwake)
                 ShowMachineAgent(machine: model.showMachine)
@@ -159,6 +160,47 @@ private struct ShowMachineAgent: View {
             }
         }
         .onAppear { machine.refresh() }
+    }
+}
+
+/// Where the timeline's song audio and generated LTC play.
+private struct TimelineOutputSettings: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var devices: [AudioInputDevice] = []
+
+    var body: some View {
+        Section("Timeline output") {
+            Picker("Song audio", selection: $model.settings.timelineOutputUID) {
+                Text("System default").tag(String?.none)
+                ForEach(devices) { Text("\($0.name) (\($0.channels) ch)").tag(Optional($0.uid)) }
+            }
+            Picker("Song audio channels", selection: $model.settings.timelineOutputChannel) {
+                ForEach(Array(stride(from: 0, to: max(2, channels(model.settings.timelineOutputUID)), by: 2)), id: \.self) {
+                    Text("\($0 + 1)–\($0 + 2)").tag($0)
+                }
+            }
+            Picker("LTC out", selection: $model.settings.ltcOutputChannel) {
+                Text("Off").tag(Int?.none)
+                ForEach(0..<max(1, channels(model.settings.ltcOutputUID)), id: \.self) { Text("Channel \($0 + 1)").tag(Optional($0)) }
+            }
+            if model.settings.ltcOutputChannel != nil {
+                Picker("LTC device", selection: $model.settings.ltcOutputUID) {
+                    Text("System default").tag(String?.none)
+                    ForEach(devices) { Text("\($0.name) (\($0.channels) ch)").tag(Optional($0.uid)) }
+                }
+            }
+            Text("In Timeline mode the song timeline is the clock. LTC out follows it at the show rate, so disguise and anything else can chase the reordered playlist.")
+                .font(.caption).foregroundStyle(.secondary)
+            if let problem = model.timeline.player.problem {
+                Text(problem).font(.caption).foregroundStyle(Theme.amber)
+            }
+        }
+        .onAppear { devices = AudioDeviceCatalog.outputDevices() }
+    }
+
+    private func channels(_ uid: String?) -> Int {
+        guard let uid else { return 2 }
+        return devices.first { $0.uid == uid }?.channels ?? 2
     }
 }
 
