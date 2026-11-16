@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Program · View · Decks.** The main window is now three screens, built around the timeline for lighting and screens programmers and producers:
+  - **Program** (⌘1) is the timeline workspace: playlist, set, current song, markers, transport. The decks follow it.
+  - **View** (⌘2) shows the take's pictures, locked to the timeline: ME 1 large with the other decks beside it (click to swap) or side by side, the set and transport underneath, NDI out at the bottom.
+  - **Decks** (⌘3) holds everything about the recorders: Control (show code, Stop · Record · Play to code · Follow Program, the take, each deck, Assign and Setup) and the decks' settings, moved out of Settings: Timecode in, Recording, Playback, Backup.
+  - A strip on every screen says what the decks are doing (Recording, Playing to code, Following Program, Stopped); click it for Decks. Program and View take the decks (leaving Record asks first); anything that stops them following the timeline brings Decks up.
+  - Keys: ⌘1–3 are the screens. The deck modes moved to the Decks menu: Stop ⇧⌘., Record ⇧⌘R, Play to code ⇧⌘P, Follow Program ⇧⌘F. The video window is View › Video in a Window (⌥⌘V).
+  - Settings keeps this Mac's things: General, Audio out, Show control.
 - **Understudy is a sidecar for programming workflows**: the start window, show header, installer and README now say so, in place of "stands in for the cameras between run-throughs".
 - **Markers in Understudy's own style**: square tags with the type's key number, a hairline down the track and labels in small mono capitals beside the tag; type chips are swatches (colour bar, key, name). New default palette: coral, teal, violet, stone, sodium yellow, hot pink and sky, kept clear of the status colours. Crowded labels drop to lanes below instead of covering the next tag. Existing projects keep their colours.
 - **Marker types are easy to find**: **Edit types…** beside the chips, Markers › Edit Marker Types… (⌥⌘M) in the menu bar, and on every chip's right-click menu.

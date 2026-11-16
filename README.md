@@ -15,13 +15,24 @@ Shdwbx · Design and Creative Support
 
 ## What it does
 
-| Mode | Decks | disguise sees |
-| --- | --- | --- |
-| **STOP** `⌘1` | Stopped, disarmed, in preview | Live ME (passes through the deck) |
-| **REC** `⌘2` | Recording from now until STOP | Live ME |
-| **PLAY TC** `⌘3` | Chase show LTC from the selected take | Recorded ME, in sync with code |
+The main window has three screens. A strip at the top of every screen says what the decks are doing; click it to go to Decks.
 
-After a run-through, hit **PLAY TC**. The latest take is selected, and the decks follow code every time you roll it.
+| Screen | What it's for | The decks |
+| --- | --- | --- |
+| **Program** `⌘1` | The timeline: playlist and setlists, the set, the current song, markers, transport | Follow the timeline: parked on the playhead, rolling with it |
+| **View** `⌘2` | The take's pictures, locked to the timeline: ME 1 large (or side by side), NDI out | Follow the timeline |
+| **Decks** `⌘3` | Record, play to code, the take, every deck's health, and the decks' settings: timecode in, recording, playback, backup | Whatever you set here |
+
+Program and View take the decks: going to either puts them into Follow Program, and if they're recording it asks first. On Decks they do what you tell them (Decks menu):
+
+| Decks do | Key | disguise sees |
+| --- | --- | --- |
+| **Stop** | `⇧⌘.` | Live ME (passes through the deck) |
+| **Record** | `⇧⌘R` | Live ME |
+| **Play to code** | `⇧⌘P` | Recorded ME, chasing show LTC from the selected take |
+| **Follow Program** | `⇧⌘F` | Recorded ME, following the timeline |
+
+After a run-through, hit **Play to code** (or go back to Program). The latest take is selected, and the decks follow code every time you roll it.
 
 ### Recording survives timecode failures
 
@@ -33,11 +44,11 @@ By default the decks record continuously from **REC** until **STOP**, stamped wi
 
 Maps live in `~/Library/Application Support/Understudy/takemaps/`. The map in progress is saved every 5 s, so a crash mid-take loses only a few seconds of it.
 
-If you'd rather have the decks record only while code runs and stamp clips with show code (v0.1.0 behaviour), choose **Settings › Recording › Only while show timecode runs**. A dropout then stops the recording. Takes without a map are played back from their clip timecode, so recordings made that way, or with 0.1.0, still work.
+If you'd rather have the decks record only while code runs and stamp clips with show code (v0.1.0 behaviour), choose **Decks › Recording › Only while show timecode runs**. A dropout then stops the recording. Takes without a map are played back from their clip timecode, so recordings made that way, or with 0.1.0, still work.
 
 ### Separate show and playback timecode inputs
 
-To review against a local timecode source without repatching, turn on **Settings › Timecode input › Use a separate input for Play to code** and pick its device and channel. Stop and Record read **Show timecode**; Play to code reads **Playback timecode**. The header and footer say which is in use.
+To review against a local timecode source without repatching, turn on **Decks › Timecode in › Use a separate input for Play to code** and pick its device and channel. Stop and Record read **Show timecode**; Play to code reads **Playback timecode**. The header and footer say which is in use.
 
 - Both inputs can be channels on one interface (the switch is instant) or on two interfaces (the input reopens).
 - The playback source must carry the **same timecode values** as the show (e.g. a local playback of the show's timecode track), because takes are mapped against show code.
@@ -50,18 +61,18 @@ Understudy works out the show timecode rate from the incoming LTC and follows it
 - **Before the rate is known**, recording logs and playback wait. That's only the first couple of seconds of code after launch or after changing the audio input. Decks still record.
 - **If the show switches to a different rate**, the new rate must hold for 2 seconds before Understudy follows it.
 - **Takes stay valid across rates**, because take maps are stored in seconds.
-- **A fixed rate** can be set under **Settings › LTC input › Show timecode rate**. The header then warns if incoming code doesn't match it.
+- **A fixed rate** can be set under **Decks › Timecode in › Show timecode rate**. The header then warns if incoming code doesn't match it.
 
 ### Playback
 
 HyperDecks can't chase LTC natively. Understudy reads the show LTC itself and handles each deck in four steps:
 
-1. When code starts or jumps, it looks the code up in the take's map and sends the deck to the matching frame and plays it in one go, aimed a few frames ahead to cover the deck's goto (about 20 ms) and start delay (its play offset). On a HyperDeck Studio 4K Pro the deck is in sync about 85 ms later; in Timeline mode, where the decks are already parked on the playhead, it rolls with the timeline.
+1. When code starts or jumps, it looks the code up in the take's map and sends the deck to the matching frame and plays it in one go, aimed a few frames ahead to cover the deck's goto (about 20 ms) and start delay (its play offset). On a HyperDeck Studio 4K Pro the deck is in sync about 85 ms later; in Program, where the decks are already parked on the playhead, it rolls with the timeline.
 2. It watches the deck's timecode ten times a second.
 3. It re-parks the deck if it drifts out of tolerance, if code moves into a different recorded stretch, or if the deck stops by itself.
 4. If the deck holds steadily half a frame or more off, it trims the deck's play offset so the next start lands closer.
 
-**Fast pickup** is on by default (Settings › Chase). Turn it off to park decks pre-roll ahead and fire `play` once they've settled: slower to pick up, for decks that locate slowly.
+**Fast pickup** is on by default (Decks › Playback). Turn it off to park decks pre-roll ahead and fire `play` once they've settled: slower to pick up, for decks that locate slowly.
 
 ## Installing and updates
 
@@ -81,11 +92,11 @@ Each show is a project folder, laid out like a disguise project:
   internal/analysis/    waveform and timecode caches
 ```
 
-Understudy opens on a start window with recent projects, **Open…** and **New Project**, and the projects folder (**Change…**). Audio and song lists you bring in are copied into the project; File › **Copy All Audio Into Project** collects anything still outside it. On a show machine, tick **Open the last project at launch**. Audio devices, the LTC input, OSC port, Dante and chase tuning belong to the Mac (Settings), not the project.
+Understudy opens on a start window with recent projects, **Open…** and **New Project**, and the projects folder (**Change…**). Audio and song lists you bring in are copied into the project; File › **Copy All Audio Into Project** collects anything still outside it. On a show machine, tick **Open the last project at launch**. Audio devices, the LTC input, OSC port, Dante and chase tuning belong to the Mac (Settings and the Decks screen), not the project.
 
 ## Timeline (rehearsing songs out of order)
 
-Timeline mode (**⌘4**) makes Understudy the clock instead of incoming LTC. Open the timeline with **⌘T**.
+**Program** (**⌘1**) makes Understudy the clock instead of incoming LTC, and the decks follow it. Open the timeline in its own window with **⌘T**.
 
 1. **Import CSV…:** a song list, one song per row: a name, a start timecode, and optionally an end or a Duration (`m:ss`). With a header row, columns are found by name (e.g. `SONG, Duration, LTC Start Point`). Starts can be `H:MM:SS` or full timecode. Songs with a blank or `n/a` start are skipped and listed after import. A song without an end or duration runs to the next song's start. An alphabetical list is laid out in timecode order.
 2. **Audio:** **Find audio…** and pick the folder with the show's audio. Files are matched to songs by name, including subfolders, ignoring track numbers, BPM and the like, and the result lists any set songs still without audio. Or drop a file on a song, or right-click › Choose Audio…. Audio plays from the song's start timecode, and its waveform appears on the timeline.
@@ -93,26 +104,26 @@ Timeline mode (**⌘4**) makes Understudy the clock instead of incoming LTC. Ope
 4. **Order:** drag songs in the set. The timeline plays them back to back in that order. A lead-in before each song (2 s by default) gives the decks time to park on its footage.
    - **Setlists:** the Setlist menu saves the set under a name and switches between saved sets. **Order Set by Latest Take** (in the same menu) puts the set in the order the songs played in that take, and **Auto-Order After Each Take** does it every time a take ends.
 5. **Play:** space plays and pauses. Click, drag or swipe to move the playhead; while playing it keeps playing from there (audio stays quiet until you stop moving). ← → step one frame, ⇧← → one second, ⌥← → one song. While paused the decks seek to the frame under the playhead; while playing they chase it.
-6. **Outputs:** Settings › Timeline output picks the device and channels for song audio. **LTC out** generates timecode that follows the timeline, so disguise (or anything else) can chase the reordered playlist too.
-   - **Timecode in the audio:** audio files are scanned for LTC. A timecode channel is muted on the music output, left off the waveform, lines the audio up, and plays to LTC out in place of the generator. Turn either off per song (right-click › Play Timecode Channel) or for all songs (Settings › Timeline output › Use the track's own timecode).
+6. **Outputs:** Settings › Audio out picks the device and channels for song audio. **LTC out** generates timecode that follows the timeline, so disguise (or anything else) can chase the reordered playlist too.
+   - **Timecode in the audio:** audio files are scanned for LTC. A timecode channel is muted on the music output, left off the waveform, lines the audio up, and plays to LTC out in place of the generator. Turn either off per song (right-click › Play Timecode Channel) or for all songs (Settings › Audio out › Use the track's own timecode).
 
-**Recording names.** Settings › Recording › File name sets how decks name their recordings. The default is `{deck}_{artist}_{date}_{time}` (e.g. `ME_1_RKS_2026-11-15_2015_0001.mov`). Tokens: `{deck}`, `{n}` (deck number), `{artist}`, `{show}` (setlist), `{date}`, `{day}` (Sun), `{time}` (2015), `{seconds}` (201530). The time is when Record is pressed.
+**Recording names.** Decks › Recording › File name sets how decks name their recordings. The default is `{deck}_{artist}_{date}_{time}` (e.g. `ME_1_RKS_2026-11-15_2015_0001.mov`). Tokens: `{deck}`, `{n}` (deck number), `{artist}`, `{show}` (setlist), `{date}`, `{day}` (Sun), `{time}` (2015), `{seconds}` (201530). The time is when Record is pressed.
 
 **Markers.** Press 1–9 to drop a marker at the playhead (by default Choreo, Audio, Video, Notes, Lighting, Pyro, Automation; M repeats the last type). Make your own types with **Edit types…** beside the marker buttons (or Markers › Edit Marker Types…, ⌥⌘M): name, colour and order, saved with the project. Each marker shows as a square tag in its type's colour with its key number, and its label beside it. Drag a marker to move it, click it to go there, right-click to rename or change its type. **Send / Export** sends them to a grandMA3 (a sequence with a cue per marker plus a timecode show that fires them from LTC) or onto a disguise track (notes, sections or CUE tags, placed through the track's TC tags), or exports a CSV or a grandMA3 plugin. Set the addresses in **Settings › Show control**. On the MA3, add an OSC line (Menu › In & Out › OSC) with this Mac as destination, Mode UDP, the port and prefix from Settings, and Enable Input, Receive and Receive Command on.
 
 **OSC control.** Understudy listens for OSC on UDP 9000 (Settings › Show control): `/understudy/play`, `/pause`, `/toggle`, `/stop`, `/song/next`, `/song/prev`, `/song <n>`, `/marker` (last type), `/marker/<1–7 or type> ["label"]`, `/marker/next`, `/marker/prev`. Point a Stream Deck (through Companion's OSC module) or an MA3 macro (`SendOSC`) at it.
 
-**Dante out.** To send the timeline onto a Dante network, install and start Audinate's Dante Virtual Soundcard (licensed per Mac) with 4 or more channels, then turn on **Settings › Dante out**. Song audio goes out on DVS channels 1–2 (left, right) and timecode on 3; subscribe receivers to them in Dante Controller. DVS chooses the network port itself; set **Network port** to the same one and Understudy warns if it loses its link. While DVS isn't running, song audio and LTC use the Timeline output settings.
+**Dante out.** To send the timeline onto a Dante network, install and start Audinate's Dante Virtual Soundcard (licensed per Mac) with 4 or more channels, then turn on **Settings › Dante out**. Song audio goes out on DVS channels 1–2 (left, right) and timecode on 3; subscribe receivers to them in Dante Controller. DVS chooses the network port itself; set **Network port** to the same one and Understudy warns if it loses its link. While DVS isn't running, song audio and LTC use the Audio out settings.
 
 **AES67 out (test).** Settings › AES67 out sends the timeline as a 3-channel AES67 stream (left, right, timecode) from the network port you pick, announced so Dante Controller lists it. Turn on AES67 mode on the receiving Dante device (Dante Controller › Device View › AES67 Config); it provides the PTP clock the stream locks to. Without a PTP master on the network the stream free-runs and Dante won't play it.
 
-**Recording from the timeline.** Set **Show code** to **Song timeline** (Settings › Timecode input, or tick **Show code for record** in the timeline window). In Stop and Record, show code then comes from the timeline instead of the LTC input. Press Record, then play the set: takes log against each song's own timecode with no cable. The song audio plays, and LTC out sends the same code to the decks' timecode inputs, disguise or another recorder. Play to code still chases the LTC input. For a quick test, **Record** under the timeline (⌥⌘R) does all of this in one step. If LTC out is off, it plays the songs' own timecode on the song-audio device's next channel (channel 3 when the music is on 1–2), with generated code between songs.
+**Recording from the timeline.** Set **Show code** to **Song timeline** (Decks › Timecode in, or tick **Show code for record** in the timeline window). In Stop and Record, show code then comes from the timeline instead of the LTC input. Press Record, then play the set: takes log against each song's own timecode with no cable. The song audio plays, and LTC out sends the same code to the decks' timecode inputs, disguise or another recorder. Play to code still chases the LTC input. For a quick test, **Record** under the timeline (⌥⌘R) does all of this in one step. If LTC out is off, it plays the songs' own timecode on the song-audio device's next channel (channel 3 when the music is on 1–2), with generated code between songs.
 
 The footage comes from the selected take, so record a full run-through first.
 
 ## Video viewer and NDI
 
-**Video ⌥⌘V** plays the selected take's recordings (up to three decks) inside Understudy, locked to the timeline's timecode the same way the decks chase it. Pick one deck or **All**. The files come from your backup folder (back the take up first, ⌘B) and are copied into the project's `objects/VideoFile/<deck>/`. It runs in Timeline mode.
+**View** (**⌘2**) plays the selected take's recordings (up to three decks) inside Understudy, locked to the timeline's timecode the same way the decks chase it: ME 1 large with the others beside it (click one to swap), or **Side by side**. The set and transport are underneath, so you can scrub and play from View too. The files come from your backup folder (back the take up first, ⌘B) and are copied into the project's `objects/VideoFile/<deck>/`. View › Video in a Window (⌥⌘V) puts the same pictures in their own window, for a second screen.
 
 **NDI out** sends each video as its own NDI stream, *Understudy ME 1*, *Understudy ME 2*, *Understudy AUX 1*, at 1080p (or the files' own size). Understudy bundles NDI's library at build time: install the free [NDI SDK for Apple](https://ndi.video/for-developers/ndi-sdk/) (accepting its license) and `scripts/build-app.sh` copies `libndi.dylib` into the app. For CI builds, put a URL to that `libndi.dylib` in the `NDI_LIB_URL` secret. Without it, everything else works and NDI out says the library is missing.
 
@@ -179,7 +190,7 @@ Recording resolution and frame rate always follow the deck's input, and playback
 
 ### Confidence monitor
 
-HyperDecks can't send pictures over the network, so for real pictures feed a **quad-split multiviewer** of the four deck outputs (e.g. Blackmagic MultiView 4, or a switcher/disguise multiview) into a **capture device the Mac sees as a camera**: a USB/UVC HDMI or SDI capture box, an ATEM Mini's webcam out, or a Web Presenter. Turn it on in **Settings › Confidence monitor**, pick the device, and say which quarter is which deck (or use *One deck* for a full-frame feed).
+HyperDecks can't send pictures over the network, so for real pictures feed a **quad-split multiviewer** of the four deck outputs (e.g. Blackmagic MultiView 4, or a switcher/disguise multiview) into a **capture device the Mac sees as a camera**: a USB/UVC HDMI or SDI capture box, an ATEM Mini's webcam out, or a Web Presenter. Turn it on in **Decks › Playback › Confidence monitor**, pick the device, and say which quarter is which deck (or use *One deck* for a full-frame feed).
 
 Each deck column then shows its picture, checked a few times a second at low resolution:
 
@@ -202,14 +213,14 @@ The Extreme uses the same Ethernet protocol as the Studio models, so Understudy 
 
 ## App setup
 
-1. Open **Settings** (`⌘,`) and pick the audio interface. Settings lists that device's input channels, by the device's own channel names, each with a live level meter. Click the one carrying LTC; it's marked **LTC** once code decodes. The show timecode rate is detected automatically (see below); you can fix it instead if you prefer. The main window's footer keeps a meter on the LTC channel.
+1. Open **Decks › Timecode in** (`⌘3`) and pick the audio interface. It lists that device's input channels, by the device's own channel names, each with a live level meter. Click the one carrying LTC; it's marked **LTC** once code decodes. The show timecode rate is detected automatically (see below); you can fix it instead if you prefer. The main window's footer keeps a meter on the LTC channel.
 2. Assign the decks. Pick the network to look on (**Network › On:**, e.g. the Ethernet adapter on the show network rather than Wi-Fi). Understudy looks for HyperDecks there: by Bonjour, and by asking every address on the Mac's subnets on port 9993, keeping only those that answer like a HyperDeck. They're listed under **Network**. Use **Assign** on a row, the **▾** next to a deck's address, or **Fill empty slots**. You can still type an address and press return. The first scan makes macOS ask for local network access; allow it, then **Find decks** again. Decks already connected are never probed, so a deck in use never gets a second client.
 3. Check that each deck reads **Reference: LOCKED**.
 
 ## Operating
 
-- **Record** (⌘2) before the run. Each recording deck reads **● REC**.
-- **Stop** (⌘1) or **Play to code** (⌘3) after the run ends the take; leaving Record always asks first. Pressing the current mode again does nothing.
+- **Record** (⇧⌘R, or Record on Decks) before the run. Each recording deck reads **● REC**, and the strip at the top says **Recording** on every screen.
+- **Stop** (⇧⌘.), **Play to code** (⇧⌘P), **Follow Program** (⇧⌘F) or going to Program or View after the run ends the take; leaving Record always asks first. Pressing the current one again does nothing.
 - **Play to code**: roll code (or let the show roll it), and each deck goes WAITING → CUEING → CHASING.
 - **Deck health at a glance:** each column's bar and number are **green** when connected and **red** when a deck that was connected drops; **Media left** turns amber under 30 minutes and red under 10. The Decks header names lost decks and the lowest media.
 - **Assign decks** (⇧⌘D) sets addresses and names and lists HyperDecks found on the network; changes apply only when you press Apply, and it's locked while recording. **Back up** (⌘B) and each deck's **Setup** (including play offset and Calibrate) are sheets, so the show screen stays calm.
@@ -225,7 +236,7 @@ This build is unit-tested on the timecode, LTC, protocol, take-map and chase log
 1. **Internal timecode.** `configuration: timecode input: internal` and `configuration: timecode preference: dropframe|nondropframe` are accepted. If either isn't, the card shows the error. The deck's clock must count drop-frame exactly when show code does, or the map drifts by about 3.6 s an hour.
 2. **Record timecode counts per recorded frame.** During REC, the deck's display timecode should advance one frame per recorded frame. In PLAY TC, a frame's clip timecode should match what was displayed when it was recorded. This is what the map relies on.
 3. **Combined goto.** `goto: clip id: N clip: F` is accepted by your firmware. If it isn't, the app falls back to two separate commands, and the card will show the error once.
-4. **Deck timecode base.** At 2160p59.94, check whether the deck reports display timecode frames 0–59 or 0–29. The default assumes 0–59. If your deck reports 0–29, turn off *Deck timecode counts at video rate* in Settings.
+4. **Deck timecode base.** At 2160p59.94, check whether the deck reports display timecode frames 0–59 or 0–29. The default assumes 0–59. If your deck reports 0–29, turn off *Deck timecode counts at video rate* in Decks › Playback › Advanced.
 5. **Dropout drill.** Pull the LTC cable mid-REC for 10 s, plug it back, STOP, then PLAY TC through that section. Then try a timecode jump mid-take.
 6. **Play latency.** Check Δ after a few rolls and calibrate.
 7. **Pass-through.** In STOP / REC, confirm the deck's SDI out passes the live input to disguise.

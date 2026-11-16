@@ -40,11 +40,54 @@ final class AppModel: ObservableObject {
             guard settings != oldValue else { return }
             settings.save()
             settingsChanged(from: oldValue)
+            // Recording from the timeline, then show code switched to LTC: the timeline no longer
+            // drives the take, so Decks comes up.
+            if mode == .record, settings.showCodeSource != oldValue.showCodeSource { followMode() }
         }
     }
     @Published private(set) var mode: Mode = .stop {
         // Dev Record sends the track timecode out (see devTimecodeChannel); other modes don't.
-        didSet { if mode != oldValue { applyTimelineOutputs() } }
+        didSet {
+            if mode != oldValue {
+                applyTimelineOutputs()
+                followMode()
+            }
+        }
+    }
+
+    /// The main window's screens. Program (the timeline) and View (its pictures) take the decks:
+    /// they follow the timeline (Timeline mode). Decks is where they stop, record or chase LTC,
+    /// and where they're set up.
+    enum Screen: String, CaseIterable {
+        case program, view, decks
+    }
+
+    @Published private(set) var screen: Screen = Screen(rawValue: UserDefaults.standard.string(forKey: "understudy.screen") ?? "") ?? .program {
+        didSet { UserDefaults.standard.set(screen.rawValue, forKey: "understudy.screen") }
+    }
+    /// Program or View, waiting on "Stop recording?" before it takes the decks.
+    private var pendingScreen: Screen?
+
+    /// Switch screens. Program and View put the decks into Timeline mode (leaving Record asks
+    /// first, and the screen changes only once it's confirmed); Decks leaves them as they are.
+    func show(_ next: Screen) {
+        pendingScreen = nil
+        guard next != .decks, !showsTimelineWorkspace else { screen = next; return }
+        requestMode(.timeline)
+        if showsTimelineWorkspace { screen = next } else if pendingMode != nil { pendingScreen = next }
+    }
+
+    /// Decks that stop following the timeline (Stop, Record from LTC, Play to code, from a menu,
+    /// OSC or a restart) bring the Decks screen up, so what they're doing is in front of you.
+    private func followMode() {
+        if !showsTimelineWorkspace, screen != .decks { screen = .decks }
+    }
+
+    /// The main window opened (a project chosen): Program is the main tool, so the decks follow
+    /// the timeline unless they came back recording or playing after a restart.
+    func mainWindowOpened() {
+        if screen != .decks, mode == .stop, resumedMode == nil { setMode(.timeline) }
+        followMode()
     }
     /// While recording from the timeline (dev Record) with LTC out off: the song-audio device's
     /// channel the songs' own timecode plays on, the one after the music pair (e.g. 3).
@@ -60,8 +103,14 @@ final class AppModel: ObservableObject {
     let projects = ProjectManager()
     /// Recordings played in Understudy, locked to the timeline, and sent out over NDI.
     let viewer = VideoViewer()
-    /// The viewer window is open (it, or NDI, keeps the viewer loading takes).
-    var viewerVisible = false { didSet { if viewerVisible { loadViewerTake() } } }
+    /// The View screen or the video window is showing (either, or NDI, keeps the viewer loading takes).
+    var viewerVisible: Bool { viewerViews > 0 }
+    private var viewerViews = 0
+    func viewerAppeared() {
+        viewerViews += 1
+        if viewerViews == 1 { loadViewerTake() }
+    }
+    func viewerDisappeared() { viewerViews = max(0, viewerViews - 1) }
     /// Backup files by name, so a take's recordings are found without searching the drive each time.
     private var backupIndex: [String: String] = [:]
     /// AES67 out (test), when on.
@@ -213,13 +262,17 @@ final class AppModel: ObservableObject {
 
     /// Mode change from the UI: leaving Record asks first; the current mode again does nothing.
     func requestMode(_ newMode: Mode) {
+        pendingScreen = nil
         guard newMode != mode else { return }
         if mode == .record { pendingMode = newMode } else { setMode(newMode) }
     }
 
     func confirmPendingMode() {
+        let screenAfter = pendingScreen
+        pendingScreen = nil
         if let next = pendingMode { setMode(next) }
         pendingMode = nil
+        if let screenAfter, showsTimelineWorkspace { screen = screenAfter }
     }
 
     func setMode(_ newMode: Mode) {

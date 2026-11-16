@@ -42,17 +42,25 @@ struct UnderstudyApp: App {
             CommandGroup(after: .appInfo) {
                 UpdateCommand(updater: model.updater)
             }
-            CommandMenu("Mode") {
-                // Toggles show a tick on the current mode; leaving Record asks first.
-                Toggle("Stop", isOn: modeBinding(.stop)).keyboardShortcut("1", modifiers: .command)
-                Toggle("Record", isOn: modeBinding(.record)).keyboardShortcut("2", modifiers: .command)
-                Toggle("Play to code", isOn: modeBinding(.playback)).keyboardShortcut("3", modifiers: .command)
-                Toggle("Timeline", isOn: modeBinding(.timeline)).keyboardShortcut("4", modifiers: .command)
-                Button("Record from Timeline (Dev)") { model.startTimelineRecording() }
-                    .keyboardShortcut("r", modifiers: [.command, .option])
+            // View menu: the three screens. Program and View take the decks; leaving Record asks first.
+            CommandGroup(before: .toolbar) {
+                Toggle("Program", isOn: screenBinding(.program)).keyboardShortcut("1", modifiers: .command)
+                Toggle("View", isOn: screenBinding(.view)).keyboardShortcut("2", modifiers: .command)
+                Toggle("Decks", isOn: screenBinding(.decks)).keyboardShortcut("3", modifiers: .command)
                 Divider()
                 OpenTimelineCommand()
                 OpenVideoCommand()
+                Divider()
+            }
+            CommandMenu("Decks") {
+                // What the decks do. Toggles show a tick on the current one; leaving Record asks first.
+                Toggle("Stop", isOn: modeBinding(.stop)).keyboardShortcut(".", modifiers: [.command, .shift])
+                Toggle("Record", isOn: modeBinding(.record)).keyboardShortcut("r", modifiers: [.command, .shift])
+                Toggle("Play to Code", isOn: modeBinding(.playback)).keyboardShortcut("p", modifiers: [.command, .shift])
+                Toggle("Follow Program", isOn: modeBinding(.timeline)).keyboardShortcut("f", modifiers: [.command, .shift])
+                Button("Record from Timeline (Dev)") { model.startTimelineRecording() }
+                    .keyboardShortcut("r", modifiers: [.command, .option])
+                Divider()
                 Button("Refresh Takes") { model.refreshTakes() }.keyboardShortcut("r", modifiers: .command)
                 Button("Back Up a Take…") {
                     NotificationCenter.default.post(name: .understudyOpenBackup, object: nil)
@@ -81,6 +89,10 @@ struct UnderstudyApp: App {
             SettingsView()
                 .environmentObject(model)
         }
+    }
+
+    private func screenBinding(_ screen: AppModel.Screen) -> Binding<Bool> {
+        Binding(get: { model.screen == screen }, set: { _ in model.show(screen) })
     }
 
     private func modeBinding(_ mode: AppModel.Mode) -> Binding<Bool> {
@@ -199,7 +211,7 @@ private struct OpenVideoCommand: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button("Video Viewer") { openWindow(id: "video") }
+        Button("Video in a Window") { openWindow(id: "video") }
             .keyboardShortcut("v", modifiers: [.command, .option])
     }
 }
