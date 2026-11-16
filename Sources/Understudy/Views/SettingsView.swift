@@ -208,6 +208,7 @@ private struct TimelineOutputSettings: View {
             }
         }
         .onAppear { ports = DeckDiscovery.networkPorts() }
+        AES67Settings()
         Section(model.danteStatus.isRouted ? "Timeline output (when Dante out is off)" : "Timeline output") {
             Picker("Song audio", selection: $model.settings.timelineOutputUID) {
                 Text("System default").tag(String?.none)
@@ -453,5 +454,32 @@ private struct RecordNamingSettings: View {
         }
         Text("{deck} deck name · {n} deck number · {artist} · {show} setlist · {date} 2026-11-15 · {day} Sun · {time} 2015 · {seconds} 201530. The time is when Record is pressed; the deck adds its take number. Spaces and symbols become _, and an empty token drops out.")
             .font(.caption).foregroundStyle(.secondary)
+    }
+}
+
+/// AES67 out (test): the timeline as a network audio stream Dante gear can receive in AES67 mode.
+private struct AES67Settings: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var networks: [DeckDiscovery.LocalNetwork] = []
+
+    var body: some View {
+        Section("AES67 out (test)") {
+            Toggle("Send left, right and timecode as an AES67 stream", isOn: $model.settings.aes67Enabled)
+            if model.settings.aes67Enabled {
+                Picker("Network port", selection: $model.settings.aes67Interface) {
+                    Text("Choose…").tag(String?.none)
+                    ForEach(networks) { n in Text("\(n.displayName) — \(n.address)").tag(Optional(n.interface)) }
+                }
+                TextField("Multicast address", text: $model.settings.aes67Multicast,
+                          prompt: Text(model.address(of: model.settings.aes67Interface).map(AES67.defaultMulticast) ?? "239.69.x.y"))
+                TextField("Stream name", text: $model.settings.aes67Name)
+                if let status = model.aes67Status {
+                    Text(status).font(.caption).foregroundStyle(model.aes67Locked ? Theme.lock : Theme.amber)
+                }
+                Text("For testing. Channels 1–2 are the song audio, 3 is timecode (as LTC out). The stream is announced by SAP: on a Dante device with AES67 mode on (Dante Controller › Device View › AES67 Config), it appears in Dante Controller as “\(model.settings.aes67Name)” to subscribe to. Dante receivers need the stream locked to the network's PTPv2 master, which a Dante device in AES67 mode provides; while there's none, the stream free-runs and Dante won't play it.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { networks = DeckDiscovery.localNetworks() }
     }
 }

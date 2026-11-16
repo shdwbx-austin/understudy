@@ -289,6 +289,19 @@ final class TimelineModel: ObservableObject {
 
     /// What plays for each song: its music without the timecode channel (unless kept), and its
     /// own timecode for LTC out when that code is trusted and Settings says to use it.
+    /// Everything another thread needs to render the timeline (the AES67 sender).
+    struct RenderState: Sendable, Equatable {
+        var layout: TimelineLayout
+        var transport: TimelineTransport
+        var sources: [UUID: SongSources]
+        var rate: FrameRate
+        var scrubbing: Bool
+    }
+
+    func renderState() -> RenderState {
+        RenderState(layout: layout, transport: transport, sources: playbackSources(), rate: rate, scrubbing: isScrubbing)
+    }
+
     private func playbackSources() -> [UUID: SongSources] {
         var out: [UUID: SongSources] = [:]
         for song in setSongs {

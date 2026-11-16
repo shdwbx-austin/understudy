@@ -6,7 +6,7 @@ import UnderstudyCore
 
 /// What plays for one song: its music (nil = nothing to play), and its own timecode for LTC out
 /// (nil = generate code for it instead).
-struct SongSources {
+struct SongSources: Sendable, Equatable {
     var music: String?
     var timecode: String?
 }

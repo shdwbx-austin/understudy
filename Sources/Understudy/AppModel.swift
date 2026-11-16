@@ -58,6 +58,11 @@ final class AppModel: ObservableObject {
     @Published private(set) var linkBusy = false
     let osc = OSCServer()
     let projects = ProjectManager()
+    /// AES67 out (test), when on.
+    private var aes67: AES67Sender?
+    private var aes67State: TimelineModel.RenderState?
+    @Published private(set) var aes67Status: String?
+    private var lastAES67Status = 0.0
     let updater = Updater()
     private var projectCreated = Date()
     private var projectSave: Task<Void, Never>?
@@ -151,6 +156,7 @@ final class AppModel: ObservableObject {
         osc.onMessage = { [weak self] message, from in self?.handleOSC(message, from: from) }
         osc.onState = { [weak self] in self?.refreshOSCStatus() }
         applyOSC()
+        applyAES67()
         // Back into Record or Play after a restart, if asked. Decks are brought into the mode as
         // they connect (deckReady); a deck that kept recording through the restart is left alone.
         if loaded.resumeLastMode,
@@ -759,6 +765,8 @@ final class AppModel: ObservableObject {
             decks.forEach { $0.resetChase() }
         }
         if settings.oscEnabled != old.oscEnabled || settings.oscPort != old.oscPort { applyOSC() }
+        if settings.aes67Enabled != old.aes67Enabled || settings.aes67Interface != old.aes67Interface
+            || settings.aes67Multicast != old.aes67Multicast || settings.aes67Name != old.aes67Name { applyAES67() }
         if settings.decks != old.decks || settings.recordNaming != old.recordNaming || targets(of: settings) != targets(of: old) {
             scheduleProjectSave()
         }
@@ -779,6 +787,12 @@ final class AppModel: ObservableObject {
         if pollDue {
             watchAudio(now: now)
             confidence.checkStale(now: now)
+        }
+        if let aes67 {
+            // The sender renders on its own thread: hand it the timeline whenever it changes.
+            let state = timeline.renderState()
+            if state != aes67State { aes67State = state; aes67.update(state) }
+            if now - lastAES67Status >= 0.5 { lastAES67Status = now; refreshAES67Status() }
         }
         if settings.danteOut, now - lastDanteCheck >= 2 {
             lastDanteCheck = now
@@ -1313,4 +1327,47 @@ extension AppModel {
         guard projects.current != nil else { return }
         projects.save(currentProjectFile())
     }
+}
+
+// MARK: - AES67 out (test)
+
+extension AppModel {
+    /// The IPv4 address of a network port, if it has one.
+    func address(of bsd: String?) -> String? {
+        guard let bsd else { return nil }
+        return DeckDiscovery.localNetworks().first { $0.interface == bsd }?.address
+    }
+
+    func applyAES67() {
+        aes67?.stop()
+        aes67 = nil
+        aes67State = nil
+        guard settings.aes67Enabled else { aes67Status = nil; return }
+        guard let ip = address(of: settings.aes67Interface) else {
+            aes67Status = "Choose the network port the stream goes out of (it needs an IPv4 address)."
+            return
+        }
+        let group = settings.aes67Multicast.trimmingCharacters(in: .whitespaces)
+        let config = AES67Sender.Config(interfaceIP: ip, multicast: group.isEmpty ? AES67.defaultMulticast(for: ip) : group,
+                                        name: settings.aes67Name.isEmpty ? "Understudy" : settings.aes67Name)
+        let sender = AES67Sender(config: config)
+        if let problem = sender.start() {
+            aes67Status = problem
+            return
+        }
+        aes67 = sender
+        refreshAES67Status()
+    }
+
+    func refreshAES67Status() {
+        guard let aes67 else { return }
+        let s = aes67.status
+        let group = settings.aes67Multicast.isEmpty ? (address(of: settings.aes67Interface).map(AES67.defaultMulticast) ?? "?") : settings.aes67Multicast
+        var text = "Sending \(group):\(AES67.defaultPort) · 3 ch L24/48k · "
+        text += s.ptpLocked ? "PTP locked to \(s.grandmaster ?? "?")" : "no PTP master: free-running (Dante won't accept it)"
+        if let p = s.problem, !s.ptpLocked { text += " · \(p)" }
+        if text != aes67Status { aes67Status = text }
+    }
+
+    var aes67Locked: Bool { aes67?.status.ptpLocked ?? false }
 }

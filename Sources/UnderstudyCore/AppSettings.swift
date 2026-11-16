@@ -95,6 +95,13 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var danteOut = false
     /// Network port (BSD name, e.g. "en8") Dante should be on, watched for a link; nil = any.
     public var danteInterface: String?
+    /// AES67 out (test): left, right and timecode as a multicast stream, announced by SAP.
+    public var aes67Enabled = false
+    /// Network port (BSD name) the stream goes out of; nil = none chosen yet.
+    public var aes67Interface: String?
+    /// Multicast group; empty = 239.69.x.y from this Mac's address on that port.
+    public var aes67Multicast = ""
+    public var aes67Name = "Understudy"
     /// How recordings are named on the decks.
     public var recordNaming = RecordNaming()
     /// OSC control in (Stream Deck via Companion, grandMA3, …): play, pause, markers.
@@ -158,6 +165,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
         danteOut = (try? c.decodeIfPresent(Bool.self, forKey: .danteOut)) ?? d.danteOut
         danteInterface = (try? c.decodeIfPresent(String.self, forKey: .danteInterface)) ?? d.danteInterface
         recordNaming = (try? c.decodeIfPresent(RecordNaming.self, forKey: .recordNaming)) ?? d.recordNaming
+        aes67Enabled = (try? c.decodeIfPresent(Bool.self, forKey: .aes67Enabled)) ?? d.aes67Enabled
+        aes67Interface = (try? c.decodeIfPresent(String.self, forKey: .aes67Interface)) ?? d.aes67Interface
+        aes67Multicast = (try? c.decodeIfPresent(String.self, forKey: .aes67Multicast)) ?? d.aes67Multicast
+        aes67Name = (try? c.decodeIfPresent(String.self, forKey: .aes67Name)) ?? d.aes67Name
         oscEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .oscEnabled)) ?? d.oscEnabled
         oscPort = (try? c.decodeIfPresent(Int.self, forKey: .oscPort)) ?? d.oscPort
         ma3Host = (try? c.decodeIfPresent(String.self, forKey: .ma3Host)) ?? d.ma3Host
