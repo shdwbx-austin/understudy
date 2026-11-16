@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-11-16
 
 - **Loop a song or a section.** LOOP under the timeline loops the song under the playhead (from its lead-in) or a section: I and O at the playhead, or two selected markers › Loop Between Them. L turns it on and off. Sections are held on show code, so they follow their song when the set is reordered. Shown as a bar on the set and a band on the current song.
 - **Stop after song.** The timeline can stop at the end of each song, parked on the next song's lead-in, instead of rolling on.
