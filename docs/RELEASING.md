@@ -3,6 +3,7 @@
 Push a tag `vX.Y.Z` and GitHub Actions builds, signs, notarizes and publishes the release:
 
 - `Understudy-X.Y.Z.pkg`: the installer (to /Applications), for a first install.
+- NDI is added afterwards on this Mac (below).
 - `Understudy-X.Y.Z-macos.zip`: the app, which installed copies download as an update.
 - `appcast.xml`: the update feed. Understudy checks
   `https://github.com/shdwbx-austin/understudy/releases/latest/download/appcast.xml` once a day
@@ -13,6 +14,26 @@ echo 0.3.0 > VERSION && git commit -am "0.3.0" && git tag v0.3.0 && git push && 
 ```
 
 The build number (CFBundleVersion) is the commit count, so every release is newer than the last.
+
+## NDI (added on this Mac)
+
+The NDI library comes from the NDI SDK, whose license lets it ship inside the app but not be
+posted on its own, so it isn't in the repo or on GitHub's builders. Releases get it here, on
+a Mac with the NDI SDK for Apple installed:
+
+```bash
+scripts/release-add-ndi.sh v0.4.0
+```
+
+Run it after the tag's GitHub build has finished. It downloads that release's app (universal),
+adds `libndi.dylib` to `Contents/Frameworks`, signs it again, rebuilds the installer, signs a
+new `appcast.xml` with the Sparkle key in your keychain (macOS may ask to allow that), checks the
+signature, and replaces the release's zip, pkg and feed. `--dry-run` does everything but upload,
+keeping the files in `dist/release-<version>/`.
+
+Once Developer ID signing is set up, GitHub's build is signed and notarized; adding NDI after
+that changes the app, so then either run this with `SIGN_IDENTITY` set (and notarize again), or
+give GitHub the library through the `NDI_LIB_URL` secret instead.
 
 ## One-time setup (secrets)
 
