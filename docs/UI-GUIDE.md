@@ -135,8 +135,10 @@ After CuePoints' start window:
 
 ### Settings and sheets
 
-- **Settings** is a grouped `Form`, and holds the Mac's things only (audio devices, LTC input,
-  OSC port, Dante, chase tuning).
+- **Settings** holds the Mac's things only, in tabs: General · Timecode · Recording · Playback ·
+  Audio out · Show control. Each tab is a grouped `Form` that leads with its show-critical
+  setting; tuning that's normally automatic (chase) and features not in daily use (the
+  confidence monitor) are folded under disclosures.
 - **Show things live in the project** and are edited where they're used: Assign decks and marker
   types. Recording names are the exception: saved with the project, but edited in Settings ›
   Recording.

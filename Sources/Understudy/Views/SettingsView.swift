@@ -19,8 +19,50 @@ struct SettingsView: View {
         )
     }
 
+    @State private var showMonitor = false
+    /// The tab last used, so Settings opens where you were.
+    @AppStorage("understudy.settingsTab") private var tab = "general"
+
     var body: some View {
-        Form {
+        // Tabs, the show-critical settings first in each. Machine things only: the show's own
+        // settings (decks, marker types, MA3/disguise targets, recording names) travel with the project.
+        TabView(selection: $tab) {
+            Form {
+            Section("Show machine") {
+                Toggle("Keep this Mac awake while Understudy is open", isOn: $model.settings.keepAwake)
+                ShowMachineAgent(machine: model.showMachine)
+                Toggle("After a restart, go back to Record or Play", isOn: $model.settings.resumeLastMode)
+                Text("For a dedicated Mac running rehearsals. Also set System Settings › Energy › “Start up automatically after a power failure”, automatic login, and Screen Sharing to watch it from your laptop.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Backup") {
+                HStack {
+                    Text(model.settings.backupFolder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "No folder chosen")
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Spacer()
+                    Button("Choose…") { model.chooseBackupFolder() }
+                }
+                Text("Takes are copied off the decks by FTP into dated folders here, one per deck. Choose a folder inside Dropbox and Dropbox syncs them.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Projects") {
+                HStack {
+                    Text((model.projects.root.path as NSString).abbreviatingWithTildeInPath).lineLimit(1).truncationMode(.head)
+                    Spacer()
+                    Button("Change…") { model.projects.chooseRoot() }
+                }
+                Toggle("Open the last project at launch", isOn: Binding(get: { model.projects.reopenLastAtLaunch },
+                                                                         set: { model.projects.reopenLastAtLaunch = $0 }))
+            }
+        }
+        .formStyle(.grouped)
+            .tabItem { Label("General", systemImage: "gearshape") }
+            .tag("general")
+
+            Form {
             Section("Timecode input") {
                 Picker("Show code", selection: $model.settings.showCodeSource) {
                     Text("LTC input").tag(ShowCodeSource.input)
@@ -59,33 +101,19 @@ struct SettingsView: View {
                      ? "Understudy measures the incoming LTC (\(model.rateLabel.hasSuffix("DETECTING") ? "waiting for code" : "now " + model.ltcRate.rawValue)) and follows it, including drop-frame. Recording logs and playback wait the first couple of seconds of code until the rate is known. Each input is measured afresh when it's switched in."
                      : "Fixed rate. The header warns if incoming LTC doesn't match.")
                     .font(.caption).foregroundStyle(.secondary)
+                Stepper(model.settings.freewheelSeconds > 0
+                            ? String(format: "Coast through LTC dropouts for %.1f s", model.settings.freewheelSeconds)
+                            : "Don't coast through LTC dropouts",
+                        value: $model.settings.freewheelSeconds, in: 0...10, step: 0.5)
                 Button("Rescan devices") { model.refreshAudioDevices() }
             }
 
-            ConfidenceSettings(monitor: model.confidence)
+        }
+        .formStyle(.grouped)
+            .tabItem { Label("Timecode", systemImage: "waveform") }
+            .tag("timecode")
 
-            TimelineOutputSettings()
-            ShowControlSettings()
-            Section("Show machine") {
-                Toggle("Keep this Mac awake while Understudy is open", isOn: $model.settings.keepAwake)
-                ShowMachineAgent(machine: model.showMachine)
-                Toggle("After a restart, go back to Record or Play", isOn: $model.settings.resumeLastMode)
-                Text("For a dedicated Mac running rehearsals. Also set System Settings › Energy › “Start up automatically after a power failure”, automatic login, and Screen Sharing to watch it from your laptop.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            Section("Backup") {
-                HStack {
-                    Text(model.settings.backupFolder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "No folder chosen")
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                    Spacer()
-                    Button("Choose…") { model.chooseBackupFolder() }
-                }
-                Text("Takes are copied off the decks by FTP into dated folders here, one per deck. Choose a folder inside Dropbox and Dropbox syncs them.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
+            Form {
             Section("Recording") {
                 Picker("Record", selection: $model.settings.recordMode) {
                     Text("Continuously, REC to STOP (recommended)").tag(RecordMode.continuous)
@@ -98,42 +126,65 @@ struct SettingsView: View {
                 RecordNamingSettings()
             }
 
+        }
+        .formStyle(.grouped)
+            .tabItem { Label("Recording", systemImage: "record.circle") }
+            .tag("recording")
+
+            Form {
             Section("Chase") {
                 Toggle("Fast pickup", isOn: $model.settings.chase.fastStart)
                     .help("Decks go to the frame and play in one step, rolling about 0.1 s after code starts")
-                if model.settings.chase.fastStart {
-                    Stepper(String(format: "Deck goto time %.0f ms", model.settings.chase.gotoSeconds * 1000),
-                            value: $model.settings.chase.gotoSeconds, in: 0...0.3, step: 0.005)
-                    Text("When code starts or jumps, each deck goes to the matching frame and plays at once, so it rolls about 0.1 s later. Its start delay is the play offset in deck Setup (learned automatically, or set by Calibrate).")
-                        .font(.caption).foregroundStyle(.secondary)
-                } else {
-                    Stepper(String(format: "Pre-roll %.1f s", model.settings.chase.prerollSeconds),
-                            value: $model.settings.chase.prerollSeconds, in: 1...5, step: 0.25)
-                    Stepper(String(format: "Cue settle %.2f s", model.settings.chase.cueSettleSeconds),
-                            value: $model.settings.chase.cueSettleSeconds, in: 0.1...2, step: 0.05)
-                    Text("Decks are parked pre-roll ahead of code, given time to settle, then played: slower to pick up, for decks that locate slowly.")
-                        .font(.caption).foregroundStyle(.secondary)
+                Text(model.settings.chase.fastStart
+                     ? "When code starts or jumps, each deck goes to the matching frame and plays at once (about 0.1 s). Each deck's start delay is its play offset in deck Setup, learned automatically or set by Calibrate."
+                     : "Decks are parked pre-roll ahead of code, given time to settle, then played: slower to pick up, for decks that locate slowly.")
+                    .font(.caption).foregroundStyle(.secondary)
+                DisclosureGroup("Advanced") {
+                    if model.settings.chase.fastStart {
+                        Stepper(String(format: "Deck goto time %.0f ms", model.settings.chase.gotoSeconds * 1000),
+                                value: $model.settings.chase.gotoSeconds, in: 0...0.3, step: 0.005)
+                    } else {
+                        Stepper(String(format: "Pre-roll %.1f s", model.settings.chase.prerollSeconds),
+                                value: $model.settings.chase.prerollSeconds, in: 1...5, step: 0.25)
+                        Stepper(String(format: "Cue settle %.2f s", model.settings.chase.cueSettleSeconds),
+                                value: $model.settings.chase.cueSettleSeconds, in: 0.1...2, step: 0.05)
+                    }
+                    Stepper(String(format: "Tolerance ±%.1f frames", model.settings.chase.toleranceFrames),
+                            value: $model.settings.chase.toleranceFrames, in: 0.5...10, step: 0.5)
+                    Stepper("Re-lock after \(model.settings.chase.driftStrikes) bad readings",
+                            value: $model.settings.chase.driftStrikes, in: 1...20)
+                    Toggle("Deck timecode counts at video rate (e.g. 0–59 at 59.94)", isOn: $model.settings.deckTimecodeAtVideoRate)
                 }
-                Stepper(String(format: "Tolerance ±%.1f frames", model.settings.chase.toleranceFrames),
-                        value: $model.settings.chase.toleranceFrames, in: 0.5...10, step: 0.5)
-                Stepper("Re-lock after \(model.settings.chase.driftStrikes) bad readings",
-                        value: $model.settings.chase.driftStrikes, in: 1...20)
-                Stepper(model.settings.freewheelSeconds > 0
-                            ? String(format: "Coast through LTC dropouts for %.1f s", model.settings.freewheelSeconds)
-                            : "Don't coast through LTC dropouts",
-                        value: $model.settings.freewheelSeconds, in: 0...10, step: 0.5)
-                Toggle("Deck timecode counts at video rate (e.g. 0–59 at 59.94)", isOn: $model.settings.deckTimecodeAtVideoRate)
+            }
+            Section {
+                DisclosureGroup("Confidence monitor (deck pictures from a capture device)", isExpanded: $showMonitor) {
+                    Text("Turn on below; its settings appear underneath.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if showMonitor || model.settings.confidenceEnabled {
+                ConfidenceSettings(monitor: model.confidence)
             }
         }
         .formStyle(.grouped)
+            .tabItem { Label("Playback", systemImage: "play.rectangle") }
+            .tag("playback")
+
+            Form { TimelineOutputSettings() }
+                .formStyle(.grouped)
+                .tabItem { Label("Audio out", systemImage: "speaker.wave.2") }
+            .tag("audio")
+
+            Form { ShowControlSettings() }
+                .formStyle(.grouped)
+                .tabItem { Label("Show control", systemImage: "dot.radiowaves.left.and.right") }
+            .tag("control")
+        }
         .font(Theme.grotesk(13))
         .tint(Theme.paper)
-        .frame(width: 520)
-        .padding(.vertical, 8)
+        .frame(width: 580, height: 640)
     }
 }
 
-/// One input channel: name, live level, and whether it carries the LTC in use.
 private struct ChannelRow: View {
     let index: Int
     let name: String
@@ -192,23 +243,6 @@ private struct TimelineOutputSettings: View {
     @State private var ports: [DeckDiscovery.NetworkPort] = []
 
     var body: some View {
-        Section("Dante out") {
-            Toggle("Send to Dante (Dante Virtual Soundcard)", isOn: $model.settings.danteOut)
-                .help("Song audio left and right on DVS channels 1–2 and timecode on 3, sample-locked on one device")
-            if model.settings.danteOut {
-                Picker("Network port", selection: $model.settings.danteInterface) {
-                    Text("Any (as set in DVS)").tag(String?.none)
-                    ForEach(ports) { Text($0.label).tag(Optional($0.bsd)) }
-                }
-                .help("The port your Dante network is on. Understudy warns when it loses its link; choose the same port in DVS's settings.")
-                Text(model.danteStatus.message).font(.caption)
-                    .foregroundStyle(model.danteStatus.isProblem ? Theme.amber : Theme.lock)
-                Text("Dante Virtual Soundcard (from Audinate, licensed per Mac) sends the channels onto the network; DVS picks the network port itself. Set its channel count to 4 or more, start it, then subscribe receivers to this Mac's channels 1–3 in Dante Controller.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .onAppear { ports = DeckDiscovery.networkPorts() }
-        AES67Settings()
         Section(model.danteStatus.isRouted ? "Timeline output (when Dante out is off)" : "Timeline output") {
             Picker("Song audio", selection: $model.settings.timelineOutputUID) {
                 Text("System default").tag(String?.none)
@@ -240,6 +274,23 @@ private struct TimelineOutputSettings: View {
             }
         }
         .onAppear { devices = AudioDeviceCatalog.outputDevices() }
+        Section("Dante out") {
+            Toggle("Send to Dante (Dante Virtual Soundcard)", isOn: $model.settings.danteOut)
+                .help("Song audio left and right on DVS channels 1–2 and timecode on 3, sample-locked on one device")
+            if model.settings.danteOut {
+                Picker("Network port", selection: $model.settings.danteInterface) {
+                    Text("Any (as set in DVS)").tag(String?.none)
+                    ForEach(ports) { Text($0.label).tag(Optional($0.bsd)) }
+                }
+                .help("The port your Dante network is on. Understudy warns when it loses its link; choose the same port in DVS's settings.")
+                Text(model.danteStatus.message).font(.caption)
+                    .foregroundStyle(model.danteStatus.isProblem ? Theme.amber : Theme.lock)
+                Text("Dante Virtual Soundcard (from Audinate, licensed per Mac) sends the channels onto the network; DVS picks the network port itself. Set its channel count to 4 or more, start it, then subscribe receivers to this Mac's channels 1–3 in Dante Controller.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { ports = DeckDiscovery.networkPorts() }
+        AES67Settings()
     }
 
     private func channels(_ uid: String?) -> Int {

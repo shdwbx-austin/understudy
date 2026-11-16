@@ -42,10 +42,7 @@ struct TimelineWorkspace: View {
                 .frame(minHeight: 130, maxHeight: 320)
                 TransportBar(timeline: timeline, compact: true)
                 Rule()
-                HStack(alignment: .firstTextBaseline, spacing: Theme.gutter) {
-                    TakePicker()
-                    DevRecordButton()
-                }
+                TakePicker()
                 DeckChips()
                 if let message = model.linkMessage ?? timeline.message {
                     Text(message).font(Theme.mono(10)).foregroundStyle(Theme.grey).lineLimit(3)
