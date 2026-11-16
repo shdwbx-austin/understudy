@@ -289,13 +289,33 @@ final class TimelineModel: ObservableObject {
                 songs[i].audioOffset = offset
                 changed = true
             }
+            // A tempo heard in the audio fills in songs without one of yours: when it's clear, or
+            // the file's name gave it. Yours (typed in, or a downbeat you set) are never replaced.
+            if let tempo = analysis.tempo, songs[i].bpm == nil || songs[i].bpmDetected == true,
+               tempo.isConfident || SongTempo.bpm(fromFileName: (path as NSString).lastPathComponent) != nil {
+                let downbeat = (offset ?? 0) + tempo.downbeat
+                if songs[i].bpm != tempo.bpm || songs[i].downbeat != downbeat || songs[i].bpmDetected != true {
+                    songs[i].bpm = tempo.bpm
+                    songs[i].downbeat = downbeat
+                    songs[i].bpmDetected = true
+                    tempoFound += 1
+                    changed = true
+                }
+            }
         }
         if changed { layoutChanged() }
         if analyzing.isEmpty { summarizeTimecode() }
     }
 
+    /// Songs given a tempo by listening, since the last summary.
+    private var tempoFound = 0
+
     /// One line on what the scans found, once they've all finished.
     private func summarizeTimecode() {
+        if tempoFound > 0 {
+            message = "Tempo heard in \(tempoFound) song\(tempoFound == 1 ? "" : "s") (GRID shows ≈). Check one with right-click › Tempo…: half, double or ¾ speed are one click."
+            tempoFound = 0
+        }
         let withCode = songs.filter { $0.audioLTCChannel != nil }
         guard !withCode.isEmpty else { return }
         let mismatched = withCode.filter { $0.audioOffset == nil }.map(\.name)
@@ -814,12 +834,19 @@ final class TimelineModel: ObservableObject {
     /// A tempo to offer for a song: its own, else one in its audio file's name.
     func suggestedBPM(_ song: Song) -> Double? {
         song.bpm ?? song.audioPath.flatMap { SongTempo.bpm(fromFileName: ($0 as NSString).lastPathComponent) }
+            ?? heardTempo(song)?.bpm
+    }
+
+    /// What listening to the song's audio found (also when it wasn't clear enough to use).
+    func heardTempo(_ song: Song) -> TempoEstimate? {
+        song.audioPath.flatMap { analyses[$0]?.tempo }
     }
 
     func setTempo(_ id: UUID, bpm: Double?, beatsPerBar: Int? = nil) {
         guard let i = songs.firstIndex(where: { $0.id == id }) else { return }
         songs[i].bpm = bpm.flatMap { $0 > 0 ? $0 : nil }
         if let beatsPerBar { songs[i].beatsPerBar = beatsPerBar == 4 ? nil : max(1, beatsPerBar) }
+        songs[i].bpmDetected = nil
         songDetailsChanged()
     }
 
@@ -839,6 +866,7 @@ final class TimelineModel: ObservableObject {
         guard let i = songs.firstIndex(where: { $0.id == item.song.id }) else { return }
         let t = isPlaying ? transport.position(at: HostClock.now()) : playhead
         songs[i].downbeat = t - item.timelineStart
+        songs[i].bpmDetected = nil
         songDetailsChanged()
     }
 

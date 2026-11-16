@@ -281,7 +281,7 @@ private struct PlaylistRow: View {
                 Button("Add to the Set") { timeline.addToSet(song.id) }
             }
             Button("Choose Audio…") { timeline.chooseAudio(for: song.id) }
-            Button(song.bpm.map { "Tempo (\(TimelineModel.bpmText($0)) BPM)…" } ?? "Tempo…") { TempoPrompt.ask(timeline: timeline, song: song) }
+            Button(song.bpm.map { "Tempo (\(song.bpmDetected == true ? "≈" : "")\(TimelineModel.bpmText($0)) BPM)…" } ?? "Tempo…") { TempoPrompt.ask(timeline: timeline, song: song) }
             if timeline.currentSongID == song.id, song.bpm != nil {
                 Button("Set Downbeat at Playhead") { timeline.setDownbeatAtPlayhead() }
             }
@@ -601,13 +601,15 @@ private struct ZoomControls: View {
             Button {
                 if song.bpm == nil { TempoPrompt.ask(timeline: timeline, song: song) } else { timeline.showGrid.toggle() }
             } label: {
-                Text(song.bpm.map { "GRID \(TimelineModel.bpmText($0))" } ?? "GRID")
+                Text(song.bpm.map { "GRID \(song.bpmDetected == true ? "≈" : "")\(TimelineModel.bpmText($0))" } ?? "GRID")
                     .font(Theme.mono(9, bold: timeline.showGrid && song.bpm != nil))
                     .foregroundStyle(timeline.showGrid && song.bpm != nil ? Theme.paper : Theme.grey)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(song.bpm == nil ? "Set this song's tempo to see a beat grid" : "Beat grid on or off (right-click the song for its tempo and downbeat)")
+            .help(song.bpm == nil ? "Set this song's tempo to see a beat grid"
+                  : song.bpmDetected == true ? "Beat grid on or off. ≈: tempo heard in the audio; right-click › Tempo… to check it (half, double or ¾ in one click)"
+                  : "Beat grid on or off (right-click for the tempo and downbeat)")
             .contextMenu {
                 Button("Tempo…") { TempoPrompt.ask(timeline: timeline, song: song) }
                 Button("Set Downbeat at Playhead") { timeline.setDownbeatAtPlayhead() }

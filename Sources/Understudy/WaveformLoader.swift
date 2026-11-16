@@ -14,6 +14,10 @@ struct AudioAnalysis: Codable, Sendable {
     /// The timecode channel on its own, for LTC out.
     var ltcPath: String?
     var channels: Int
+    /// The tempo heard in the music (nil: none clear, or not looked for yet).
+    var tempo: TempoEstimate?
+    /// Tempo detection has run on this file (so a file with no clear tempo isn't read again).
+    var tempoChecked: Bool?
 }
 
 /// Reads a song's audio once, in the background: looks for LTC in each channel, writes a copy
@@ -29,9 +33,15 @@ enum AudioAnalyzer {
     static func analyze(path: String, rate: FrameRate, root: URL) -> AudioAnalysis? {
         guard let folder = cacheFolder(for: path, rate: rate, root: root) else { return nil }
         let meta = folder.appendingPathComponent("analysis.json")
-        if let data = try? Data(contentsOf: meta), let cached = try? JSONDecoder().decode(AudioAnalysis.self, from: data),
+        if let data = try? Data(contentsOf: meta), var cached = try? JSONDecoder().decode(AudioAnalysis.self, from: data),
            cached.musicPath.map({ FileManager.default.fileExists(atPath: $0) }) ?? true,
            cached.ltcPath.map({ FileManager.default.fileExists(atPath: $0) }) ?? true {
+            // Analysed before tempo detection existed: listen for the tempo once, keep the rest.
+            if cached.tempoChecked != true {
+                cached.tempo = tempoOnly(path: path, ltcChannel: cached.ltc?.channel)
+                cached.tempoChecked = true
+                if let data = try? JSONEncoder().encode(cached) { try? data.write(to: meta, options: .atomic) }
+            }
             return cached
         }
         guard let file = try? AVAudioFile(forReading: URL(fileURLWithPath: path)) else { return nil }
@@ -72,6 +82,7 @@ enum AudioAnalyzer {
         let ltcBuffer = ltcFile.flatMap { AVAudioPCMBuffer(pcmFormat: $0.processingFormat, frameCapacity: chunk) }
         var accumulator = PeakAccumulator(totalFrames: Int(file.length), buckets: buckets)
         var magnitudes = [Float](repeating: 0, count: Int(chunk))
+        var listener = TempoListener(sampleRate: sampleRate, channels: musicChannels, chunk: Int(chunk))
         while file.framePosition < file.length {
             do { try file.read(into: buffer, frameCount: chunk) } catch { break }
             let frames = Int(buffer.frameLength)
@@ -82,6 +93,7 @@ enum AudioAnalyzer {
                 magnitudes[f] = peak
             }
             magnitudes.withUnsafeBufferPointer { accumulator.add(UnsafeBufferPointer(rebasing: $0[0..<frames])) }
+            listener.feed(data, frames: frames)
             if let musicFile, let musicBuffer, let out = musicBuffer.floatChannelData {
                 musicBuffer.frameLength = AVAudioFrameCount(frames)
                 for (i, c) in musicChannels.enumerated() { out[i].update(from: data[c], count: frames) }
@@ -98,13 +110,32 @@ enum AudioAnalyzer {
             ltc: ltc,
             musicPath: musicFile == nil ? nil : folder.appendingPathComponent("music.caf").path,
             ltcPath: ltcFile == nil ? nil : folder.appendingPathComponent("timecode.caf").path,
-            channels: channels
+            channels: channels,
+            tempo: listener.estimate(hint: SongTempo.bpm(fromFileName: (path as NSString).lastPathComponent)),
+            tempoChecked: true
         )
         // Close the copies before anyone reads them.
         musicFile = nil
         ltcFile = nil
         if let data = try? JSONEncoder().encode(analysis) { try? data.write(to: meta, options: .atomic) }
         return analysis
+    }
+
+    /// Reads the file once more just to listen for its tempo (for analyses made before this).
+    static func tempoOnly(path: String, ltcChannel: Int?) -> TempoEstimate? {
+        guard let file = try? AVAudioFile(forReading: URL(fileURLWithPath: path)) else { return nil }
+        let format = file.processingFormat
+        let chunk: AVAudioFrameCount = 32_768
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunk) else { return nil }
+        let music = (0..<Int(format.channelCount)).filter { $0 != ltcChannel }
+        var listener = TempoListener(sampleRate: format.sampleRate, channels: music, chunk: Int(chunk))
+        while file.framePosition < file.length {
+            do { try file.read(into: buffer, frameCount: chunk) } catch { break }
+            let frames = Int(buffer.frameLength)
+            guard frames > 0, let data = buffer.floatChannelData else { break }
+            listener.feed(data, frames: frames)
+        }
+        return listener.estimate(hint: SongTempo.bpm(fromFileName: (path as NSString).lastPathComponent))
     }
 
     private static func lossless(_ sampleRate: Double, channels: Int, bits: Int) -> [String: Any] {
@@ -125,5 +156,44 @@ enum AudioAnalyzer {
             hash = hash &* 0x100_0000_01b3
         }
         return root.appendingPathComponent(String(format: "%016llx", hash), isDirectory: true)
+    }
+}
+
+/// Listens for a song's tempo as its audio streams past: the music channels mixed, and each one
+/// on its own (up to eight), so a click channel is found when there is one.
+struct TempoListener {
+    private var mix: OnsetEnvelope
+    private var perChannel: [Int: OnsetEnvelope] = [:]
+    private let channels: [Int]
+    private var scratch: [Float]
+
+    init(sampleRate: Double, channels: [Int], chunk: Int) {
+        self.channels = channels
+        mix = OnsetEnvelope(sampleRate: sampleRate)
+        if channels.count > 1 {
+            for c in channels.prefix(8) { perChannel[c] = OnsetEnvelope(sampleRate: sampleRate) }
+        }
+        scratch = [Float](repeating: 0, count: chunk)
+    }
+
+    mutating func feed(_ data: UnsafePointer<UnsafeMutablePointer<Float>>, frames: Int) {
+        guard !channels.isEmpty else { return }
+        if scratch.count < frames { scratch = [Float](repeating: 0, count: frames) }
+        let scale = 1 / Float(channels.count)
+        for f in 0..<frames {
+            var sum: Float = 0
+            for c in channels { sum += data[c][f] }
+            scratch[f] = sum * scale
+        }
+        scratch.withUnsafeBufferPointer { mix.feed($0.baseAddress!, count: frames) }
+        for c in perChannel.keys { perChannel[c]!.feed(data[c], count: frames) }
+    }
+
+    func estimate(hint: Double?) -> TempoEstimate? {
+        guard !channels.isEmpty else { return nil }
+        let whole = TempoDetector.estimate(mix, hint: hint)
+        var each: [Int: TempoEstimate] = [:]
+        for (c, env) in perChannel { if let e = TempoDetector.estimate(env, hint: hint) { each[c] = e } }
+        return TempoDetector.best(mix: whole, channels: each)
     }
 }

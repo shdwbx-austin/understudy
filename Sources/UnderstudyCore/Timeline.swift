@@ -32,6 +32,9 @@ public struct Song: Codable, Equatable, Identifiable, Sendable {
     /// Where a bar's first beat falls, seconds after the song start (negative = in the lead-in).
     /// nil = on the song start.
     public var downbeat: Double?
+    /// The tempo (and downbeat) came from listening to the audio, not from you: shown with ≈,
+    /// and updated if the audio changes. Setting either yourself clears it.
+    public var bpmDetected: Bool?
 
     public init(id: UUID = UUID(), name: String, start: Timecode, end: Timecode? = nil, duration: Double? = nil,
                 audioPath: String? = nil, audioDuration: Double? = nil, inSet: Bool = true) {
@@ -50,7 +53,7 @@ public struct Song: Codable, Equatable, Identifiable, Sendable {
 extension Song {
     private enum CodingKeys: String, CodingKey {
         case id, name, start, end, duration, audioPath, audioDuration, inSet, audioLTCChannel, audioOffset, keepLTCChannel
-        case bpm, beatsPerBar, downbeat
+        case bpm, beatsPerBar, downbeat, bpmDetected
     }
 
     /// Timelines saved before the set list existed load with every song in the set.
@@ -70,6 +73,7 @@ extension Song {
         bpm = try c.decodeIfPresent(Double.self, forKey: .bpm)
         beatsPerBar = try c.decodeIfPresent(Int.self, forKey: .beatsPerBar)
         downbeat = try c.decodeIfPresent(Double.self, forKey: .downbeat)
+        bpmDetected = try c.decodeIfPresent(Bool.self, forKey: .bpmDetected)
     }
 }
 
