@@ -140,6 +140,7 @@ struct MarkerOverlay: View {
         var ends: [CGFloat] = []
         var out: [UUID: Int] = [:]
         for (i, item) in items.enumerated() {
+            if item.marker.arrayID != nil { continue }   // arrayed hits draw no label
             let start = tags[i] + 10
             let end = start + CGFloat(item.marker.displayName(in: timeline.markerTypes).count) * 6.4 + 8
             let clearsTags = !tags.indices.contains { j in j != i && tags[j] + 7 > start && tags[j] - 7 < end }
@@ -152,9 +153,25 @@ struct MarkerOverlay: View {
         return out
     }
 
+    /// Arrayed hits get a tag only where it has room (12 pt from the last one shown); the rest
+    /// are just their hairline, so a run of hits reads as a run, not a solid bar.
+    private func arrayTags(_ items: [(marker: Marker, time: Double)]) -> Set<UUID> {
+        var shown: Set<UUID> = []
+        var last = -CGFloat.infinity
+        for item in items where item.marker.arrayID != nil {
+            let x = CGFloat((item.time - from) * scale)
+            if x - last >= 12 || timeline.selectedMarkerIDs.contains(item.marker.id) && x - last >= 4 {
+                shown.insert(item.marker.id)
+                last = x
+            }
+        }
+        return shown
+    }
+
     var body: some View {
         let items = timeline.placedMarkers
         let lane = lanes(items)
+        let roomy = arrayTags(items)
         ZStack(alignment: .topLeading) {
             ForEach(items, id: \.marker.id) { item in
                 let m = item.marker
@@ -170,11 +187,14 @@ struct MarkerOverlay: View {
                     let selected = timeline.selectedMarkerIDs.contains(m.id)
                     let color = timeline.markerTypes.color(m.kind)
                     let key = timeline.markerTypes.number(m.kind).map(String.init) ?? ""
-                    Rectangle().fill(color.opacity(selected ? 1 : 0.7))
+                    let arrayed = m.arrayID != nil
+                    Rectangle().fill(color.opacity(selected ? 1 : arrayed ? 0.4 : 0.7))
                         .frame(width: 1, height: height - 22)
                         .offset(x: x - 0.5, y: 22)
                         .allowsHitTesting(false)
                     // Label beside the tag, in small mono capitals; crowded ones stack downward.
+                    // Arrayed hits have none: a run of them would be a wall of text.
+                    if !arrayed {
                     Text(m.displayName(in: timeline.markerTypes).uppercased())
                         .font(Theme.mono(9, bold: selected))
                         .tracking(0.8)
@@ -185,15 +205,18 @@ struct MarkerOverlay: View {
                         .background(Theme.ink.opacity(0.75))
                         .offset(x: x + 10, y: 24 + CGFloat(lane[m.id] ?? 0) * 15)
                         .allowsHitTesting(false)
+                    }
                     // Tag: a square in the type's colour with its key. Drag to move, click to go.
-                    Text(key)
+                    // Arrayed hits get a small square without the key, just under the tag row.
+                    if !arrayed || roomy.contains(m.id) {
+                    Text(arrayed ? "" : key)
                         .font(Theme.mono(8, bold: true))
                         .foregroundStyle(Theme.ink)
-                        .frame(width: 13, height: 13)
-                        .background(Rectangle().fill(color))
-                        .overlay(Rectangle().strokeBorder(Theme.paper, lineWidth: selected ? 1.5 : 0))
-                        .contentShape(Rectangle().inset(by: -4))
-                        .offset(x: x - 6.5, y: 22)
+                        .frame(width: arrayed ? 7 : 13, height: arrayed ? 7 : 13)
+                        .background(Rectangle().fill(color.opacity(arrayed && !selected ? 0.75 : 1)))
+                        .overlay(Rectangle().strokeBorder(Theme.paper, lineWidth: selected ? (arrayed ? 1 : 1.5) : 0))
+                        .contentShape(Rectangle().inset(by: arrayed ? -3 : -4))
+                        .offset(x: x - (arrayed ? 3.5 : 6.5), y: arrayed ? 25 : 22)
                         .highPriorityGesture(
                             DragGesture(minimumDistance: 2)
                                 .onChanged { v in dragging = (m.id, v.translation.width) }
@@ -211,7 +234,8 @@ struct MarkerOverlay: View {
                         )
                         .onTapGesture { MarkerClick.handle(m, timeline: timeline, order: items.map(\.marker.id)) }
                         .contextMenu { MarkerContextMenu(timeline: timeline, marker: m) }
-                        .help("\(timeline.markerTypes.name(m.kind))\(m.label.isEmpty ? "" : ": \(m.label)") · \(m.timecode(rate: timeline.rate).description). Drag to move; ⌘-click or ⇧-click to select several.")
+                        .help(arrayed ? "\(timeline.markerTypes.name(m.kind)) hit, every \(m.arrayStep ?? "beat") · \(m.timecode(rate: timeline.rate).description). Right-click › Clear This Array." : "\(timeline.markerTypes.name(m.kind))\(m.label.isEmpty ? "" : ": \(m.label)") · \(m.timecode(rate: timeline.rate).description). Drag to move; ⌘-click or ⇧-click to select several.")
+                    }
                 }
             }
         }
@@ -277,6 +301,13 @@ struct MarkerContextMenu: View {
             }
         }
         Divider()
+        Button("Array From Here…") { ArrayPrompt.ask(timeline: timeline, anchor: marker) }
+        if let array = marker.arrayID {
+            let n = timeline.markers.filter { $0.arrayID == array }.count
+            Button("Select This Array (\(n))") { timeline.selectMarkers(timeline.markers.filter { $0.arrayID == array }.map(\.id)) }
+            Button("Clear This Array (\(n))") { timeline.clearArray(array) }
+        }
+        Divider()
         Button("Delete Marker") { timeline.removeMarker(marker.id) }
     }
 }
@@ -314,6 +345,10 @@ struct MarkerGroupActions: View {
         Button("Loop Between Them") {
             timeline.loopSelectedMarkers()
         }
+        let arrays = Set(timeline.markers.filter { ids.contains($0.id) }.compactMap(\.arrayID))
+        if !arrays.isEmpty {
+            Button(arrays.count == 1 ? "Clear Their Array" : "Clear Their \(arrays.count) Arrays") { arrays.forEach(timeline.clearArray) }
+        }
         Divider()
         Button("Delete \(ids.count) Markers") { timeline.removeMarkers(ids) }
     }
@@ -329,6 +364,79 @@ struct MarkerGroupActions: View {
         let t = text.trimmingCharacters(in: .whitespaces).lowercased()
         if t.hasSuffix("s"), let s = Double(t.dropLast().trimmingCharacters(in: .whitespaces)) { return Int((s * fps).rounded()) }
         return Int(t)
+    }
+}
+
+/// A song's tempo: BPM and beats per bar (or none). Offers the BPM in its audio file's name.
+@MainActor
+enum TempoPrompt {
+    static func ask(timeline: TimelineModel, song: Song) {
+        let alert = NSAlert()
+        alert.messageText = "Tempo for “\(song.name)”"
+        alert.informativeText = "For the beat grid and arraying markers. Quarter notes per minute. Line the grid up with Set Downbeat at Playhead (right-click GRID, or the song)."
+        let bpm = NSTextField(frame: NSRect(x: 0, y: 30, width: 90, height: 24))
+        bpm.placeholderString = "BPM"
+        bpm.stringValue = timeline.suggestedBPM(song).map(TimelineModel.bpmText) ?? ""
+        let meter = NSPopUpButton(frame: NSRect(x: 100, y: 29, width: 140, height: 26))
+        let choices = [2, 3, 4, 5, 6, 7]
+        meter.addItems(withTitles: choices.map { "\($0) beats a bar" })
+        meter.selectItem(at: choices.firstIndex(of: song.beatsPerBar ?? 4) ?? 2)
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 58))
+        view.addSubview(bpm)
+        view.addSubview(meter)
+        alert.accessoryView = view
+        alert.addButton(withTitle: "Set")
+        alert.addButton(withTitle: "Cancel")
+        if song.bpm != nil { alert.addButton(withTitle: "No Tempo") }
+        alert.window.initialFirstResponder = bpm
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            guard let value = Double(bpm.stringValue.trimmingCharacters(in: .whitespaces)), (20...400).contains(value) else { return }
+            timeline.setTempo(song.id, bpm: value, beatsPerBar: choices[max(0, meter.indexOfSelectedItem)])
+            timeline.showGrid = true
+        case .alertThirdButtonReturn:
+            timeline.setTempo(song.id, bpm: nil)
+        default: break
+        }
+    }
+}
+
+/// "Array from here": hits every 1/4 (or other value) after a marker, until the next marker, the
+/// song's end, the loop's end, or a count.
+@MainActor
+enum ArrayPrompt {
+    static func ask(timeline: TimelineModel, anchor: Marker) {
+        guard let item = timeline.song(of: anchor) else { return }
+        let song = timeline.songs.first { $0.id == item.song.id } ?? item.song
+        let alert = NSAlert()
+        alert.messageText = "Array \(timeline.markerTypes.name(anchor.kind)) markers from here"
+        alert.informativeText = "Adds a \(timeline.markerTypes.name(anchor.kind)) marker on every beat value after this one. They're kept together, so they clear in one go (right-click any of them › Clear Array)."
+        let bpm = NSTextField(frame: NSRect(x: 0, y: 64, width: 80, height: 24))
+        bpm.placeholderString = "BPM"
+        bpm.stringValue = timeline.suggestedBPM(song).map(TimelineModel.bpmText) ?? ""
+        let bpmLabel = NSTextField(labelWithString: "BPM")
+        bpmLabel.frame = NSRect(x: 86, y: 68, width: 40, height: 16)
+        let note = NSPopUpButton(frame: NSRect(x: 130, y: 63, width: 150, height: 26))
+        note.addItems(withTitles: NoteValue.allCases.map(\.title))
+        note.selectItem(at: NoteValue.allCases.firstIndex(of: .quarter) ?? 2)
+        let until = NSPopUpButton(frame: NSRect(x: 0, y: 30, width: 200, height: 26))
+        var extents: [(String, TimelineModel.ArrayExtent)] = [("Until the next marker", .nextMarker), ("To the end of the song", .songEnd)]
+        if timeline.loopRange != nil { extents.append(("To the end of the loop", .loopEnd)) }
+        extents.append(("This many:", .count(16)))
+        until.addItems(withTitles: extents.map(\.0))
+        let count = NSTextField(frame: NSRect(x: 208, y: 31, width: 60, height: 24))
+        count.stringValue = "16"
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 290, height: 92))
+        [bpm, bpmLabel, note, until, count].forEach(view.addSubview)
+        alert.accessoryView = view
+        alert.addButton(withTitle: "Add Markers")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = bpm
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let tempo = Double(bpm.stringValue.trimmingCharacters(in: .whitespaces)), (20...400).contains(tempo) else { return }
+        var extent = extents[max(0, until.indexOfSelectedItem)].1
+        if case .count = extent { extent = .count(max(1, Int(count.stringValue) ?? 16)) }
+        timeline.arrayMarkers(from: anchor, bpm: tempo, note: NoteValue.allCases[max(0, note.indexOfSelectedItem)], extent: extent)
     }
 }
 
@@ -366,12 +474,47 @@ struct MarkerList: View {
         return placed.filter { $0.time >= item.timelineStart - timeline.gap && $0.time < item.timelineEnd }.map(\.marker)
     }
 
+    /// A row: one marker, or a whole array of hits as one line.
+    private enum Entry: Identifiable {
+        case marker(Marker)
+        case array(UUID, [Marker])
+        var id: UUID {
+            switch self {
+            case .marker(let m): return m.id
+            case .array(let id, _): return id
+            }
+        }
+    }
+
+    private var entries: [Entry] {
+        let list = rows
+        let groups = Dictionary(grouping: list.filter { $0.arrayID != nil }, by: { $0.arrayID! })
+        var seen: Set<UUID> = []
+        var out: [Entry] = []
+        for m in list {
+            if let id = m.arrayID {
+                if seen.insert(id).inserted { out.append(.array(id, groups[id] ?? [m])) }
+            } else {
+                out.append(.marker(m))
+            }
+        }
+        return out
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(wholeSet ? "WHOLE SET" : "THIS SONG").font(Theme.mono(9)).tracking(1.2).foregroundStyle(Theme.grey)
                 Text("· \(rows.count)").font(Theme.mono(9)).foregroundStyle(Theme.quiet)
                 Spacer()
+                if rows.contains(where: { $0.arrayID != nil }) {
+                    Button("Clear arrays") {
+                        let arrays = Set(rows.compactMap(\.arrayID))
+                        arrays.forEach(timeline.clearArray)
+                    }
+                    .buttonStyle(.plain).font(Theme.mono(9, bold: true)).foregroundStyle(Theme.grey)
+                    .help("Remove every arrayed run of hits in this list; markers placed by hand stay")
+                }
                 Button("Select all") { timeline.selectMarkers(rows.map(\.id)) }
                     .buttonStyle(.plain).font(Theme.mono(9, bold: true)).foregroundStyle(Theme.grey)
                     .disabled(rows.isEmpty)
@@ -391,7 +534,12 @@ struct MarkerList: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(rows) { m in row(m).id(m.id) }
+                        ForEach(entries) { entry in
+                            switch entry {
+                            case .marker(let m): row(m).id(m.id)
+                            case .array(let id, let hits): arrayRow(id, hits).id(id)
+                            }
+                        }
                     }
                 }
                 .onChange(of: timeline.selectedMarkerID) { id in
@@ -416,6 +564,51 @@ struct MarkerList: View {
             }
             .keyboardShortcut(.delete, modifiers: []).opacity(0)
         )
+    }
+
+    /// A run of arrayed hits on one line: where it starts, how many, how often. Click goes to the
+    /// first; ⌘-click selects them all (then drag one on the timeline to move the lot).
+    @ViewBuilder private func arrayRow(_ id: UUID, _ hits: [Marker]) -> some View {
+        let first = hits[0]
+        let selected = hits.allSatisfy { timeline.selectedMarkerIDs.contains($0.id) }
+        let color = timeline.markerTypes.color(first.kind)
+        HStack(spacing: 8) {
+            Text(first.timecode(rate: timeline.rate).display(dropFrame: timeline.rate.isDropFrame))
+                .font(Theme.mono(11)).monospacedDigit().frame(width: 82, alignment: .leading)
+            HStack(spacing: 3) {
+                ForEach(0..<3, id: \.self) { _ in Rectangle().fill(color).frame(width: 4, height: 4) }
+                Text(timeline.markerTypes.name(first.kind)).font(Theme.grotesk(12, .light)).foregroundStyle(color)
+                    .lineLimit(1).minimumScaleFactor(0.8).padding(.leading, 3)
+            }
+            .frame(width: 92, alignment: .leading)
+            Text("\(hits.count) × \(first.arrayStep ?? "beat")" + (first.label.isEmpty ? "" : "  ·  \(first.label)"))
+                .font(Theme.mono(11)).foregroundStyle(Theme.grey).lineLimit(1)
+            Spacer(minLength: 0)
+            Button { timeline.clearArray(id) } label: {
+                Text("×").font(Theme.grotesk(14)).foregroundStyle(Theme.grey).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Clear these \(hits.count) hits")
+        }
+        .padding(.vertical, 4).padding(.horizontal, 6)
+        .background(selected ? Theme.fill : Color.clear)
+        .overlay(alignment: .leading) { if selected { Rectangle().fill(Theme.paper).frame(width: 2) } }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if NSEvent.modifierFlags.contains(.command) || NSEvent.modifierFlags.contains(.shift) {
+                let ids = hits.map(\.id)
+                if selected { ids.forEach { timeline.select($0, toggle: true) } } else { timeline.selectedMarkerIDs.formUnion(ids) }
+            } else {
+                timeline.go(to: first)
+            }
+        }
+        .contextMenu {
+            Button("Go To First") { timeline.go(to: first) }
+            Button("Select All \(hits.count)") { timeline.selectMarkers(hits.map(\.id)) }
+            Divider()
+            Button("Clear This Array (\(hits.count))") { timeline.clearArray(id) }
+        }
+        .help("\(hits.count) \(timeline.markerTypes.name(first.kind)) hits every \(first.arrayStep ?? "beat"), arrayed. ⌘-click to select them all.")
     }
 
     @ViewBuilder private func row(_ m: Marker) -> some View {
@@ -624,7 +817,7 @@ struct MarkerKeys: NSViewRepresentable {
 
     func updateNSView(_ view: Catcher, context: Context) { view.timeline = timeline }
 
-    enum Key: Equatable { case next, previous, again, type(Int), loopIn, loopOut, loop, clear }
+    enum Key: Equatable { case next, previous, again, type(Int), loopIn, loopOut, loop, clearLoop, clear }
 
     /// What a key press means, or nil to let it through. Layout-independent for [ and ]: their
     /// key positions (ANSI 33 and 30) count even where the layout puts other characters there.
@@ -636,7 +829,7 @@ struct MarkerKeys: NSViewRepresentable {
         case "m": return .again
         case "i": return .loopIn
         case "o": return .loopOut
-        case "l": return .loop
+        case "l": return modifiers.contains(.shift) ? .clearLoop : .loop
         case "\u{1b}": return .clear
         case let c where c.count == 1 && ("1"..."9").contains(c): return .type(Int(c)!)
         default:
@@ -669,6 +862,7 @@ struct MarkerKeys: NSViewRepresentable {
                 case .loopIn: if !event.isARepeat { timeline.setLoopIn() }
                 case .loopOut: if !event.isARepeat { timeline.setLoopOut() }
                 case .loop: if !event.isARepeat { timeline.toggleLoop() }
+                case .clearLoop: if !event.isARepeat { timeline.clearLoop() }
                 case .clear:
                     guard timeline.selectedMarkerIDs.count > 1 else { return event }
                     timeline.clearMarkerSelection()

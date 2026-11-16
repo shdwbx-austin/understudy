@@ -281,6 +281,10 @@ private struct PlaylistRow: View {
                 Button("Add to the Set") { timeline.addToSet(song.id) }
             }
             Button("Choose Audio…") { timeline.chooseAudio(for: song.id) }
+            Button(song.bpm.map { "Tempo (\(TimelineModel.bpmText($0)) BPM)…" } ?? "Tempo…") { TempoPrompt.ask(timeline: timeline, song: song) }
+            if timeline.currentSongID == song.id, song.bpm != nil {
+                Button("Set Downbeat at Playhead") { timeline.setDownbeatAtPlayhead() }
+            }
             if song.audioPath != nil { Button("Remove Audio") { timeline.removeAudio(from: song.id) } }
             if song.audioLTCChannel != nil {
                 Toggle("Play Timecode Channel", isOn: Binding(get: { song.keepLTCChannel },
@@ -307,7 +311,8 @@ private struct PlaylistRow: View {
 // MARK: - Current song, up close
 
 /// The song under the playhead (with its lead-in) stretched across the width, a ruler with show
-/// timecode, and the playhead. Drag for fine scrubbing within the song. Zoom in (pinch, ⌘=, or the
+/// timecode, and the playhead. Drag for fine scrubbing within the song; drag along the ruler to
+/// draw a loop. Zoom in (pinch, ⌘=, or the
 /// + by the ruler) to edit a section: the view follows the playhead, and the ruler goes down to
 /// single frames.
 struct SongDetailTrack: View {
@@ -315,6 +320,8 @@ struct SongDetailTrack: View {
     /// Where the visible window starts when zoomed in (timeline seconds), kept on the playhead.
     @State private var viewStart: Double = 0
     @State private var pinchBase: Double?
+    /// A loop being dragged out along the ruler (timeline seconds), shown before it's set.
+    @State private var rulerLoop: (from: Double, to: Double)?
 
     var body: some View {
         GeometryReader { geo in
@@ -342,16 +349,10 @@ struct SongDetailTrack: View {
                             .frame(width: leadEnd - max(0, x(from)), height: height - 22)
                             .offset(x: max(0, x(from)), y: 22)
                     }
-                    // The loop, if it's on this part of the song.
-                    if let r = timeline.loopRange, r.upperBound > start, r.lowerBound < end {
-                        let a = max(0, x(r.lowerBound)), b = min(width, x(r.upperBound))
-                        Rectangle().fill(Theme.paper.opacity(0.07))
-                            .frame(width: max(1, b - a), height: height - 22)
-                            .overlay(alignment: .top) { Rectangle().fill(Theme.paper).frame(height: 2) }
-                            .offset(x: a, y: 22)
-                            .allowsHitTesting(false)
-                        Text("LOOP").font(Theme.mono(8, bold: true)).tracking(1).foregroundStyle(Theme.paper)
-                            .offset(x: a + 4, y: height - 14)
+                    // Beat grid: bar lines, and beats when there's room.
+                    if timeline.showGrid, let grid = timeline.grid(for: item.song) {
+                        BeatGridLines(grid: grid, showStart: item.showStart, songStart: item.timelineStart,
+                                      viewStart: start, scale: scale, height: height)
                             .allowsHitTesting(false)
                     }
                     // Waveform: only the part on screen, so zooming in stays light.
@@ -375,6 +376,21 @@ struct SongDetailTrack: View {
                         Rectangle().strokeBorder(Theme.paper, lineWidth: 1)
                             .frame(width: s1 - s0, height: height - 22)
                             .offset(x: s0, y: 22)
+                    }
+                    // The loop: everything outside it dimmed, solid edges, a bar along the top.
+                    let shownLoop: Range<Double>? = rulerLoop.map { min($0.from, $0.to)..<max($0.from, $0.to) } ?? timeline.loopRange
+                    if let r = shownLoop, r.upperBound > start, r.lowerBound < end {
+                        let a = max(0, x(r.lowerBound)), b = min(width, x(r.upperBound))
+                        let body = height - 22
+                        Group {
+                            if a > 0 { Rectangle().fill(Theme.ink.opacity(0.7)).frame(width: a, height: body).offset(y: 22) }
+                            if b < width { Rectangle().fill(Theme.ink.opacity(0.7)).frame(width: width - b, height: body).offset(x: b, y: 22) }
+                            Rectangle().fill(Theme.paper.opacity(0.11)).frame(width: max(1, b - a), height: body).offset(x: a, y: 22)
+                            Rectangle().fill(Theme.paper).frame(width: max(1, b - a), height: 3).offset(x: a, y: 22)
+                            if x(r.lowerBound) >= 0 { Rectangle().fill(Theme.paper).frame(width: 2, height: body).offset(x: a - 1, y: 22) }
+                            if x(r.upperBound) <= width { Rectangle().fill(Theme.paper).frame(width: 2, height: body).offset(x: b - 1, y: 22) }
+                        }
+                        .allowsHitTesting(false)
                     }
                     // Ruler: song-relative time, frames when zoomed in close.
                     let first = (max(0, start - item.timelineStart) / step).rounded(.up) * step
@@ -406,13 +422,25 @@ struct SongDetailTrack: View {
                                  playing: timeline.isPlaying, viewStart: $viewStart)
                 }
                 .contentShape(Rectangle())
-                // Click or drag within the view; while playing it keeps playing from there.
+                // Click or drag within the song to scrub; while playing it keeps playing from there.
+                // Drag along the ruler (the top strip) to draw a loop.
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
-                            timeline.scrub(to: start + min(max(0, value.location.x), width) / scale)
+                            let at = start + min(max(0, value.location.x), width) / scale
+                            if value.startLocation.y < 22, abs(value.translation.width) > 3 {
+                                rulerLoop = (start + min(max(0, value.startLocation.x), width) / scale, at)
+                            } else if rulerLoop == nil {
+                                timeline.scrub(to: at)
+                            }
                         }
-                        .onEnded { _ in timeline.endScrub() }
+                        .onEnded { _ in
+                            if let r = rulerLoop {
+                                timeline.setLoopSection(from: r.from, to: r.to)
+                                rulerLoop = nil
+                            }
+                            timeline.endScrub()
+                        }
                 )
                 .simultaneousGesture(
                     MagnificationGesture()
@@ -423,7 +451,13 @@ struct SongDetailTrack: View {
                         }
                         .onEnded { _ in pinchBase = nil }
                 )
-                .overlay(alignment: .topTrailing) { ZoomControls(timeline: timeline).padding(.trailing, 4) }
+                .overlay(alignment: .topTrailing) { ZoomControls(timeline: timeline, song: item.song).padding(.trailing, 4) }
+                .overlay(alignment: .bottomLeading) {
+                    if let r = timeline.loopRange, r.upperBound > start, r.lowerBound < end {
+                        LoopChip(timeline: timeline, range: r, songStart: item.timelineStart, fps: fps)
+                            .offset(x: min(max(4, x(r.lowerBound) + 6), max(4, width - 330)), y: -6)
+                    }
+                }
             } else {
                 Rectangle().fill(Theme.fill)
             }
@@ -485,13 +519,98 @@ private struct ZoomFollower: View {
     private func clamp(_ s: Double) -> Double { min(max(from, s), max(from, to - span)) }
 }
 
-/// − 4× + FIT, by the ruler.
+/// The loop's times and length, with × to clear it. Sits at the bottom of the loop.
+private struct LoopChip: View {
+    @ObservedObject var timeline: TimelineModel
+    let range: Range<Double>
+    let songStart: Double
+    let fps: Double
+
+    var body: some View {
+        let a = range.lowerBound - songStart, b = range.upperBound - songStart
+        HStack(spacing: 10) {
+            Text(timeline.loop.mode == .song ? "LOOP SONG" : "LOOP").font(Theme.mono(9, bold: true)).tracking(1.2)
+            Text("\(Self.time(a, fps)) – \(Self.time(b, fps))").font(Theme.mono(9))
+            Text(String(format: "%.1f S", b - a)).font(Theme.mono(9)).foregroundStyle(Theme.ink.opacity(0.6))
+            Button { timeline.clearLoop() } label: {
+                Text("×").font(Theme.grotesk(15, .medium)).frame(width: 16, height: 16).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Clear the loop (⇧L)")
+        }
+        .foregroundStyle(Theme.ink)
+        .padding(.leading, 8).padding(.trailing, 4).padding(.vertical, 3)
+        .background(Rectangle().fill(Theme.paper))
+        .fixedSize()
+    }
+
+    /// m:ss.ff, song-relative (negative in the lead-in).
+    static func time(_ s: Double, _ fps: Double) -> String {
+        let sign = s < 0 ? "-" : ""
+        let frames = Int((abs(s) * fps).rounded())
+        let per = max(1, Int(fps.rounded()))
+        let whole = frames / per
+        return sign + String(format: "%d:%02d.%02d", whole / 60, whole % 60, frames % per)
+    }
+}
+
+/// Bar lines (and beat lines when they're far enough apart) across the current song, with bar
+/// numbers along the bottom when there's room. One Canvas, only the visible span.
+private struct BeatGridLines: View {
+    let grid: BeatGrid
+    let showStart: Double
+    let songStart: Double
+    let viewStart: Double
+    let scale: Double
+    let height: CGFloat
+
+    var body: some View {
+        Canvas { context, size in
+            let beatPx = grid.beatSeconds * scale
+            let barPx = beatPx * Double(grid.beatsPerBar)
+            // Lines only where they read as a grid, not a barcode: bars 12 pt apart, beats 10.
+            guard barPx >= 12 else { return }
+            // Timeline time ↔ show seconds within this song.
+            let from = showStart + (viewStart - songStart)
+            let to = from + Double(size.width) / scale
+            for beat in grid.beats(from: from, to: to) {
+                if !beat.isBarStart && beatPx < 10 { continue }
+                let x = CGFloat((beat.seconds - showStart + songStart - viewStart) * scale)
+                let line = CGRect(x: x, y: 22, width: 1, height: size.height - 22)
+                context.fill(Path(line), with: .color(beat.isBarStart ? Theme.paper.opacity(0.22) : Theme.paper.opacity(0.08)))
+                if beat.isBarStart, barPx >= 34 {
+                    context.draw(Text("\(beat.bar)").font(Theme.mono(8)).foregroundColor(Theme.grey),
+                                 at: CGPoint(x: x + 3, y: size.height - 8), anchor: .leading)
+                }
+            }
+        }
+        .frame(height: height)
+    }
+}
+
+/// − 4× + FIT, by the ruler, and the beat grid's switch and tempo.
 private struct ZoomControls: View {
     @ObservedObject var timeline: TimelineModel
+    let song: Song
 
     var body: some View {
         let zoom = timeline.detailZoom
         HStack(spacing: 8) {
+            Button {
+                if song.bpm == nil { TempoPrompt.ask(timeline: timeline, song: song) } else { timeline.showGrid.toggle() }
+            } label: {
+                Text(song.bpm.map { "GRID \(TimelineModel.bpmText($0))" } ?? "GRID")
+                    .font(Theme.mono(9, bold: timeline.showGrid && song.bpm != nil))
+                    .foregroundStyle(timeline.showGrid && song.bpm != nil ? Theme.paper : Theme.grey)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(song.bpm == nil ? "Set this song's tempo to see a beat grid" : "Beat grid on or off (right-click the song for its tempo and downbeat)")
+            .contextMenu {
+                Button("Tempo…") { TempoPrompt.ask(timeline: timeline, song: song) }
+                Button("Set Downbeat at Playhead") { timeline.setDownbeatAtPlayhead() }
+            }
+            Rectangle().fill(Theme.rule).frame(width: 1, height: 10)
             button("−", "Zoom out (⌘−)", enabled: zoom > 1) { timeline.setZoom(zoom / 2) }
             Text(zoom <= 1.0001 ? "SONG" : String(format: zoom < 10 ? "%.1f×" : "%.0f×", zoom))
                 .font(Theme.mono(9)).foregroundStyle(zoom > 1 ? Theme.paper : Theme.grey)
