@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Copy and paste markers.** ⌘C copies the selected markers (any types; arrays stay arrays), ⌘X cuts, ⌘V pastes them at the playhead keeping their spacing, in any song (snapped when Snap is on), and selects them. ⌘A selects the song's markers. A readable list goes on the clipboard for notes. Text fields keep their own copy and paste. Also in the Markers menu and right-click.
+- **Move a whole array.** Dragging any hit of an array moves the whole run (snapped when Snap is on); the marker it came from stays. Arrays and selections have Move ▸ by a beat or bar (with a tempo), a frame, a second, or any amount, and Quantize.
+
 ## 0.9.0 — 2026-11-16
 
 - **Snap to the grid.** SNAP by GRID turns it on and picks the value (bar, 1/2, 1/4, 1/8, 1/16, 1/8 triplet). New markers and dragged markers land on the nearest line; dragging one of a selection moves them all by the same snapped amount.

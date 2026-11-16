@@ -230,6 +230,11 @@ private struct MarkerCommands: View {
         Button("Name Selected Marker   ↩") { timeline.nameSelectedMarker() }
             .disabled(timeline.selectedMarkerID == nil)
         Divider()
+        Button("Copy Selected Markers   ⌘C") { timeline.copyMarkers() }
+        Button("Cut Selected Markers   ⌘X") { timeline.cutMarkers() }
+        Button("Paste Markers at Playhead   ⌘V") { timeline.pasteMarkers() }
+        Button("Select This Song's Markers   ⌘A") { timeline.selectSongMarkers() }
+        Divider()
         Toggle("Snap to Grid", isOn: $timeline.snap)
         Button("Quantize Selected Markers   Q") { timeline.quantizeSelection() }
         Divider()
