@@ -60,7 +60,7 @@ HyperDecks can't chase LTC natively. Understudy reads the show LTC itself and ha
 
 ## Installing and updates
 
-Install with `Understudy-<version>.pkg` from the [latest release](https://github.com/shdwbx-austin/understudy/releases/latest). After that Understudy updates itself: it checks GitHub once a day (or Understudy › Check for Updates…) and installs new versions on relaunch. Releasing is in [docs/RELEASING.md](docs/RELEASING.md).
+Install with `Understudy-<version>.pkg` from the [latest release](https://github.com/shdwbx-austin/understudy/releases/latest). After that Understudy updates itself: it checks GitHub once a day (or Understudy › Check for Updates…) and installs new versions on relaunch. Releasing is in [docs/RELEASING.md](docs/RELEASING.md); how the UI is designed and built is in [docs/UI-GUIDE.md](docs/UI-GUIDE.md).
 
 ## Projects
 
