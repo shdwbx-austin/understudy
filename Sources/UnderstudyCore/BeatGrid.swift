@@ -114,6 +114,21 @@ public enum MarkerArray {
 }
 
 public enum SongTempo {
+    /// What someone types in a BPM box: "120", "120 bpm", "92,5", " 128.0 ". 20–400 only.
+    public static func parse(_ text: String) -> Double? {
+        var t = text.trimmingCharacters(in: .whitespaces).lowercased()
+        if t.hasSuffix("bpm") { t = String(t.dropLast(3)).trimmingCharacters(in: .whitespaces) }
+        t = t.replacingOccurrences(of: ",", with: ".")
+        guard let value = Double(t), (20...400).contains(value) else { return nil }
+        return value
+    }
+
+    /// Every `stride` bars, the smallest of 1, 2, 4… that puts lines at least `minimum` points
+    /// apart (nil when even 64 bars is too tight).
+    public static func barStride(barPoints: Double, minimum: Double) -> Int? {
+        [1, 2, 4, 8, 16, 32, 64].first { Double($0) * barPoints >= minimum }
+    }
+
     /// "TP - Heart - 120 BPM - SMPTE 03.wav" → 120; "92.5bpm" → 92.5. Plausible tempos only.
     public static func bpm(fromFileName name: String) -> Double? {
         let pattern = #"(?i)(?<![\d.])(\d{2,3}(?:\.\d+)?)\s*-?\s*bpm"#

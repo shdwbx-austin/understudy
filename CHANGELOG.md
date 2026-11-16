@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed: the beat grid didn't appear after setting a tempo** (and GRID kept asking for one). The tempo was saved, but the timeline drew from a copy of the song that only refreshed when the set changed. Tempo and downbeat changes now show at once, without interrupting playback.
+- **The grid shows without zooming**: every bar, or every 2nd, 4th or 8th bar when they'd be too close; beats appear as you zoom in.
+- **Arraying is clearer**: the tempo box takes “120”, “120 bpm” or “92,5”, and an empty or unreadable tempo, or no room for hits, now says so instead of doing nothing. New hits are selected (so they stand out and can be dragged together) and the grid turns on.
+
 ## 0.7.0 — 2026-11-16
 
 - **A clearer loop.** Outside the loop is dimmed, with solid edges, a bar along the top and a label with its times and length. Clear it with the label's ×, the × by LOOP, Clear Loop in its menu, or ⇧L.

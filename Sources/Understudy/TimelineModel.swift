@@ -820,6 +820,15 @@ final class TimelineModel: ObservableObject {
         guard let i = songs.firstIndex(where: { $0.id == id }) else { return }
         songs[i].bpm = bpm.flatMap { $0 > 0 ? $0 : nil }
         if let beatsPerBar { songs[i].beatsPerBar = beatsPerBar == 4 ? nil : max(1, beatsPerBar) }
+        songDetailsChanged()
+    }
+
+    /// A song's tempo or downbeat changed: the laid-out set carries copies of the songs (the
+    /// views read the grid from them), so lay it out again. Timing is unchanged, so playback
+    /// carries on without a restart.
+    private func songDetailsChanged() {
+        layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, downtime: downtime, library: songs)
+        player.update(layout: layout)
         save()
     }
 
@@ -830,7 +839,7 @@ final class TimelineModel: ObservableObject {
         guard let i = songs.firstIndex(where: { $0.id == item.song.id }) else { return }
         let t = isPlaying ? transport.position(at: HostClock.now()) : playhead
         songs[i].downbeat = t - item.timelineStart
-        save()
+        songDetailsChanged()
     }
 
     /// The set song a marker sits in.
@@ -872,8 +881,14 @@ final class TimelineModel: ObservableObject {
             return 0
         }
         let id = UUID()
-        markers += frames.map { Marker(frame: $0, kind: anchor.kind, label: anchor.label, arrayID: id, arrayStep: note.short) }
+        let hits = frames.map { Marker(frame: $0, kind: anchor.kind, label: anchor.label, arrayID: id, arrayStep: note.short) }
+        markers += hits
         markers.sort { $0.frame < $1.frame }
+        hiddenMarkerKinds.remove(anchor.kind)
+        showGrid = true
+        // Selected, so they stand out (and can be dragged together, or cleared from the list).
+        selectedMarkerIDs = Set(hits.map(\.id))
+        selectedMarkerID = hits.first?.id
         message = "Added \(frames.count) \(timeline_typeName(anchor.kind)) hits, every \(note.short) at \(Self.bpmText(bpm)) BPM. Clear them from any of them (right-click › Clear Array)."
         save()
         return frames.count

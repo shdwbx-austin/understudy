@@ -568,17 +568,19 @@ private struct BeatGridLines: View {
         Canvas { context, size in
             let beatPx = grid.beatSeconds * scale
             let barPx = beatPx * Double(grid.beatsPerBar)
-            // Lines only where they read as a grid, not a barcode: bars 12 pt apart, beats 10.
-            guard barPx >= 12 else { return }
+            // Lines only where they read as a grid, not a barcode: every bar, or every 2nd, 4th…
+            // so they're at least 14 pt apart; beats once they're 10 pt apart.
+            guard let stride = SongTempo.barStride(barPoints: barPx, minimum: 14) else { return }
             // Timeline time ↔ show seconds within this song.
             let from = showStart + (viewStart - songStart)
             let to = from + Double(size.width) / scale
             for beat in grid.beats(from: from, to: to) {
                 if !beat.isBarStart && beatPx < 10 { continue }
+                if beat.isBarStart, (beat.bar - 1) % stride != 0 { continue }
                 let x = CGFloat((beat.seconds - showStart + songStart - viewStart) * scale)
                 let line = CGRect(x: x, y: 22, width: 1, height: size.height - 22)
                 context.fill(Path(line), with: .color(beat.isBarStart ? Theme.paper.opacity(0.22) : Theme.paper.opacity(0.08)))
-                if beat.isBarStart, barPx >= 34 {
+                if beat.isBarStart, barPx * Double(stride) >= 34 {
                     context.draw(Text("\(beat.bar)").font(Theme.mono(8)).foregroundColor(Theme.grey),
                                  at: CGPoint(x: x + 3, y: size.height - 8), anchor: .leading)
                 }

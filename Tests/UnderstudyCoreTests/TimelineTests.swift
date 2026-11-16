@@ -391,3 +391,22 @@ struct BeatGridTests {
         #expect(back.bpm == nil && back.downbeat == nil)
     }
 }
+
+struct TempoEntryTests {
+    @Test func bpmAsPeopleTypeIt() {
+        #expect(SongTempo.parse("120") == 120)
+        #expect(SongTempo.parse(" 120 bpm ") == 120)
+        #expect(SongTempo.parse("92,5") == 92.5)
+        #expect(SongTempo.parse("128.0BPM") == 128)
+        #expect(SongTempo.parse("") == nil)
+        #expect(SongTempo.parse("fast") == nil)
+        #expect(SongTempo.parse("1200") == nil)
+    }
+
+    @Test func gridThinsToEveryFewBarsWhenTight() {
+        // A 4-minute song across 670 pt at 120 BPM: a bar is ~5.6 pt, so every 4th bar.
+        #expect(SongTempo.barStride(barPoints: 5.6, minimum: 14) == 4)
+        #expect(SongTempo.barStride(barPoints: 20, minimum: 14) == 1)
+        #expect(SongTempo.barStride(barPoints: 0.1, minimum: 14) == nil)
+    }
+}

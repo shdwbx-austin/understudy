@@ -391,7 +391,10 @@ enum TempoPrompt {
         alert.window.initialFirstResponder = bpm
         switch alert.runModal() {
         case .alertFirstButtonReturn:
-            guard let value = Double(bpm.stringValue.trimmingCharacters(in: .whitespaces)), (20...400).contains(value) else { return }
+            guard let value = SongTempo.parse(bpm.stringValue) else {
+                ArrayPrompt.complain("“\(bpm.stringValue)” isn't a tempo.", "Type the BPM as a number between 20 and 400, e.g. 120.")
+                return ask(timeline: timeline, song: song)
+            }
             timeline.setTempo(song.id, bpm: value, beatsPerBar: choices[max(0, meter.indexOfSelectedItem)])
             timeline.showGrid = true
         case .alertThirdButtonReturn:
@@ -432,11 +435,26 @@ enum ArrayPrompt {
         alert.addButton(withTitle: "Add Markers")
         alert.addButton(withTitle: "Cancel")
         alert.window.initialFirstResponder = bpm
-        guard alert.runModal() == .alertFirstButtonReturn,
-              let tempo = Double(bpm.stringValue.trimmingCharacters(in: .whitespaces)), (20...400).contains(tempo) else { return }
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard let tempo = SongTempo.parse(bpm.stringValue) else {
+            complain(bpm.stringValue.isEmpty ? "What's the tempo?" : "“\(bpm.stringValue)” isn't a tempo.",
+                     "Type the song's BPM as a number between 20 and 400, e.g. 120. It's saved with the song for next time.")
+            return ask(timeline: timeline, anchor: anchor)
+        }
         var extent = extents[max(0, until.indexOfSelectedItem)].1
-        if case .count = extent { extent = .count(max(1, Int(count.stringValue) ?? 16)) }
-        timeline.arrayMarkers(from: anchor, bpm: tempo, note: NoteValue.allCases[max(0, note.indexOfSelectedItem)], extent: extent)
+        if case .count = extent { extent = .count(max(1, Int(count.stringValue.trimmingCharacters(in: .whitespaces)) ?? 16)) }
+        let added = timeline.arrayMarkers(from: anchor, bpm: tempo, note: NoteValue.allCases[max(0, note.indexOfSelectedItem)], extent: extent)
+        if added == 0 {
+            complain("No markers added", (timeline.message ?? "There's no room for a hit there.") + " Try “To the end of the song” or a count.")
+        }
+    }
+
+    static func complain(_ title: String, _ detail: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = detail
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 }
 
