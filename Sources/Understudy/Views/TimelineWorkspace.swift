@@ -20,9 +20,14 @@ struct TimelineWorkspace: View {
                 SectionCaption(text: "Set · drag or swipe to scrub · swipe the song below to step frames")
                 TimelineTrack(timeline: timeline)
                     .frame(height: 84)
+                MarkerBar(timeline: timeline)
                 // Takes whatever height is spare: taller on a big show monitor, easier to scrub.
-                SongDetailTrack(timeline: timeline)
-                    .frame(minHeight: 110, maxHeight: 300)
+                HStack(alignment: .top, spacing: Theme.gutter) {
+                    SongDetailTrack(timeline: timeline)
+                    MarkerList(timeline: timeline)
+                        .frame(width: max(240, column * 0.95))
+                }
+                .frame(minHeight: 130, maxHeight: 320)
                 TransportBar(timeline: timeline, compact: true)
                 Rule()
                 HStack(alignment: .firstTextBaseline, spacing: Theme.gutter) {
@@ -30,7 +35,7 @@ struct TimelineWorkspace: View {
                     TakePicker()
                 }
                 DeckChips()
-                if let message = timeline.message {
+                if let message = model.linkMessage ?? timeline.message {
                     Text(message).font(Theme.mono(10)).foregroundStyle(Theme.grey).lineLimit(3)
                 }
             }
@@ -332,6 +337,7 @@ struct SongDetailTrack: View {
                     }
                     .padding(.leading, timeline.gap * scale + 8)
                     .padding(.top, 30)
+                    MarkerOverlay(timeline: timeline, from: from, scale: scale, width: geo.size.width, height: geo.size.height)
                     // Playhead.
                     let width = geo.size.width
                     PlayheadLine(head: timeline.head, playing: timeline.isPlaying, height: geo.size.height) { t in

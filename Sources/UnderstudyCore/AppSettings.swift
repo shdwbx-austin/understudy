@@ -93,6 +93,24 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var danteOut = false
     /// Network port (BSD name, e.g. "en8") Dante should be on, watched for a link; nil = any.
     public var danteInterface: String?
+    /// OSC control in (Stream Deck via Companion, grandMA3, …): play, pause, markers.
+    public var oscEnabled = true
+    public var oscPort = 9000
+    /// grandMA3 that markers are deployed to over OSC (its OSC line needs Receive Command on).
+    public var ma3Host = ""
+    public var ma3Port = 8000
+    /// The OSC prefix set on the MA3's OSC line ("gma3" → /gma3/cmd); empty = none.
+    public var ma3Prefix = "gma3"
+    /// Sequence and timecode show the deploy replaces.
+    public var ma3Sequence = 1001
+    public var ma3Timecode = 101
+    /// disguise director (or the machine running Designer) for pushing markers to a track.
+    public var d3Host = ""
+    /// Track to write to by name; empty = the track Designer has selected.
+    public var d3Track = ""
+    public var d3Style: D3Push.Style = .notes
+    /// For tracks without TC tags: the show timecode at the track's start.
+    public var d3TrackStart = "00:00:00:00"
     /// Stop the Mac sleeping while Understudy is open (a dedicated show machine).
     public var keepAwake = true
     /// After a restart or crash, go back to the mode Understudy was in (Record or Play) instead of Stop.
@@ -135,6 +153,17 @@ public struct AppSettings: Codable, Equatable, Sendable {
         ltcOutUseTrackTimecode = (try? c.decodeIfPresent(Bool.self, forKey: .ltcOutUseTrackTimecode)) ?? d.ltcOutUseTrackTimecode
         danteOut = (try? c.decodeIfPresent(Bool.self, forKey: .danteOut)) ?? d.danteOut
         danteInterface = (try? c.decodeIfPresent(String.self, forKey: .danteInterface)) ?? d.danteInterface
+        oscEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .oscEnabled)) ?? d.oscEnabled
+        oscPort = (try? c.decodeIfPresent(Int.self, forKey: .oscPort)) ?? d.oscPort
+        ma3Host = (try? c.decodeIfPresent(String.self, forKey: .ma3Host)) ?? d.ma3Host
+        ma3Port = (try? c.decodeIfPresent(Int.self, forKey: .ma3Port)) ?? d.ma3Port
+        ma3Prefix = (try? c.decodeIfPresent(String.self, forKey: .ma3Prefix)) ?? d.ma3Prefix
+        ma3Sequence = (try? c.decodeIfPresent(Int.self, forKey: .ma3Sequence)) ?? d.ma3Sequence
+        ma3Timecode = (try? c.decodeIfPresent(Int.self, forKey: .ma3Timecode)) ?? d.ma3Timecode
+        d3Host = (try? c.decodeIfPresent(String.self, forKey: .d3Host)) ?? d.d3Host
+        d3Track = (try? c.decodeIfPresent(String.self, forKey: .d3Track)) ?? d.d3Track
+        d3Style = (try? c.decodeIfPresent(D3Push.Style.self, forKey: .d3Style)) ?? d.d3Style
+        d3TrackStart = (try? c.decodeIfPresent(String.self, forKey: .d3TrackStart)) ?? d.d3TrackStart
         keepAwake = (try? c.decodeIfPresent(Bool.self, forKey: .keepAwake)) ?? d.keepAwake
         resumeLastMode = (try? c.decodeIfPresent(Bool.self, forKey: .resumeLastMode)) ?? d.resumeLastMode
         normalizeDecks()

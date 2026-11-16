@@ -49,6 +49,14 @@ final class AppModel: ObservableObject {
     /// While recording from the timeline (dev Record) with LTC out off: the song-audio device's
     /// channel the songs' own timecode plays on, the one after the music pair (e.g. 3).
     @Published private(set) var devTimecodeChannel: Int?
+    /// OSC control in: listening state ("Listening on 9000"), or what's wrong.
+    @Published private(set) var oscStatus = "Off"
+    /// The last OSC message received, for checking a controller is reaching Understudy.
+    @Published private(set) var lastOSC: String?
+    /// Result of the last marker export, deploy or push.
+    @Published var linkMessage: String?
+    @Published private(set) var linkBusy = false
+    let osc = OSCServer()
     /// Dante out through Dante Virtual Soundcard: off, sending, or what's stopping it.
     @Published private(set) var danteStatus: DanteOut.Status = .off
     private var danteSoundcard: DanteOut.Device?
@@ -144,6 +152,9 @@ final class AppModel: ObservableObject {
         }
         applyConfidence()
         applyTimelineOutputs()
+        osc.onMessage = { [weak self] message, from in self?.handleOSC(message, from: from) }
+        osc.onState = { [weak self] in self?.refreshOSCStatus() }
+        applyOSC()
         // Back into Record or Play after a restart, if asked. Decks are brought into the mode as
         // they connect (deckReady); a deck that kept recording through the restart is left alone.
         if loaded.resumeLastMode,
@@ -654,6 +665,7 @@ final class AppModel: ObservableObject {
         if settings.chase != old.chase || settings.deckTimecodeAtVideoRate != old.deckTimecodeAtVideoRate {
             decks.forEach { $0.resetChase() }
         }
+        if settings.oscEnabled != old.oscEnabled || settings.oscPort != old.oscPort { applyOSC() }
     }
 
     // MARK: Loop
@@ -932,4 +944,162 @@ final class AppModel: ObservableObject {
 final class Readout: ObservableObject {
     @Published var ltcText = "--:--:--:--"
     @Published var inputLevels: [Float] = []
+}
+
+// MARK: - OSC control and show links
+
+extension AppModel {
+    func applyOSC() {
+        if settings.oscEnabled { osc.listen(on: settings.oscPort) } else { osc.stop() }
+        refreshOSCStatus()
+    }
+
+    func refreshOSCStatus() {
+        let status = !settings.oscEnabled ? "Off" : (osc.problem ?? "Listening on UDP \(settings.oscPort)")
+        if status != oscStatus { oscStatus = status }
+    }
+
+    /// A Stream Deck, MA3 or anything else asked for something.
+    func handleOSC(_ message: OSCMessage, from: String) {
+        let args = message.arguments.map(\.text).joined(separator: " ")
+        lastOSC = "\(message.address)\(args.isEmpty ? "" : " " + args)  ·  \(from)"
+        guard let command = RemoteControl.command(for: message) else { return }
+        perform(command)
+    }
+
+    func perform(_ command: RemoteCommand) {
+        switch command {
+        case .play: timeline.play()
+        case .pause, .stop: timeline.pause()
+        case .togglePlay: timeline.togglePlay()
+        case .nextSong: timeline.nextSong()
+        case .previousSong: timeline.previousSong()
+        case .gotoSong(let n): timeline.jump(toSong: n - 1)
+        case .addMarker(let kind, let label): timeline.addMarker(kind, label: label)
+        case .nextMarker: timeline.nextMarker()
+        case .previousMarker: timeline.previousMarker()
+        case .mode(let name):
+            let modes: [String: Mode] = ["stop": .stop, "record": .record, "play": .playback, "timeline": .timeline]
+            if let m = modes[name] { requestMode(m) }
+        }
+    }
+
+    // MARK: Markers out
+
+    private var markerSetName: String {
+        let name = timeline.currentSetlist?.name ?? "Set"
+        return "Understudy · \(name)"
+    }
+
+    /// Markers on the set (or all, if the set has none placed).
+    var markersToSend: [Marker] {
+        let placed = timeline.layout.placed(timeline.markers).map(\.marker)
+        return placed.isEmpty ? timeline.markers : placed
+    }
+
+    func exportMarkersCSV() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(timeline.currentSetlist?.name ?? "Markers") markers.csv"
+        panel.allowedContentTypes = [.commaSeparatedText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let csv = MarkerExport.csv(timeline.markers, rate: ltcRate, songs: timeline.songs)
+        do {
+            try csv.write(to: url, atomically: true, encoding: .utf8)
+            linkMessage = "Exported \(timeline.markers.count) markers to \(url.lastPathComponent)."
+        } catch {
+            linkMessage = "Couldn't write \(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    /// A grandMA3 plugin (XML + Lua) that builds the sequence and timecode show on the console.
+    func exportMA3Plugin() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "understudy_markers.xml"
+        panel.allowedContentTypes = [.xml]
+        panel.message = "Save the plugin into the console's plugins folder (or a USB stick), then import it in the Plugins pool."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let luaName = url.deletingPathExtension().lastPathComponent + ".lua"
+        let markers = markersToSend
+        let lua = MA3Deploy.pluginLua(markers, rate: ltcRate, sequence: settings.ma3Sequence, timecode: settings.ma3Timecode, name: markerSetName)
+        let xml = MA3Deploy.pluginXML(name: "Understudy markers", luaFile: luaName)
+        do {
+            try xml.write(to: url, atomically: true, encoding: .utf8)
+            try lua.write(to: url.deletingLastPathComponent().appendingPathComponent(luaName), atomically: true, encoding: .utf8)
+            linkMessage = "MA3 plugin saved: \(url.lastPathComponent) + \(luaName) (\(markers.count) markers)."
+        } catch {
+            linkMessage = "Couldn't write the plugin: \(error.localizedDescription)"
+        }
+    }
+
+    /// Builds the markers on a grandMA3 over OSC: Sequence N (one cue each) and Timecode M (Goto events).
+    func deployMarkersToMA3(confirm: Bool = true) {
+        let markers = markersToSend
+        guard !markers.isEmpty else { linkMessage = "No markers to send."; return }
+        guard let sender = OSCSender(host: settings.ma3Host, port: settings.ma3Port) else {
+            linkMessage = "Set the grandMA3's IP in Settings › Show control."
+            return
+        }
+        if confirm {
+            let alert = NSAlert()
+            alert.messageText = "Send \(markers.count) markers to grandMA3 at \(settings.ma3Host)?"
+            alert.informativeText = "This replaces Sequence \(settings.ma3Sequence) and Timecode \(settings.ma3Timecode) on the console."
+            alert.addButton(withTitle: "Send")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        let steps = MA3Deploy.steps(markers, rate: ltcRate, sequence: settings.ma3Sequence, timecode: settings.ma3Timecode, name: markerSetName)
+        let address = settings.ma3Prefix.isEmpty ? "/cmd" : "/\(settings.ma3Prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/cmd"
+        let (seq, tc) = (settings.ma3Sequence, settings.ma3Timecode)
+        linkBusy = true
+        linkMessage = "Sending to grandMA3…"
+        Task { @MainActor [weak self] in
+            do {
+                for (i, step) in steps.enumerated() {
+                    try await sender.send(OSCMessage(address, [.string(step.command)]))
+                    if step.pause > 0 { try await Task.sleep(nanoseconds: UInt64(step.pause * 1e9)) }
+                    if i % 10 == 0 { self?.linkMessage = "Sending to grandMA3… \(i + 1)/\(steps.count)" }
+                }
+                self?.linkMessage = "Sent \(markers.count) markers to grandMA3: Sequence \(seq) and Timecode \(tc). (OSC can't confirm; check the console.)"
+            } catch {
+                self?.linkMessage = "grandMA3: \(error.localizedDescription)"
+            }
+            self?.linkBusy = false
+        }
+    }
+
+    /// Writes the markers onto a disguise track (notes, sections or CUE tags).
+    func pushMarkersToD3() {
+        let markers = markersToSend
+        guard !markers.isEmpty else { linkMessage = "No markers to send."; return }
+        guard D3Client.base(settings.d3Host) != nil else {
+            linkMessage = "Set the disguise machine's IP in Settings › Show control."
+            return
+        }
+        let start = Timecode(settings.d3TrackStart).map { Double($0.frameIndex(at: ltcRate.ltcRate)) / ltcRate.ltcRate.exact } ?? 0
+        let script = D3Push.script(markers, rate: ltcRate, trackName: settings.d3Track.isEmpty ? nil : settings.d3Track,
+                                   style: settings.d3Style, trackStartSeconds: start)
+        let host = settings.d3Host
+        linkBusy = true
+        linkMessage = "Sending to disguise…"
+        Task { @MainActor [weak self] in
+            do {
+                let result = try await D3Client.execute(host: host, script: script)
+                if let code = result.status?.code, code != 0 {
+                    self?.linkMessage = "disguise: \(result.status?.message ?? "error \(code)")"
+                } else if let inner = D3Client.resultDictionary(result.returnValue) {
+                    let placed = inner["placed"] as? Int ?? 0
+                    let skipped = (inner["skipped"] as? [String]) ?? []
+                    let track = inner["track"] as? String ?? "?"
+                    let tags = inner["tcTags"] as? Int ?? 0
+                    self?.linkMessage = "disguise: \(placed) markers on “\(track)”" + (tags > 0 ? " (placed by its \(tags) TC tag\(tags == 1 ? "" : "s"))" : "")
+                        + (skipped.isEmpty ? "." : "; \(skipped.count) outside the track.")
+                } else {
+                    self?.linkMessage = "disguise answered: \(result.returnValue ?? result.pythonLog ?? "no result")"
+                }
+            } catch {
+                self?.linkMessage = "disguise: \(error.localizedDescription)"
+            }
+            self?.linkBusy = false
+        }
+    }
 }

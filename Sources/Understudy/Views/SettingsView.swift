@@ -65,6 +65,7 @@ struct SettingsView: View {
             ConfidenceSettings(monitor: model.confidence)
 
             TimelineOutputSettings()
+            ShowControlSettings()
             Section("Show machine") {
                 Toggle("Keep this Mac awake while Understudy is open", isOn: $model.settings.keepAwake)
                 ShowMachineAgent(machine: model.showMachine)
@@ -348,5 +349,71 @@ private struct ConfidenceSettings: View {
         if let error = monitor.error { return error }
         if let name = monitor.deviceName { return "Watching \(name)." }
         return monitor.devices.isEmpty ? "No capture devices found." : "Not running."
+    }
+}
+
+/// OSC control in, and where markers go: grandMA3 (over OSC) and disguise (over its session API).
+private struct ShowControlSettings: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var d3Tracks: [String] = []
+    @State private var d3Problem: String?
+
+    var body: some View {
+        Section("Show control: OSC in") {
+            Toggle("Accept OSC control", isOn: $model.settings.oscEnabled)
+            if model.settings.oscEnabled {
+                TextField("UDP port", value: $model.settings.oscPort, format: .number.grouping(.never))
+                LabeledContent("Status") {
+                    Text(model.oscStatus).foregroundStyle(model.osc.problem == nil ? Theme.lock : Theme.amber)
+                }
+                LabeledContent("Last received") { Text(model.lastOSC ?? "—").font(Theme.mono(11)).lineLimit(1) }
+                Text("""
+                /understudy/play · /pause · /toggle · /stop
+                /understudy/song/next · /song/prev · /song <n>
+                /understudy/marker (last type) · /marker/<1–7 or type> ["label"] · /marker "lx" "Drop"
+                /understudy/marker/next · /marker/prev
+                Buttons that send 1 on press and 0 on release act on press only.
+                """)
+                .font(Theme.mono(10)).foregroundStyle(.secondary).textSelection(.enabled)
+            }
+        }
+        Section("Show control: grandMA3") {
+            TextField("Console IP", text: $model.settings.ma3Host, prompt: Text("e.g. 192.168.1.50"))
+            TextField("OSC port", value: $model.settings.ma3Port, format: .number.grouping(.never))
+            TextField("OSC prefix", text: $model.settings.ma3Prefix, prompt: Text("none"))
+            Stepper("Markers sequence \(model.settings.ma3Sequence)", value: $model.settings.ma3Sequence, in: 1...9999)
+            Stepper("Markers timecode show \(model.settings.ma3Timecode)", value: $model.settings.ma3Timecode, in: 1...9999)
+            Text("On the console: Menu › In & Out › OSC, add a line with Destination IP of this Mac, the port and prefix above, Mode UDP, and turn on Enable Input, Receive and Receive Command. Send to grandMA3 replaces the sequence and timecode show numbered here.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        Section("Show control: disguise") {
+            TextField("Designer IP", text: $model.settings.d3Host, prompt: Text("e.g. 192.168.1.20 (port 80)"))
+            HStack {
+                TextField("Track", text: $model.settings.d3Track, prompt: Text("the selected track"))
+                Menu("Tracks") {
+                    if d3Tracks.isEmpty { Text(d3Problem ?? "Fetching…") }
+                    ForEach(d3Tracks, id: \.self) { name in Button(name) { model.settings.d3Track = name } }
+                }
+                .fixedSize()
+                .onTapGesture { fetchTracks() }
+                Button("Fetch") { fetchTracks() }.disabled(model.settings.d3Host.isEmpty)
+            }
+            Picker("Write markers as", selection: $model.settings.d3Style) {
+                ForEach(D3Push.Style.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            TextField("Track start (if it has no TC tags)", text: $model.settings.d3TrackStart)
+            Text("Markers are placed on the track through its TC tags when it has them (so each song's markers land on that song), otherwise from the track start above. Designer needs its API reachable on port 80.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func fetchTracks() {
+        let host = model.settings.d3Host
+        guard !host.isEmpty else { return }
+        d3Problem = nil
+        Task { @MainActor in
+            do { d3Tracks = try await D3Client.tracks(host: host); if d3Tracks.isEmpty { d3Problem = "No tracks" } }
+            catch { d3Tracks = []; d3Problem = error.localizedDescription }
+        }
     }
 }

@@ -184,6 +184,9 @@ struct TimelineTrack: View {
                         .font(Theme.mono(9, bold: true))
                         .offset(x: x + 4, y: 4)
                 }
+                // Along the bottom of the song blocks, clear of the names.
+                MarkerTicks(timeline: timeline, scale: scale, height: 10)
+                    .offset(y: geo.size.height - 11)
                 // Playhead.
                 let width = geo.size.width
                 PlayheadLine(head: timeline.head, playing: timeline.isPlaying, height: geo.size.height) { t in

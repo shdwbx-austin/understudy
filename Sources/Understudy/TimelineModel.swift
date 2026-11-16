@@ -56,6 +56,15 @@ final class TimelineModel: ObservableObject {
     private(set) var isScrubbing = false
     private var scrubSettle: Task<Void, Never>?
     @Published private(set) var isPlaying = false
+    /// Markers, on show code (they stay with their song in any set order).
+    @Published private(set) var markers: [Marker] = []
+    /// Marker types hidden on the timeline and in the list.
+    @Published var hiddenMarkerKinds: Set<MarkerKind> = [] {
+        didSet { if hiddenMarkerKinds != oldValue { save() } }
+    }
+    @Published var selectedMarkerID: UUID?
+    /// The type a bare "add marker" (M, or OSC /marker) uses: the last one chosen.
+    private(set) var lastMarkerKind: MarkerKind = .choreo
     @Published var message: String?
 
     /// Show timecode rate the songs and decks count in (the show LTC rate).
@@ -574,6 +583,82 @@ final class TimelineModel: ObservableObject {
         return snap
     }
 
+    // MARK: Markers
+
+    /// Visible markers on the set, in timeline order, with their timeline time.
+    var placedMarkers: [(marker: Marker, time: Double)] {
+        layout.placed(markers.filter { !hiddenMarkerKinds.contains($0.kind) })
+    }
+
+    /// Adds a marker at the playhead (its show code). Returns it, or nil off the set.
+    @discardableResult
+    func addMarker(_ kind: MarkerKind? = nil, label: String = "") -> Marker? {
+        let kind = kind ?? lastMarkerKind
+        lastMarkerKind = kind
+        // While playing, the transport is ahead of the last UI refresh: read it now.
+        let t = isPlaying ? transport.position(at: HostClock.now()) : playhead
+        guard let show = layout.showSeconds(at: t) else {
+            message = "Markers go on a song: move the playhead onto the set first."
+            return nil
+        }
+        let marker = Marker(frame: Int((show * rate.exact).rounded()), kind: kind, label: label)
+        markers.append(marker)
+        markers.sort { $0.frame < $1.frame }
+        hiddenMarkerKinds.remove(kind)
+        selectedMarkerID = marker.id
+        save()
+        return marker
+    }
+
+    func updateMarker(_ id: UUID, kind: MarkerKind? = nil, label: String? = nil, frame: Int? = nil) {
+        guard let i = markers.firstIndex(where: { $0.id == id }) else { return }
+        if let kind { markers[i].kind = kind; lastMarkerKind = kind }
+        if let label { markers[i].label = label }
+        if let frame { markers[i].frame = max(0, frame) }
+        markers.sort { $0.frame < $1.frame }
+        save()
+    }
+
+    func removeMarker(_ id: UUID) {
+        markers.removeAll { $0.id == id }
+        if selectedMarkerID == id { selectedMarkerID = nil }
+        save()
+    }
+
+    /// Replaces every marker (e.g. from a project or an import).
+    func setMarkers(_ list: [Marker]) {
+        markers = list.sorted { $0.frame < $1.frame }
+        save()
+    }
+
+    /// Timeline time of a marker on the current set, if its song is on it.
+    func time(of marker: Marker) -> Double? {
+        layout.timelineTime(forShowSeconds: marker.seconds(rate: rate))
+    }
+
+    /// Jumps to a marker (keeps playing if playing).
+    func go(to marker: Marker) {
+        selectedMarkerID = marker.id
+        if let t = time(of: marker) { isPlaying ? jumpWhilePlaying(to: t) : seek(to: t) }
+    }
+
+    func nextMarker() {
+        let now = isPlaying ? transport.position(at: HostClock.now()) : playhead
+        if let next = placedMarkers.first(where: { $0.time > now + 0.02 }) { go(to: next.marker) }
+    }
+
+    func previousMarker() {
+        let now = isPlaying ? transport.position(at: HostClock.now()) : playhead
+        // Back past one just passed (half a second of grace, like a CD player).
+        if let prev = placedMarkers.last(where: { $0.time < now - 0.5 }) { go(to: prev.marker) }
+    }
+
+    /// A single jump while playing: the transport moves and audio restarts there at once.
+    private func jumpWhilePlaying(to t: Double) {
+        scrub(to: t)
+        endScrub()
+    }
+
     // MARK: Persistence
 
     private struct Stored: Codable {
@@ -582,6 +667,8 @@ final class TimelineModel: ObservableObject {
         var setlists: [Setlist]?
         var currentSetlist: UUID?
         var autoOrderFromTakes: Bool?
+        var markers: [Marker]?
+        var hiddenMarkerKinds: [MarkerKind]?
     }
 
     /// Understudy's folder in Application Support.
@@ -605,6 +692,8 @@ final class TimelineModel: ObservableObject {
         setlists = stored.setlists ?? []
         currentSetlistID = stored.currentSetlist.flatMap { id in setlists.contains { $0.id == id } ? id : nil }
         autoOrderFromTakes = stored.autoOrderFromTakes ?? false
+        markers = stored.markers ?? []
+        hiddenMarkerKinds = Set(stored.hiddenMarkerKinds ?? [])
         layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, library: songs)
         player.update(layout: layout)
         analyzeAudio()
@@ -614,7 +703,8 @@ final class TimelineModel: ObservableObject {
         let url = Self.fileURL
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let stored = Stored(songs: songs, gap: gap, setlists: setlists, currentSetlist: currentSetlistID,
-                            autoOrderFromTakes: autoOrderFromTakes)
+                            autoOrderFromTakes: autoOrderFromTakes, markers: markers,
+                            hiddenMarkerKinds: hiddenMarkerKinds.sorted { $0.number < $1.number })
         if let data = try? JSONEncoder().encode(stored) {
             try? data.write(to: url, options: .atomic)
         }
