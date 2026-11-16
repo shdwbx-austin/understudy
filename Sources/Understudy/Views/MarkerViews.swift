@@ -480,6 +480,8 @@ func promptForText(_ title: String, value: String) -> String? {
 struct MarkerList: View {
     @ObservedObject var timeline: TimelineModel
     @State private var wholeSet = false
+    /// The row the playhead has just passed (the "now" marker), kept in view as it plays.
+    @State private var nowID: UUID?
     @State private var editing: UUID?
     @State private var draft = ""
 
@@ -500,6 +502,17 @@ struct MarkerList: View {
             switch self {
             case .marker(let m): return m.id
             case .array(let id, _): return id
+            }
+        }
+    }
+
+    /// Each row's timeline time (an array's is its first hit), in order.
+    private var entryTimes: [(id: UUID, time: Double)] {
+        let times = Dictionary(timeline.placedMarkers.map { ($0.marker.id, $0.time) }, uniquingKeysWith: { a, _ in a })
+        return entries.compactMap { entry in
+            switch entry {
+            case .marker(let m): return times[m.id].map { (m.id, $0) }
+            case .array(let id, let hits): return times[hits[0].id].map { (id, $0) }
             }
         }
     }
@@ -551,6 +564,10 @@ struct MarkerList: View {
             .font(Theme.mono(8)).tracking(1).foregroundStyle(Theme.quiet)
             ScrollViewReader { proxy in
                 ScrollView {
+                    // Watches the playhead on its own; the list only redraws when the row changes.
+                    MarkerFollower(head: timeline.head, times: entryTimes, editing: editing != nil, nowID: $nowID) { id in
+                        withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(id, anchor: .center) }
+                    }
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(entries) { entry in
                             switch entry {
@@ -610,7 +627,9 @@ struct MarkerList: View {
         }
         .padding(.vertical, 4).padding(.horizontal, 6)
         .background(selected ? Theme.fill : Color.clear)
-        .overlay(alignment: .leading) { if selected { Rectangle().fill(Theme.paper).frame(width: 2) } }
+        .overlay(alignment: .leading) {
+            if nowID == id { Rectangle().fill(Theme.signal).frame(width: 3) } else if selected { Rectangle().fill(Theme.paper).frame(width: 2) }
+        }
         .contentShape(Rectangle())
         .onTapGesture {
             if NSEvent.modifierFlags.contains(.command) || NSEvent.modifierFlags.contains(.shift) {
@@ -655,11 +674,39 @@ struct MarkerList: View {
         .padding(.vertical, 4).padding(.horizontal, 6)
         .background(selected ? Theme.fill : Color.clear)
         .overlay(alignment: .leading) {
-            if selected, timeline.selectedMarkerIDs.count > 1 { Rectangle().fill(Theme.paper).frame(width: 2) }
+            if nowID == m.id {
+                Rectangle().fill(Theme.signal).frame(width: 3)
+            } else if selected, timeline.selectedMarkerIDs.count > 1 {
+                Rectangle().fill(Theme.paper).frame(width: 2)
+            }
         }
         .contentShape(Rectangle())
         .onTapGesture { MarkerClick.handle(m, timeline: timeline, order: rows.map(\.id)) }
         .contextMenu { MarkerContextMenu(timeline: timeline, marker: m) }
+    }
+}
+
+/// Follows the playhead through the marker list: the row it has just passed becomes "now" and is
+/// scrolled into view, while playing or scrubbing. Leaves the list alone while a label is edited.
+private struct MarkerFollower: View {
+    @ObservedObject var head: PlayheadClock
+    let times: [(id: UUID, time: Double)]
+    let editing: Bool
+    @Binding var nowID: UUID?
+    let scroll: (UUID) -> Void
+
+    var body: some View {
+        Color.clear.frame(height: 0)
+            .onChange(of: head.position) { p in follow(p) }
+            .onAppear { follow(head.position) }
+    }
+
+    private func follow(_ p: Double) {
+        // The last row at or before the playhead (a hair of slack for landing on a marker).
+        let current = times.last { $0.time <= p + 0.02 }?.id
+        guard current != nowID else { return }
+        nowID = current
+        if let current, !editing { scroll(current) }
     }
 }
 
