@@ -881,11 +881,14 @@ final class AppModel: ObservableObject {
                 case .cue(let target):
                     guard let deckAt = map.deckSeconds(atLTC: Double(target) / ltcFPS) else { continue }
                     deck.cue(clipID: clip.id, frame: Int(((deckAt - clipStart) * video.exact).rounded()))
+                case .cueAndPlay(let target):
+                    guard let deckAt = map.deckSeconds(atLTC: Double(target) / ltcFPS) else { continue }
+                    deck.cueAndPlay(clipID: clip.id, frame: Int(((deckAt - clipStart) * video.exact).rounded()))
                 case .play:
                     deck.play()
                 case .stop:
                     deck.stopTransport()
-                case .learnOffset(let by):
+                case .learnOffset(let by), .trimOffset(let by):
                     // Same setting Calibrate writes, shown in deck Setup; half-frame steps, ±30 frames.
                     let adjusted = settings.decks[deck.id].playOffsetFrames + by
                     settings.decks[deck.id].playOffsetFrames = max(-30, min(30, (adjusted * 2).rounded() / 2))
@@ -894,8 +897,9 @@ final class AppModel: ObservableObject {
 
             if pollDue, case .playing = deck.chase.phase {
                 deck.poll { [weak self, weak deck] timecode, observedAt in
+                    // Against the code the deck is chasing: the timeline in Timeline mode, LTC in otherwise.
                     guard let self, let deck,
-                          let ltcAt = self.clock.position(at: observedAt),
+                          let ltcAt = self.mode == .timeline ? self.timeline.showFrames(at: observedAt) : self.clock.position(at: observedAt),
                           let expected = map.deckSeconds(atLTC: ltcAt / ltcFPS)
                     else { return }
                     deck.noteDrift((self.deckSeconds(timecode, rate: tcRate) - expected) * ltcFPS)

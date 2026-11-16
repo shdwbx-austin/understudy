@@ -309,7 +309,7 @@ enum DeckStatus {
         if model.isPlayingBack {
             switch deck.chase.phase {
             case .playing: return ("Chasing", Theme.lock)
-            case .cueing, .armed: return ("Cueing", Theme.paper)
+            case .cueing, .armed, .starting: return ("Cueing", Theme.paper)
             case .outOfRange: return ("No media at TC", Theme.amber)
             case .idle:
                 if model.mode == .timeline { return (model.ltcRolling ? "Waiting" : "Parked", Theme.grey) }

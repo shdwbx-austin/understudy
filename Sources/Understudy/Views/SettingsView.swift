@@ -97,10 +97,21 @@ struct SettingsView: View {
             }
 
             Section("Chase") {
-                Stepper(String(format: "Pre-roll %.1f s", model.settings.chase.prerollSeconds),
-                        value: $model.settings.chase.prerollSeconds, in: 1...5, step: 0.25)
-                Stepper(String(format: "Cue settle %.2f s", model.settings.chase.cueSettleSeconds),
-                        value: $model.settings.chase.cueSettleSeconds, in: 0.1...2, step: 0.05)
+                Toggle("Fast pickup", isOn: $model.settings.chase.fastStart)
+                    .help("Decks go to the frame and play in one step, rolling about 0.1 s after code starts")
+                if model.settings.chase.fastStart {
+                    Stepper(String(format: "Deck goto time %.0f ms", model.settings.chase.gotoSeconds * 1000),
+                            value: $model.settings.chase.gotoSeconds, in: 0...0.3, step: 0.005)
+                    Text("When code starts or jumps, each deck goes to the matching frame and plays at once, so it rolls about 0.1 s later. Its start delay is the play offset in deck Setup (learned automatically, or set by Calibrate).")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    Stepper(String(format: "Pre-roll %.1f s", model.settings.chase.prerollSeconds),
+                            value: $model.settings.chase.prerollSeconds, in: 1...5, step: 0.25)
+                    Stepper(String(format: "Cue settle %.2f s", model.settings.chase.cueSettleSeconds),
+                            value: $model.settings.chase.cueSettleSeconds, in: 0.1...2, step: 0.05)
+                    Text("Decks are parked pre-roll ahead of code, given time to settle, then played: slower to pick up, for decks that locate slowly.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Stepper(String(format: "Tolerance ±%.1f frames", model.settings.chase.toleranceFrames),
                         value: $model.settings.chase.toleranceFrames, in: 0.5...10, step: 0.5)
                 Stepper("Re-lock after \(model.settings.chase.driftStrikes) bad readings",

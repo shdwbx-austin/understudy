@@ -51,10 +51,12 @@ Understudy works out the show timecode rate from the incoming LTC and follows it
 
 HyperDecks can't chase LTC natively. Understudy reads the show LTC itself and handles each deck in four steps:
 
-1. It looks the incoming code up in the take's map and parks the deck slightly ahead (pre-roll).
-2. It fires `play` when code reaches that point, early by the deck's start latency.
-3. It watches the deck's timecode ten times a second.
-4. It re-parks the deck if the deck drifts out of tolerance, or if code moves into a different recorded stretch.
+1. When code starts or jumps, it looks the code up in the take's map and sends the deck to the matching frame and plays it in one go, aimed a few frames ahead to cover the deck's goto (about 20 ms) and start delay (its play offset). On a HyperDeck Studio 4K Pro the deck is in sync about 85 ms later; in Timeline mode, where the decks are already parked on the playhead, it rolls with the timeline.
+2. It watches the deck's timecode ten times a second.
+3. It re-parks the deck if it drifts out of tolerance, if code moves into a different recorded stretch, or if the deck stops by itself.
+4. If the deck holds steadily half a frame or more off, it trims the deck's play offset so the next start lands closer.
+
+**Fast pickup** is on by default (Settings › Chase). Turn it off to park decks pre-roll ahead and fire `play` once they've settled: slower to pick up, for decks that locate slowly.
 
 ## Timeline (rehearsing songs out of order)
 

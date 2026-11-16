@@ -304,13 +304,27 @@ final class DeckController: ObservableObject, Identifiable {
         }
     }
 
+    /// Fast pickup: stop, goto and play back to back. The deck rolls from the new frame about
+    /// 70–95 ms after these go out (goto ~30 ms, then its start delay).
+    func cueAndPlay(clipID: Int, frame: Int) {
+        send(HyperDeckCommand.stop)
+        request(HyperDeckCommand.gotoClip(id: clipID, frame: frame)) { [weak self] response, _, _ in
+            guard let self, response.isError else { return }
+            // Older firmware: one parameter per goto; play again once it's there.
+            self.send(HyperDeckCommand.gotoClipStart(id: clipID))
+            self.send(HyperDeckCommand.gotoFrameInClip(frame))
+            self.play()
+        }
+        play()
+    }
+
     func play() { send(HyperDeckCommand.playSingleClip) }
     func stopTransport() { send(HyperDeckCommand.stop) }
 
     func resetChase() {
         // A deck mid-chase must not run on unsupervised (input switch, rate change, new take).
         switch chase.phase {
-        case .cueing, .armed, .playing: stopTransport()
+        case .cueing, .armed, .starting, .playing: stopTransport()
         default: break
         }
         chase = DeckChaseState()

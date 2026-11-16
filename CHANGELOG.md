@@ -17,6 +17,12 @@
   - **Timecode source for recording:** Settings › Timecode input › Show code: Song timeline (or the SHOW CODE FOR RECORD box in the timeline window). Stop and Record then take show code from the timeline, so takes log against it with no cable, while LTC out sends the same code to the decks' timecode inputs, disguise or another recorder.
   - **Scrub and step:** drag the playhead, or use frame steps (← →), one-second steps (⇧← →) and song jumps (⌥← →). While paused, the decks seek to the exact frame.
 
+- **Decks pick up at once.** When code starts or jumps, each deck now gets goto and play together, aimed just far enough ahead to cover its goto and start delay, instead of being parked a pre-roll ahead and given half a second to settle. Measured on a HyperDeck Studio 4K Pro: in sync 50–85 ms after code starts or jumps (was 820 ms), and with the timeline on Play in Timeline mode. Settings › Chase › Fast pickup (on by default); the old park-ahead behaviour is still there with it off.
+  - A deck that stops by itself while chasing is started again within a frame, not after drift checks (about 0.7 s).
+  - A deck holding steadily half a frame or more off has its play offset trimmed, without a re-park, so the next start lands closer.
+- Fixed: cues landed one frame early. The deck numbers a clip's frames from 1, so a cue to the clip's first frame was rejected and every other cue parked a frame short. Play offsets learned before this may now be up to a frame high; the trim corrects them, or press Calibrate.
+- Fixed: in Timeline mode, drift checks compared the decks against the LTC input instead of the timeline.
+
 - **Dante out** (Settings › Dante out): sends the timeline to a Dante network through Dante Virtual Soundcard: song audio left and right on DVS channels 1–2 and timecode on 3, all on one device so they stay sample-locked. DVS is found by its driver, followed when it starts, stops or restarts, and checked for at least 3 channels. Pick the network port Dante is on and Understudy warns when it loses its link. Until DVS is running, audio uses the normal timeline outputs.
 
 - **Learns each deck's start delay.** A HyperDeck starts a few frames late after Play, so with a 0 play offset it sat steadily behind code and was re-parked every few seconds: a visible stutter. When a deck holds a steady, consistent offset, Understudy now adds it to that deck's play offset (the value Calibrate sets) and re-parks once. A deck far off code (about 9 frames or more) is re-parked after two readings instead of waiting out the back-off.
