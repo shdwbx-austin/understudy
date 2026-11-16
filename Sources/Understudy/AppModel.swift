@@ -885,7 +885,8 @@ final class AppModel: ObservableObject {
                 seekDecksToPlayhead(now: now)
             } else {
                 chase(timelineSnapshot, now: now, pollDue: pollDue)
-                if !timeline.isPlaying { seekDecksToPlayhead(now: now) }
+                // Paused, or in the downtime between songs: parked, ready to roll.
+                if !timeline.isPlaying || timeline.downtimeSong != nil { seekDecksToPlayhead(now: now) }
             }
         }
     }
@@ -908,7 +909,7 @@ final class AppModel: ObservableObject {
     /// Throttled; the latest position always goes out.
     private func seekDecksToPlayhead(now: Double) {
         guard timeline.seekCount != sentSeek, now - lastSeekSent >= 0.06,
-              let show = timeline.layout.showSeconds(at: timeline.playhead) else { return }
+              let show = timeline.parkShowSeconds else { return }
         lastSeekSent = now
         let ltcFrames = show * ltcRate.exact
         let active = activeDecks

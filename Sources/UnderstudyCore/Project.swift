@@ -11,12 +11,21 @@ public struct ShowContent: Codable, Equatable, Sendable {
     public var hiddenMarkerKinds: [MarkerKind]?
     /// The project's marker types (nil: the built-in seven).
     public var markerTypes: MarkerTypes?
+    /// Seconds between songs with no code (nil: none).
+    public var downtime: Double?
+    /// Stop at the end of each song instead of rolling into the next.
+    public var stopAfterSong: Bool?
+    public var loop: LoopSetting?
 
     public init() {}
 
     public init(songs: [Song], gap: Double, setlists: [Setlist]?, currentSetlist: UUID?, autoOrderFromTakes: Bool?,
-                markers: [Marker]?, hiddenMarkerKinds: [MarkerKind]?, markerTypes: MarkerTypes? = nil) {
+                markers: [Marker]?, hiddenMarkerKinds: [MarkerKind]?, markerTypes: MarkerTypes? = nil,
+                downtime: Double? = nil, stopAfterSong: Bool? = nil, loop: LoopSetting? = nil) {
         self.markerTypes = markerTypes
+        self.downtime = downtime
+        self.stopAfterSong = stopAfterSong
+        self.loop = loop
         self.songs = songs
         self.gap = gap
         self.setlists = setlists

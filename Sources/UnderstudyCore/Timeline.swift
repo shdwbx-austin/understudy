@@ -284,6 +284,9 @@ public struct TimelineLayout: Equatable, Sendable {
 
     public let items: [Item]
     public let gap: Double
+    /// Time between songs before each lead-in (not before the first): the timeline runs on, but
+    /// there's no show code, no audio and no LTC out, like the changeover in a real show.
+    public let downtime: Double
     public let rate: FrameRate
 
     /// Used for a last song with no end and no audio.
@@ -292,8 +295,9 @@ public struct TimelineLayout: Equatable, Sendable {
     /// `ordered` is the playlist order; durations come from each song's end or duration, else the
     /// next song in show order among `library` (all known songs; defaults to `ordered`), else its
     /// audio, else five minutes.
-    public init(ordered: [Song], rate: FrameRate, gap: Double = 2, library: [Song]? = nil) {
+    public init(ordered: [Song], rate: FrameRate, gap: Double = 2, downtime: Double = 0, library: [Song]? = nil) {
         self.gap = max(0, gap)
+        self.downtime = max(0, downtime)
         self.rate = rate
         let byShow = (library ?? ordered).sorted { $0.start.seconds(at: rate) < $1.start.seconds(at: rate) }
         var t = 0.0
@@ -313,6 +317,7 @@ public struct TimelineLayout: Equatable, Sendable {
             } else {
                 duration = Self.openEndedDuration
             }
+            if !items.isEmpty { t += self.downtime }
             t += self.gap
             items.append(Item(song: song, timelineStart: t, duration: duration, showStart: start))
             t += duration
@@ -328,11 +333,54 @@ public struct TimelineLayout: Equatable, Sendable {
         return items.firstIndex { t < $0.timelineEnd }
     }
 
-    /// Show timecode at timeline time `t`, seconds. Counts on through the lead-in gaps.
+    /// Show timecode at timeline time `t`, seconds. Counts on through the lead-in gaps; nil in
+    /// downtime (no code between songs).
     public func showSeconds(at t: Double) -> Double? {
-        guard let i = index(at: t) else { return nil }
+        guard let i = index(at: t), t >= leadInStart(i) - 1e-9 else { return nil }
         let item = items[i]
         return item.showStart + (t - item.timelineStart)
+    }
+
+    /// Where song `index`'s lead-in starts (its downtime, if any, comes before).
+    public func leadInStart(_ index: Int) -> Double {
+        items[index].timelineStart - gap
+    }
+
+    /// In the downtime before a song at `t`: the song it leads to.
+    public func downtimeSong(at t: Double) -> Int? {
+        guard let i = index(at: t), t < leadInStart(i) - 1e-9 else { return nil }
+        return i
+    }
+
+    /// The range a loop covers with the playhead at `t`: the song under it from its lead-in to its
+    /// end, or the section between two show-code points. Nil when off or not on the set.
+    public func loopRange(_ loop: LoopSetting, at t: Double) -> Range<Double>? {
+        switch loop.mode {
+        case .off: return nil
+        case .song:
+            guard let i = index(at: t) else { return nil }
+            return leadInStart(i)..<items[i].timelineEnd
+        case .section:
+            guard let a = loop.sectionStart, let b = loop.sectionEnd,
+                  let from = timelineTime(forShowSeconds: min(a, b)), let to = timelineTime(forShowSeconds: max(a, b)),
+                  to - from >= 0.1 else { return nil }
+            return from..<to
+        }
+    }
+
+    /// What a playing timeline does as it moves from `previous` to `t`: loop back, stop after a
+    /// song (parked on the next song's lead-in), or carry on.
+    public func transition(from previous: Double, to t: Double, loop: LoopSetting, stopAfterSong: Bool) -> PlaybackTransition {
+        guard t > previous else { return .none }
+        if let range = loopRange(loop, at: previous), previous >= range.lowerBound - 0.05, previous < range.upperBound,
+           t >= range.upperBound {
+            return .jump(to: range.lowerBound)
+        }
+        if stopAfterSong, let i = items.firstIndex(where: { previous < $0.timelineEnd && t >= $0.timelineEnd }),
+           i + 1 < items.count {
+            return .stop(at: leadInStart(i + 1))
+        }
+        return .none
     }
 
     /// Timeline time of `offset` seconds into song `index`.
@@ -351,6 +399,33 @@ public struct TimelineLayout: Equatable, Sendable {
         let starts = items.map(\.timelineStart)
         return starts.last { $0 < t - 1 } ?? starts.first
     }
+}
+
+/// Loop the song under the playhead, or a section held on show code (so it stays with its song
+/// in any set order).
+public struct LoopSetting: Codable, Equatable, Sendable {
+    public enum Mode: String, Codable, Sendable { case off, song, section }
+    public var mode: Mode = .off
+    /// Section ends, show seconds.
+    public var sectionStart: Double?
+    public var sectionEnd: Double?
+
+    public init(mode: Mode = .off, sectionStart: Double? = nil, sectionEnd: Double? = nil) {
+        self.mode = mode
+        self.sectionStart = sectionStart
+        self.sectionEnd = sectionEnd
+    }
+
+    public var hasSection: Bool {
+        guard let a = sectionStart, let b = sectionEnd else { return false }
+        return abs(b - a) >= 0.1
+    }
+}
+
+public enum PlaybackTransition: Equatable, Sendable {
+    case none
+    case jump(to: Double)
+    case stop(at: Double)
 }
 
 // MARK: - Transport
