@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-11-16
 
 - **Program · View · Decks.** The main window is now three screens, built around the timeline for lighting and screens programmers and producers:
   - **Program** (⌘1) is the timeline workspace: playlist, set, current song, markers, transport. The decks follow it.
