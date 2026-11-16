@@ -252,6 +252,37 @@ final class DeckDiscovery: ObservableObject {
         }
     }
 
+    /// A network port the Mac has, for choosing which one Dante is on.
+    struct NetworkPort: Identifiable, Hashable {
+        let bsd: String
+        let name: String
+        var id: String { bsd }
+        var label: String { name.contains("(\(bsd))") ? name : "\(name) (\(bsd))" }
+    }
+
+    /// Every network port macOS knows (Ethernet, Thunderbolt and USB adaptors, Wi-Fi), whether or
+    /// not it's plugged in, by name.
+    nonisolated static func networkPorts() -> [NetworkPort] {
+        portNames().map { NetworkPort(bsd: $0.key, name: $0.value) }
+            .sorted { ($0.name, $0.bsd) < ($1.name, $1.bsd) }
+    }
+
+    /// Whether a port is up with a link and an IPv4 address (Dante needs one, even a 169.254 one).
+    nonisolated static func hasLink(_ bsd: String) -> Bool {
+        var list: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&list) == 0, let first = list else { return false }
+        defer { freeifaddrs(list) }
+        for ptr in sequence(first: first, next: { $0.pointee.ifa_next }) {
+            let ifa = ptr.pointee
+            let flags = Int32(ifa.ifa_flags)
+            if String(cString: ifa.ifa_name) == bsd, flags & IFF_UP != 0, flags & IFF_RUNNING != 0,
+               let addr = ifa.ifa_addr, addr.pointee.sa_family == UInt8(AF_INET) {
+                return true
+            }
+        }
+        return false
+    }
+
     /// macOS's names for network ports, by BSD name.
     private nonisolated static func portNames() -> [String: String] {
         var names: [String: String] = [:]

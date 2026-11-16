@@ -156,10 +156,20 @@ struct SettingsTests {
         #expect(s.audioChannel == 2)
     }
 
-    @Test func repairsWrongDeckCount() throws {
-        let json = #"{"decks":[{"id":1,"name":"B","host":"10.0.0.2"}]}"#
+    /// Any number of decks from 1 to 16; ids are renumbered 0..<n in order, and the confidence
+    /// monitor's quadrant list follows the deck list.
+    @Test func deckListIsRenumberedAndCapped() throws {
+        let json = #"{"decks":[{"id":3,"name":"D","host":"10.0.0.4"},{"id":1,"name":"B","host":"10.0.0.2"}]}"#
         let s = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
-        #expect(s.decks.map(\.id) == [0, 1, 2, 3])
-        #expect(s.decks[1].host == "10.0.0.2")
+        #expect(s.decks.map(\.id) == [0, 1])
+        #expect(s.decks.map(\.name) == ["B", "D"])
+        #expect(s.confidenceQuadrants == [0, 1])
+        var many = AppSettings()
+        many.decks = (0..<20).map { DeckConfig(id: $0, name: "D\($0)", host: "") }
+        many.normalizeDecks()
+        #expect(many.decks.count == AppSettings.maxDecks)
+        #expect(many.confidenceQuadrants == [0, 1, 2, 3] + Array(repeating: -1, count: 12))
+        let none = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"decks":[]}"#.utf8))
+        #expect(none.decks.count == AppSettings.defaultDeckCount)
     }
 }

@@ -19,9 +19,60 @@ struct SettingsView: View {
         )
     }
 
+    @State private var showMonitor = false
+    /// The tab last used, so Settings opens where you were.
+    @AppStorage("understudy.settingsTab") private var tab = "general"
+
     var body: some View {
-        Form {
+        // Tabs, the show-critical settings first in each. Machine things only: the show's own
+        // settings (decks, marker types, MA3/disguise targets, recording names) travel with the project.
+        TabView(selection: $tab) {
+            Form {
+            Section("Show machine") {
+                Toggle("Keep this Mac awake while Understudy is open", isOn: $model.settings.keepAwake)
+                ShowMachineAgent(machine: model.showMachine)
+                Toggle("After a restart, go back to Record or Play", isOn: $model.settings.resumeLastMode)
+                Text("For a dedicated Mac running rehearsals. Also set System Settings › Energy › “Start up automatically after a power failure”, automatic login, and Screen Sharing to watch it from your laptop.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Backup") {
+                HStack {
+                    Text(model.settings.backupFolder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "No folder chosen")
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Spacer()
+                    Button("Choose…") { model.chooseBackupFolder() }
+                }
+                Text("Takes are copied off the decks by FTP into dated folders here, one per deck. Choose a folder inside Dropbox and Dropbox syncs them.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            Section("Projects") {
+                HStack {
+                    Text((model.projects.root.path as NSString).abbreviatingWithTildeInPath).lineLimit(1).truncationMode(.head)
+                    Spacer()
+                    Button("Change…") { model.projects.chooseRoot() }
+                }
+                Toggle("Open the last project at launch", isOn: Binding(get: { model.projects.reopenLastAtLaunch },
+                                                                         set: { model.projects.reopenLastAtLaunch = $0 }))
+            }
+        }
+        .formStyle(.grouped)
+            .tabItem { Label("General", systemImage: "gearshape") }
+            .tag("general")
+
+            Form {
             Section("Timecode input") {
+                Picker("Show code", selection: $model.settings.showCodeSource) {
+                    Text("LTC input").tag(ShowCodeSource.input)
+                    Text("Song timeline").tag(ShowCodeSource.timeline)
+                }
+                .pickerStyle(.segmented)
+                Text(model.settings.showCodeSource == .timeline
+                     ? "Stop and Record take show code from the song timeline (⌘T), so takes log against it with no cable. Play to code still chases the LTC input."
+                     : "Show code arrives on an audio input as LTC (e.g. from CuePoints or a timecode DA).")
+                    .font(.caption).foregroundStyle(.secondary)
                 LTCInputPicker(
                     title: "Show timecode",
                     detail: model.settings.separatePlaybackInput ? "Used in Stop and Record." : "Used in every mode.",
@@ -50,31 +101,19 @@ struct SettingsView: View {
                      ? "Understudy measures the incoming LTC (\(model.rateLabel.hasSuffix("DETECTING") ? "waiting for code" : "now " + model.ltcRate.rawValue)) and follows it, including drop-frame. Recording logs and playback wait the first couple of seconds of code until the rate is known. Each input is measured afresh when it's switched in."
                      : "Fixed rate. The header warns if incoming LTC doesn't match.")
                     .font(.caption).foregroundStyle(.secondary)
+                Stepper(model.settings.freewheelSeconds > 0
+                            ? String(format: "Coast through LTC dropouts for %.1f s", model.settings.freewheelSeconds)
+                            : "Don't coast through LTC dropouts",
+                        value: $model.settings.freewheelSeconds, in: 0...10, step: 0.5)
                 Button("Rescan devices") { model.refreshAudioDevices() }
             }
 
-            ConfidenceSettings(monitor: model.confidence)
+        }
+        .formStyle(.grouped)
+            .tabItem { Label("Timecode", systemImage: "waveform") }
+            .tag("timecode")
 
-            Section("Show machine") {
-                Toggle("Keep this Mac awake while Understudy is open", isOn: $model.settings.keepAwake)
-                ShowMachineAgent(machine: model.showMachine)
-                Toggle("After a restart, go back to Record or Play", isOn: $model.settings.resumeLastMode)
-                Text("For a dedicated Mac running rehearsals. Also set System Settings › Energy › “Start up automatically after a power failure”, automatic login, and Screen Sharing to watch it from your laptop.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
-            Section("Backup") {
-                HStack {
-                    Text(model.settings.backupFolder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "No folder chosen")
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                    Spacer()
-                    Button("Choose…") { model.chooseBackupFolder() }
-                }
-                Text("Takes are copied off the decks by FTP into dated folders here, one per deck. Choose a folder inside Dropbox and Dropbox syncs them.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-
+            Form {
             Section("Recording") {
                 Picker("Record", selection: $model.settings.recordMode) {
                     Text("Continuously, REC to STOP (recommended)").tag(RecordMode.continuous)
@@ -84,33 +123,68 @@ struct SettingsView: View {
                      ? "Decks record from REC until STOP, stamped with their own clock. Understudy logs show code against each take, so LTC dropouts and jumps don't stop or break a recording."
                      : "Each deck records only while its LTC input runs and stamps clips with show code. If LTC drops, the deck stops recording.")
                     .font(.caption).foregroundStyle(.secondary)
+                RecordNamingSettings()
             }
 
+        }
+        .formStyle(.grouped)
+            .tabItem { Label("Recording", systemImage: "record.circle") }
+            .tag("recording")
+
+            Form {
             Section("Chase") {
-                Stepper(String(format: "Pre-roll %.1f s", model.settings.chase.prerollSeconds),
-                        value: $model.settings.chase.prerollSeconds, in: 1...5, step: 0.25)
-                Stepper(String(format: "Cue settle %.2f s", model.settings.chase.cueSettleSeconds),
-                        value: $model.settings.chase.cueSettleSeconds, in: 0.1...2, step: 0.05)
-                Stepper(String(format: "Tolerance ±%.1f frames", model.settings.chase.toleranceFrames),
-                        value: $model.settings.chase.toleranceFrames, in: 0.5...10, step: 0.5)
-                Stepper("Re-lock after \(model.settings.chase.driftStrikes) bad readings",
-                        value: $model.settings.chase.driftStrikes, in: 1...20)
-                Stepper(model.settings.freewheelSeconds > 0
-                            ? String(format: "Coast through LTC dropouts for %.1f s", model.settings.freewheelSeconds)
-                            : "Don't coast through LTC dropouts",
-                        value: $model.settings.freewheelSeconds, in: 0...10, step: 0.5)
-                Toggle("Deck timecode counts at video rate (e.g. 0–59 at 59.94)", isOn: $model.settings.deckTimecodeAtVideoRate)
+                Toggle("Fast pickup", isOn: $model.settings.chase.fastStart)
+                    .help("Decks go to the frame and play in one step, rolling about 0.1 s after code starts")
+                Text(model.settings.chase.fastStart
+                     ? "When code starts or jumps, each deck goes to the matching frame and plays at once (about 0.1 s). Each deck's start delay is its play offset in deck Setup, learned automatically or set by Calibrate."
+                     : "Decks are parked pre-roll ahead of code, given time to settle, then played: slower to pick up, for decks that locate slowly.")
+                    .font(.caption).foregroundStyle(.secondary)
+                DisclosureGroup("Advanced") {
+                    if model.settings.chase.fastStart {
+                        Stepper(String(format: "Deck goto time %.0f ms", model.settings.chase.gotoSeconds * 1000),
+                                value: $model.settings.chase.gotoSeconds, in: 0...0.3, step: 0.005)
+                    } else {
+                        Stepper(String(format: "Pre-roll %.1f s", model.settings.chase.prerollSeconds),
+                                value: $model.settings.chase.prerollSeconds, in: 1...5, step: 0.25)
+                        Stepper(String(format: "Cue settle %.2f s", model.settings.chase.cueSettleSeconds),
+                                value: $model.settings.chase.cueSettleSeconds, in: 0.1...2, step: 0.05)
+                    }
+                    Stepper(String(format: "Tolerance ±%.1f frames", model.settings.chase.toleranceFrames),
+                            value: $model.settings.chase.toleranceFrames, in: 0.5...10, step: 0.5)
+                    Stepper("Re-lock after \(model.settings.chase.driftStrikes) bad readings",
+                            value: $model.settings.chase.driftStrikes, in: 1...20)
+                    Toggle("Deck timecode counts at video rate (e.g. 0–59 at 59.94)", isOn: $model.settings.deckTimecodeAtVideoRate)
+                }
+            }
+            Section {
+                DisclosureGroup("Confidence monitor (deck pictures from a capture device)", isExpanded: $showMonitor) {
+                    Text("Turn on below; its settings appear underneath.").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if showMonitor || model.settings.confidenceEnabled {
+                ConfidenceSettings(monitor: model.confidence)
             }
         }
         .formStyle(.grouped)
+            .tabItem { Label("Playback", systemImage: "play.rectangle") }
+            .tag("playback")
+
+            Form { TimelineOutputSettings() }
+                .formStyle(.grouped)
+                .tabItem { Label("Audio out", systemImage: "speaker.wave.2") }
+            .tag("audio")
+
+            Form { ShowControlSettings() }
+                .formStyle(.grouped)
+                .tabItem { Label("Show control", systemImage: "dot.radiowaves.left.and.right") }
+            .tag("control")
+        }
         .font(Theme.grotesk(13))
         .tint(Theme.paper)
-        .frame(width: 520)
-        .padding(.vertical, 8)
+        .frame(width: 580, height: 640)
     }
 }
 
-/// One input channel: name, live level, and whether it carries the LTC in use.
 private struct ChannelRow: View {
     let index: Int
     let name: String
@@ -162,6 +236,69 @@ private struct ShowMachineAgent: View {
     }
 }
 
+/// Where the timeline's song audio and generated LTC play.
+private struct TimelineOutputSettings: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var devices: [AudioInputDevice] = []
+    @State private var ports: [DeckDiscovery.NetworkPort] = []
+
+    var body: some View {
+        Section(model.danteStatus.isRouted ? "Timeline output (when Dante out is off)" : "Timeline output") {
+            Picker("Song audio", selection: $model.settings.timelineOutputUID) {
+                Text("System default").tag(String?.none)
+                ForEach(devices) { Text("\($0.name) (\($0.channels) ch)").tag(Optional($0.uid)) }
+            }
+            Picker("Song audio channels", selection: $model.settings.timelineOutputChannel) {
+                ForEach(Array(stride(from: 0, to: max(2, channels(model.settings.timelineOutputUID)), by: 2)), id: \.self) {
+                    Text("\($0 + 1)–\($0 + 2)").tag($0)
+                }
+            }
+            Picker("LTC out", selection: $model.settings.ltcOutputChannel) {
+                Text("Off").tag(Int?.none)
+                ForEach(0..<max(1, channels(model.settings.ltcOutputUID)), id: \.self) { Text("Channel \($0 + 1)").tag(Optional($0)) }
+            }
+            if model.settings.ltcOutputChannel != nil || model.settings.danteOut {
+                Toggle("Use the track's own timecode", isOn: $model.settings.ltcOutUseTrackTimecode)
+                    .help("When a song's audio has timecode on a channel, play that to LTC out instead of generated code")
+            }
+            if model.settings.ltcOutputChannel != nil {
+                Picker("LTC device", selection: $model.settings.ltcOutputUID) {
+                    Text("System default").tag(String?.none)
+                    ForEach(devices) { Text("\($0.name) (\($0.channels) ch)").tag(Optional($0.uid)) }
+                }
+            }
+            Text("In Timeline mode the song timeline is the clock. LTC out follows it at the show rate, so disguise and anything else can chase the reordered playlist.")
+                .font(.caption).foregroundStyle(.secondary)
+            if let problem = model.timeline.player.problem {
+                Text(problem).font(.caption).foregroundStyle(Theme.amber)
+            }
+        }
+        .onAppear { devices = AudioDeviceCatalog.outputDevices() }
+        Section("Dante out") {
+            Toggle("Send to Dante (Dante Virtual Soundcard)", isOn: $model.settings.danteOut)
+                .help("Song audio left and right on DVS channels 1–2 and timecode on 3, sample-locked on one device")
+            if model.settings.danteOut {
+                Picker("Network port", selection: $model.settings.danteInterface) {
+                    Text("Any (as set in DVS)").tag(String?.none)
+                    ForEach(ports) { Text($0.label).tag(Optional($0.bsd)) }
+                }
+                .help("The port your Dante network is on. Understudy warns when it loses its link; choose the same port in DVS's settings.")
+                Text(model.danteStatus.message).font(.caption)
+                    .foregroundStyle(model.danteStatus.isProblem ? Theme.amber : Theme.lock)
+                Text("Dante Virtual Soundcard (from Audinate, licensed per Mac) sends the channels onto the network; DVS picks the network port itself. Set its channel count to 4 or more, start it, then subscribe receivers to this Mac's channels 1–3 in Dante Controller.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { ports = DeckDiscovery.networkPorts() }
+        AES67Settings()
+    }
+
+    private func channels(_ uid: String?) -> Int {
+        guard let uid else { return 2 }
+        return devices.first { $0.uid == uid }?.channels ?? 2
+    }
+}
+
 /// One LTC source: device, then its channels (with live meters when it's the device open now).
 private struct LTCInputPicker: View {
     @EnvironmentObject private var model: AppModel
@@ -195,13 +332,15 @@ private struct LTCInputPicker: View {
                 Text(live ? "Channel — click to choose" : "Channel — click to choose (meters show for the device in use)")
                     .font(.caption).foregroundStyle(.secondary)
                 ForEach(names.indices, id: \.self) { index in
-                    ChannelRow(
-                        index: index,
-                        name: names[index],
-                        db: live && model.inputLevels.indices.contains(index) ? model.inputLevels[index] : -60,
-                        selected: index == channel,
-                        ltc: inUse && index == channel && model.ltcInfo != "NO LTC"
-                    ) { channel = index }
+                    LiveLevel(readout: model.readout, channel: index) { level in
+                        ChannelRow(
+                            index: index,
+                            name: names[index],
+                            db: live ? level : -60,
+                            selected: index == channel,
+                            ltc: inUse && index == channel && model.ltcInfo != "NO LTC"
+                        ) { channel = index }
+                    }
                 }
             }
         }
@@ -229,9 +368,10 @@ private struct ConfidenceSettings: View {
                     Text("One deck").tag(ConfidenceLayout.single)
                 }
                 if model.settings.confidenceLayout == .quad {
-                    ForEach(0..<AppSettings.deckCount, id: \.self) { deck in
+                    ForEach(model.settings.decks.indices.filter { $0 < model.settings.confidenceQuadrants.count }, id: \.self) { deck in
                         Picker("\(String(format: "%02d", deck + 1))  \(model.settings.decks[deck].name)",
                                selection: $model.settings.confidenceQuadrants[deck]) {
+                            Text("Not on the multiviewer").tag(-1)
                             ForEach(0..<4, id: \.self) { q in
                                 Text(ConfidenceLayout.quadrantNames[q]).tag(q)
                             }
@@ -239,7 +379,7 @@ private struct ConfidenceSettings: View {
                     }
                 } else {
                     Picker("The image is", selection: $model.settings.confidenceSingleDeck) {
-                        ForEach(0..<AppSettings.deckCount, id: \.self) { deck in
+                        ForEach(model.settings.decks.indices, id: \.self) { deck in
                             Text("\(String(format: "%02d", deck + 1))  \(model.settings.decks[deck].name)").tag(deck)
                         }
                     }
@@ -263,5 +403,134 @@ private struct ConfidenceSettings: View {
         if let error = monitor.error { return error }
         if let name = monitor.deviceName { return "Watching \(name)." }
         return monitor.devices.isEmpty ? "No capture devices found." : "Not running."
+    }
+}
+
+/// OSC control in, and where markers go: grandMA3 (over OSC) and disguise (over its session API).
+private struct ShowControlSettings: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var d3Tracks: [String] = []
+    @State private var d3Problem: String?
+
+    var body: some View {
+        Section("Show control: OSC in") {
+            Toggle("Accept OSC control", isOn: $model.settings.oscEnabled)
+            if model.settings.oscEnabled {
+                TextField("UDP port", value: $model.settings.oscPort, format: .number.grouping(.never))
+                LabeledContent("Status") {
+                    Text(model.oscStatus).foregroundStyle(model.osc.problem == nil ? Theme.lock : Theme.amber)
+                }
+                LabeledContent("Last received") { Text(model.lastOSC ?? "—").font(Theme.mono(11)).lineLimit(1) }
+                Text("""
+                /understudy/play · /pause · /toggle · /stop
+                /understudy/song/next · /song/prev · /song <n>
+                /understudy/marker (last type) · /marker/<1–7 or type> ["label"] · /marker "lx" "Drop"
+                /understudy/marker/next · /marker/prev
+                Buttons that send 1 on press and 0 on release act on press only.
+                """)
+                .font(Theme.mono(10)).foregroundStyle(.secondary).textSelection(.enabled)
+            }
+        }
+        Section("Show control: grandMA3") {
+            TextField("Console IP", text: $model.settings.ma3Host, prompt: Text("e.g. 192.168.1.50"))
+            TextField("OSC port", value: $model.settings.ma3Port, format: .number.grouping(.never))
+            TextField("OSC prefix", text: $model.settings.ma3Prefix, prompt: Text("none"))
+            Stepper("Markers sequence \(model.settings.ma3Sequence)", value: $model.settings.ma3Sequence, in: 1...9999)
+            Stepper("Markers timecode show \(model.settings.ma3Timecode)", value: $model.settings.ma3Timecode, in: 1...9999)
+            Text("On the console: Menu › In & Out › OSC, add a line with Destination IP of this Mac, the port and prefix above, Mode UDP, and turn on Enable Input, Receive and Receive Command. Send to grandMA3 replaces the sequence and timecode show numbered here.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        Section("Show control: disguise") {
+            TextField("Designer IP", text: $model.settings.d3Host, prompt: Text("e.g. 192.168.1.20 (port 80)"))
+            HStack {
+                TextField("Track", text: $model.settings.d3Track, prompt: Text("the selected track"))
+                Menu("Tracks") {
+                    if d3Tracks.isEmpty { Text(d3Problem ?? "Fetching…") }
+                    ForEach(d3Tracks, id: \.self) { name in Button(name) { model.settings.d3Track = name } }
+                }
+                .fixedSize()
+                .onTapGesture { fetchTracks() }
+                Button("Fetch") { fetchTracks() }.disabled(model.settings.d3Host.isEmpty)
+            }
+            Picker("Write markers as", selection: $model.settings.d3Style) {
+                ForEach(D3Push.Style.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+            TextField("Track start (if it has no TC tags)", text: $model.settings.d3TrackStart)
+            Text("Markers are placed on the track through its TC tags when it has them (so each song's markers land on that song), otherwise from the track start above. Designer needs its API reachable on port 80.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func fetchTracks() {
+        let host = model.settings.d3Host
+        guard !host.isEmpty else { return }
+        d3Problem = nil
+        Task { @MainActor in
+            do { d3Tracks = try await D3Client.tracks(host: host); if d3Tracks.isEmpty { d3Problem = "No tracks" } }
+            catch { d3Tracks = []; d3Problem = error.localizedDescription }
+        }
+    }
+}
+
+/// The file-name template for recordings, with tokens to insert and a live preview per deck.
+private struct RecordNamingSettings: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        TextField("Artist", text: $model.settings.recordNaming.artist, prompt: Text("e.g. RKS"))
+        TextField("File name", text: $model.settings.recordNaming.template, prompt: Text(RecordNaming.defaultTemplate))
+            .font(Theme.mono(12))
+        HStack(spacing: 6) {
+            ForEach(RecordNaming.tokens, id: \.self) { token in
+                Button(token) {
+                    var t = model.settings.recordNaming.template
+                    if !t.isEmpty, !t.hasSuffix("_"), !t.hasSuffix("-") { t += "_" }
+                    model.settings.recordNaming.template = t + token
+                }
+                .font(Theme.mono(10))
+                .controlSize(.small)
+            }
+            Spacer()
+            Button("Default") {
+                model.settings.recordNaming.template = RecordNaming.defaultTemplate
+            }
+            .controlSize(.small)
+            .disabled(model.settings.recordNaming.template == RecordNaming.defaultTemplate)
+        }
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(model.settings.decks.filter { $0.enabled && !$0.host.isEmpty }, id: \.id) { deck in
+                Text(model.recordName(for: deck.id, at: Date()) + "_0001.mov")
+                    .font(Theme.mono(11)).textSelection(.enabled)
+            }
+        }
+        Text("{deck} deck name · {n} deck number · {artist} · {show} setlist · {date} 2026-11-15 · {day} Sun · {time} 2015 · {seconds} 201530. The time is when Record is pressed; the deck adds its take number. Spaces and symbols become _, and an empty token drops out.")
+            .font(.caption).foregroundStyle(.secondary)
+    }
+}
+
+/// AES67 out (test): the timeline as a network audio stream Dante gear can receive in AES67 mode.
+private struct AES67Settings: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var networks: [DeckDiscovery.LocalNetwork] = []
+
+    var body: some View {
+        Section("AES67 out (test)") {
+            Toggle("Send left, right and timecode as an AES67 stream", isOn: $model.settings.aes67Enabled)
+            if model.settings.aes67Enabled {
+                Picker("Network port", selection: $model.settings.aes67Interface) {
+                    Text("Choose…").tag(String?.none)
+                    ForEach(networks) { n in Text("\(n.displayName) — \(n.address)").tag(Optional(n.interface)) }
+                }
+                TextField("Multicast address", text: $model.settings.aes67Multicast,
+                          prompt: Text(model.address(of: model.settings.aes67Interface).map(AES67.defaultMulticast) ?? "239.69.x.y"))
+                TextField("Stream name", text: $model.settings.aes67Name)
+                if let status = model.aes67Status {
+                    Text(status).font(.caption).foregroundStyle(model.aes67Locked ? Theme.lock : Theme.amber)
+                }
+                Text("For testing. Channels 1–2 are the song audio, 3 is timecode (as LTC out). The stream is announced by SAP: on a Dante device with AES67 mode on (Dante Controller › Device View › AES67 Config), it appears in Dante Controller as “\(model.settings.aes67Name)” to subscribe to. Dante receivers need the stream locked to the network's PTPv2 master, which a Dante device in AES67 mode provides; while there's none, the stream free-runs and Dante won't play it.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { networks = DeckDiscovery.localNetworks() }
     }
 }

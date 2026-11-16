@@ -141,6 +141,13 @@ public final class LTCDecoder {
 public enum LTCEncoder {
     public static func bits(for tc: Timecode, rate: FrameRate) -> [UInt8] {
         var b = [UInt8](repeating: 0, count: 80)
+        write(tc, rate: rate, into: &b)
+        return b
+    }
+
+    /// Writes the 80 bits of one frame into `b` (count 80) without allocating: safe on an audio thread.
+    public static func write(_ tc: Timecode, rate: FrameRate, into b: inout [UInt8]) {
+        for i in 0..<80 { b[i] = 0 }
         func put(_ start: Int, _ value: Int, _ count: Int) {
             for i in 0..<count { b[start + i] = UInt8((value >> i) & 1) }
         }
@@ -155,8 +162,9 @@ public enum LTCEncoder {
         put(56, tc.hours / 10, 2)
         for (i, v) in LTCDecoder.syncWord.enumerated() { b[64 + i] = v }
         let parityBit = rate.nominal == 25 ? 59 : 27
-        if b.reduce(0, { $0 + Int($1) }) % 2 == 1 { b[parityBit] = 1 }
-        return b
+        var ones = 0
+        for i in 0..<80 { ones += Int(b[i]) }
+        if ones % 2 == 1 { b[parityBit] = 1 }
     }
 
     /// Renders `frameCount` frames starting at `start`. `rate` must be an LTC rate (≤ 30 fps).

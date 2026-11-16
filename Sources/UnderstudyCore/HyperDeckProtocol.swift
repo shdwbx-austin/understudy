@@ -101,15 +101,14 @@ public enum HyperDeckCommand {
     }
 
     public static func recordPrefix(_ name: String) -> String {
-        let safe = name.unicodeScalars
-            .map { CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_" ? Character($0) : "_" }
-        return "configuration: record prefix: \(String(safe).isEmpty ? "understudy" : String(safe))"
+        "configuration: record prefix: \(RecordNaming.sanitized(name))"
     }
 
-    /// Go to clip `id`, offset `frame` frames from its start.
-    public static func gotoClip(id: Int, frame: Int) -> String { "goto: clip id: \(id) clip: \(max(0, frame))" }
+    /// Go to clip `id`, `frame` frames from its start (0 = first frame). The deck counts a clip's
+    /// frames from 1 (`clip: 1` is the first frame, `clip: 0` is rejected), so one is added.
+    public static func gotoClip(id: Int, frame: Int) -> String { "goto: clip id: \(id) clip: \(max(0, frame) + 1)" }
     public static func gotoClipStart(id: Int) -> String { "goto: clip id: \(id)" }
-    public static func gotoFrameInClip(_ frame: Int) -> String { "goto: clip: \(max(0, frame))" }
+    public static func gotoFrameInClip(_ frame: Int) -> String { "goto: clip: \(max(0, frame) + 1)" }
 }
 
 public enum TransportStatus: String, Sendable {

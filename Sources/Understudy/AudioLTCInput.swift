@@ -13,10 +13,34 @@ struct AudioInputDevice: Identifiable, Hashable {
     let uid: String
     let name: String
     let channels: Int
+    /// Core Audio model UID (identifies the driver, e.g. Dante Virtual Soundcard's).
+    var model = ""
 }
 
 enum AudioDeviceCatalog {
-    static func inputDevices() -> [AudioInputDevice] {
+    static func inputDevices() -> [AudioInputDevice] { devices(scope: kAudioDevicePropertyScopeInput) }
+    static func outputDevices() -> [AudioInputDevice] { devices(scope: kAudioDevicePropertyScopeOutput) }
+
+    /// Output channels on a device (nil UID = the system's default output).
+    static func outputChannels(uid: String?) -> Int {
+        if let uid { return outputDevices().first { $0.uid == uid }?.channels ?? 0 }
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var device: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) == noErr
+        else { return 0 }
+        return channelCount(device, scope: kAudioDevicePropertyScopeOutput)
+    }
+
+    static func deviceID(forUID uid: String) -> AudioDeviceID? {
+        (outputDevices() + inputDevices()).first { $0.uid == uid }?.id
+    }
+
+    private static func devices(scope: AudioObjectPropertyScope) -> [AudioInputDevice] {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -28,13 +52,14 @@ enum AudioDeviceCatalog {
         var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
         guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &ids) == noErr else { return [] }
         return ids.compactMap { id in
-            let channels = inputChannelCount(id)
+            let channels = channelCount(id, scope: scope)
             guard channels > 0 else { return nil }
             return AudioInputDevice(
                 id: id,
                 uid: stringProperty(id, kAudioDevicePropertyDeviceUID) ?? "\(id)",
                 name: stringProperty(id, kAudioObjectPropertyName) ?? "Device \(id)",
-                channels: channels
+                channels: channels,
+                model: stringProperty(id, kAudioDevicePropertyModelUID) ?? ""
             )
         }
     }
@@ -83,10 +108,10 @@ enum AudioDeviceCatalog {
         }
     }
 
-    private static func inputChannelCount(_ id: AudioDeviceID) -> Int {
+    static func channelCount(_ id: AudioDeviceID, scope: AudioObjectPropertyScope) -> Int {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyStreamConfiguration,
-            mScope: kAudioDevicePropertyScopeInput,
+            mScope: scope,
             mElement: kAudioObjectPropertyElementMain
         )
         var size: UInt32 = 0

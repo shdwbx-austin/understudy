@@ -102,7 +102,7 @@ struct DeckCard: View {
                 MetaRow(label: "Reference", value: refText, color: refColor, inverted: inverted)
                 MetaRow(label: "Media left", value: deck.isConnected ? MediaTime.text(deck.mediaSecondsLeft) : "—",
                         color: mediaColor, inverted: inverted)
-                if model.mode == .playback {
+                if model.isPlayingBack {
                     MetaRow(label: "Error Δ", value: errorText, color: errorColor, inverted: inverted)
                 }
             }
@@ -139,31 +139,7 @@ struct DeckCard: View {
     // MARK: Status
 
     /// The one word that matters most right now.
-    private var status: (text: String, color: Color) {
-        if deck.isLost { return ("Lost", Theme.signal) }
-        guard deck.isConnected else {
-            switch deck.connection {
-            case .connecting, .failed: return ("Connecting", Theme.amber)
-            default: return ("Offline", Theme.quiet)
-            }
-        }
-        if deck.transport.status == .record { return ("● Rec", Theme.signal) }
-        if model.mode == .playback {
-            switch deck.chase.phase {
-            case .playing: return ("Chasing", Theme.lock)
-            case .cueing, .armed: return ("Cueing", Theme.paper)
-            case .outOfRange: return ("No media at TC", Theme.amber)
-            case .idle: return (model.ltcRolling ? "Waiting" : "Waiting for LTC", Theme.grey)
-            }
-        }
-        switch deck.transport.status {
-        case .preview: return ("Live", Theme.paper)
-        case .play: return ("Playing", Theme.paper)
-        case .stopped: return ("Stopped", Theme.grey)
-        case .unknown: return ("—", Theme.quiet)
-        default: return (deck.transport.status.rawValue.capitalized, Theme.paper)
-        }
-    }
+    private var status: (text: String, color: Color) { DeckStatus.word(deck, model: model) }
 
     /// Health at a glance: connection, input signal, reference, media.
     private var dots: [(color: Color, help: String)] {
@@ -315,5 +291,37 @@ private struct ConfidencePicture: View {
     private func borderColor(_ state: PictureState?) -> Color {
         guard let b = badge(state) else { return Theme.rule }
         return b.color
+    }
+}
+
+/// A deck's state in one word, shared by the deck rows and the timeline's deck chips.
+@MainActor
+enum DeckStatus {
+    static func word(_ deck: DeckController, model: AppModel) -> (text: String, color: Color) {
+        if deck.isLost { return ("Lost", Theme.signal) }
+        guard deck.isConnected else {
+            switch deck.connection {
+            case .connecting, .failed: return ("Connecting", Theme.amber)
+            default: return ("Offline", Theme.quiet)
+            }
+        }
+        if deck.transport.status == .record { return ("● Rec", Theme.signal) }
+        if model.isPlayingBack {
+            switch deck.chase.phase {
+            case .playing: return ("Chasing", Theme.lock)
+            case .cueing, .armed, .starting: return ("Cueing", Theme.paper)
+            case .outOfRange: return ("No media at TC", Theme.amber)
+            case .idle:
+                if model.mode == .timeline { return (model.ltcRolling ? "Waiting" : "Parked", Theme.grey) }
+                return (model.ltcRolling ? "Waiting" : "Waiting for LTC", Theme.grey)
+            }
+        }
+        switch deck.transport.status {
+        case .preview: return ("Live", Theme.paper)
+        case .play: return ("Playing", Theme.paper)
+        case .stopped: return ("Stopped", Theme.grey)
+        case .unknown: return ("—", Theme.quiet)
+        default: return (deck.transport.status.rawValue.capitalized, Theme.paper)
+        }
     }
 }

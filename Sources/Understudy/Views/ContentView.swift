@@ -13,6 +13,18 @@ struct ContentView: View {
             // Width of the four content columns, for sizing the hero timecode to fill them.
             let content = geo.size.width - Theme.marginLeading - Theme.marginTrailing - ShowGrid.labelWidth - Theme.gutter
             VStack(alignment: .leading, spacing: 0) {
+                if model.showsTimelineWorkspace {
+                    // Timeline mode (or Record from the timeline): the playlist and timeline take the
+                    // room the take and decks had.
+                    let column = (content - 3 * Theme.gutter) / 4
+                    VStack(alignment: .leading, spacing: 14) {
+                        TimelineTopBar()
+                        Rule()
+                        TimelineWorkspace(timeline: model.timeline, column: column)
+                            .frame(maxHeight: .infinity, alignment: .top)
+                    }
+                    .padding(.trailing, Theme.marginTrailing)
+                } else {
                 ScrollView(.vertical) {
                     VStack(alignment: .leading, spacing: 22) {
                         // The timecode blocks take the room that's left once all four decks fit: huge on a
@@ -21,7 +33,10 @@ struct ContentView: View {
                         let byHeight = (geo.size.height - 860) / 1.12
                         Header(heroSize: min(150, byWidth, max(56, byHeight)))
                         GridRow {
-                            RowLabel(index: 1, title: "Mode")
+                            VStack(alignment: .leading, spacing: 10) {
+                                RowLabel(index: 1, title: "Mode")
+                                ModeDescription()
+                            }
                         } content: {
                             ModeBar()
                         }
@@ -43,6 +58,7 @@ struct ContentView: View {
                     .padding(.bottom, 12)
                 }
                 .scrollIndicators(.automatic)
+                }
                 Footer(backup: model.backup, openBackup: { showBackup = true })
                     .padding(.trailing, Theme.marginTrailing)
                     .padding(.top, 12)
@@ -52,6 +68,7 @@ struct ContentView: View {
             .padding(.bottom, 20)
         }
         .frame(minWidth: 1100, minHeight: 760, alignment: .topLeading)
+        .navigationTitle(model.projectName.map { "understudy — \($0)" } ?? "understudy")
         .background(Theme.ink)
         .foregroundStyle(Theme.paper)
         .preferredColorScheme(.dark)
@@ -103,11 +120,7 @@ private struct Header: View {
             VStack(alignment: .leading, spacing: 10) {
                 // Hours, minutes, seconds, frames: one labelled block per grid column, numeral set
                 // bottom-right, after the Swiss clock posters.
-                ColumnGrid {
-                    ForEach(Array(zip(["hours", "minutes", "seconds", "frames"], parts).enumerated()), id: \.offset) { _, item in
-                        TimeBlock(label: item.0, value: item.1, size: heroSize, color: numeralColor, alarm: alarm)
-                    }
-                }
+                ClockDigits(readout: model.readout, size: heroSize, color: numeralColor, alarm: alarm)
                 ColumnGrid {
                     Text(state)
                         .font(Theme.grotesk(22, .medium))
@@ -122,7 +135,7 @@ private struct Header: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         if let resumed = model.resumedMode {
-                            Text("RESUMED \(resumed == .record ? "RECORD" : "PLAY TO CODE") AFTER A RESTART")
+                            Text("RESUMED \(resumed == .record ? "RECORD" : resumed == .timeline ? "TIMELINE" : "PLAY TO CODE") AFTER A RESTART")
                                 .font(Theme.mono(10)).tracking(1.2).foregroundStyle(Theme.amber)
                                 .fixedSize(horizontal: false, vertical: true)
                             TextButton(title: "OK", color: Theme.amber) { model.resumedMode = nil }
@@ -134,36 +147,53 @@ private struct Header: View {
         }
     }
 
-    /// "01:10:44:17" (or ";" before frames when drop-frame) → ["01", "10", "44", "17"]; dashes with no code.
-    private var parts: [String] {
-        let p = model.ltcText.split(whereSeparator: { $0 == ":" || $0 == ";" }).map(String.init)
-        return p.count == 4 && !model.ltcText.hasPrefix("--") ? p : ["––", "––", "––", "––"]
-    }
-
     private var numeralColor: Color {
-        model.ltcText.hasPrefix("--") ? Theme.quiet : color
+        model.hasShowCode ? color : Theme.quiet
     }
 
-    /// Code missing while recording or playing is a fault, not a calm state.
-    private var alarm: Bool { model.mode != .stop && !model.ltcRolling }
-
-    /// LOCKED green, ACQUIRING off-white, FREEWHEEL amber, NO LTC grey (red in Record/Play).
-    private var state: String {
-        if !model.ltcRolling { return model.ltcText.hasPrefix("--") ? "Waiting for code" : "No LTC" }
-        if model.ltcFreewheeling { return "Freewheel" }
-        return model.ltcLocked ? "Locked" : "Acquiring"
-    }
-
-    private var color: Color {
-        if !model.ltcRolling { return alarm ? Theme.signal : Theme.quiet }
-        if model.ltcFreewheeling { return Theme.amber }
-        return model.ltcLocked ? Theme.lock : Theme.paper
-    }
+    private var alarm: Bool { model.clockAlarm }
+    private var state: String { model.clockState }
+    private var color: Color { model.clockColor }
 
     /// "30 · AUTO", or "29.97 DF · SET"; "RATE · DETECTING" until auto-detect has measured.
     private var rateText: String {
         if model.settings.ltcRateAuto, model.rateLabel.hasSuffix("DETECTING") { return "RATE · DETECTING" }
         return "\(model.ltcRate.rawValue) · \(model.settings.ltcRateAuto ? "AUTO" : "SET")"
+    }
+}
+
+/// Hours, minutes, seconds, frames: one labelled block per grid column, numerals set bottom-right
+/// after the Swiss clock posters. Watches only the readout, so the rest of the window doesn't
+/// redraw every frame.
+private struct ClockDigits: View {
+    @ObservedObject var readout: Readout
+    let size: CGFloat
+    let color: Color
+    let alarm: Bool
+
+    var body: some View {
+        ColumnGrid {
+            ForEach(Array(zip(["hours", "minutes", "seconds", "frames"], parts).enumerated()), id: \.offset) { _, item in
+                TimeBlock(label: item.0, value: item.1, size: size, color: color, alarm: alarm)
+            }
+        }
+    }
+
+    /// "01:10:44:17" (or ";" before frames when drop-frame) → ["01", "10", "44", "17"]; dashes with no code.
+    private var parts: [String] {
+        let p = readout.ltcText.split(whereSeparator: { $0 == ":" || $0 == ";" }).map(String.init)
+        return p.count == 4 && !readout.ltcText.hasPrefix("--") ? p : ["––", "––", "––", "––"]
+    }
+}
+
+/// The level of one input channel, watching only the readout.
+struct LiveLevel<Content: View>: View {
+    @ObservedObject var readout: Readout
+    let channel: Int
+    @ViewBuilder let content: (Float) -> Content
+
+    var body: some View {
+        content(readout.inputLevels.indices.contains(channel) ? readout.inputLevels[channel] : -60)
     }
 }
 
@@ -212,19 +242,39 @@ private struct ModeBar: View {
             ModeBlock(title: "Play to code", key: "⌘3", active: model.mode == .playback, fill: Theme.lock) {
                 model.requestMode(.playback)
             }
-            Text(description(continuous))
-                .font(Theme.grotesk(13, .light))
-                .foregroundStyle(Theme.grey)
-                .fixedSize(horizontal: false, vertical: true)
+            ModeBlock(title: "Timeline", key: "⌘4", active: model.mode == .timeline, fill: Theme.paper) {
+                model.requestMode(.timeline)
+            }
         }
         .frame(height: 76)
     }
+}
 
-    private func description(_ continuous: Bool) -> String {
+/// One line on what the current mode does, under the Mode label.
+private struct ModeDescription: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(text)
+                .font(Theme.grotesk(12, .light))
+                .foregroundStyle(Theme.grey)
+                .fixedSize(horizontal: false, vertical: true)
+            if model.mode == .timeline {
+                TextButton(title: "Open in window ⌘T") { openWindow(id: "timeline") }
+            }
+        }
+    }
+
+    private var text: String {
         switch model.mode {
         case .stop: return "Decks idle. The live feed passes through to disguise."
-        case .record: return continuous ? "Decks record until Stop. Show code is logged against the take." : "Decks record while show code runs."
+        case .record:
+            return model.settings.recordMode == .continuous
+                ? "Decks record until Stop. Show code is logged against the take." : "Decks record while show code runs."
         case .playback: return "Decks chase show timecode from the selected take."
+        case .timeline: return "The song timeline is the clock: audio plays and the decks follow."
         }
     }
 }
@@ -300,7 +350,7 @@ private struct TakeBar: View {
                 .font(Theme.mono(10))
                 .help("Play the newest take after each recording")
         }
-        .opacity(model.mode == .playback ? 1 : 0.5)
+        .opacity(model.isPlayingBack ? 1 : 0.5)
     }
 
     private var current: Take? { model.takes.first { $0.offset == model.selectedTake } }
@@ -375,12 +425,16 @@ private struct Footer: View {
 
     var body: some View {
         GridRow {
-            Label8(text: model.settings.separatePlaybackInput
+            Label8(text: model.showCodeFromTimeline ? "Show code" : model.settings.separatePlaybackInput
                    ? (model.inputRole == .playback ? "Playback LTC" : "Show LTC") : "LTC in")
         } content: {
             ColumnGrid {
                 Group {
-                    if let error = model.audioError {
+                    if model.showCodeFromTimeline {
+                        Text("Song timeline · " + (model.danteStatus.isRouted ? "Dante out 1–3" : model.timecodeOutLabel ?? "LTC out off"))
+                            .foregroundStyle(Theme.grey)
+                            .lineLimit(1)
+                    } else if let error = model.audioError {
                         Text(error).foregroundStyle(Theme.amber).lineLimit(2)
                     } else {
                         let channel = model.activeChannel
@@ -391,11 +445,11 @@ private struct Footer: View {
                     }
                 }
                 .span(2)
-                HStack(spacing: 12) {
-                    let channel = model.activeChannel
-                    let db = model.inputLevels.indices.contains(channel) ? model.inputLevels[channel] : -60
-                    LevelMeter(db: db)
-                    Text(LevelMeter.label(db)).foregroundStyle(Theme.grey).frame(width: 48, alignment: .leading)
+                LiveLevel(readout: model.readout, channel: model.activeChannel) { db in
+                    HStack(spacing: 12) {
+                        LevelMeter(db: db)
+                        Text(LevelMeter.label(db)).foregroundStyle(Theme.grey).frame(width: 48, alignment: .leading)
+                    }
                 }
                 HStack(spacing: 16) {
                     BackupStatus(backup: backup, open: openBackup)
@@ -429,5 +483,97 @@ private struct BackupStatus: View {
         } else {
             TextButton(title: "Back up ⌘B", color: Theme.grey, action: open)
         }
+    }
+}
+
+// MARK: - Clock state (shared by the big header and the Timeline bar)
+
+extension AppModel {
+    /// Code missing while recording or playing is a fault, not a calm state: only when the decks
+    /// depend on incoming LTC.
+    var clockAlarm: Bool { (mode == .record || mode == .playback) && !ltcRolling }
+
+    /// LOCKED green, ACQUIRING off-white, FREEWHEEL amber, NO LTC grey (red in Record/Play).
+    var clockState: String {
+        if showCodeFromTimeline { return ltcRolling ? "Timeline" : "Timeline paused" }
+        if !ltcRolling { return hasShowCode ? "No LTC" : "Waiting for code" }
+        if ltcFreewheeling { return "Freewheel" }
+        return ltcLocked ? "Locked" : "Acquiring"
+    }
+
+    var clockColor: Color {
+        if !ltcRolling { return clockAlarm ? Theme.signal : Theme.quiet }
+        if ltcFreewheeling { return Theme.amber }
+        return ltcLocked ? Theme.lock : Theme.paper
+    }
+}
+
+// MARK: - Timeline bar
+
+/// Timeline mode's one-line header: name and project, the modes as compact tabs, and the show
+/// timecode with its state. Replaces the big clock and mode row so the timeline gets the room.
+struct TimelineTopBar: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        HStack(alignment: .center, spacing: Theme.gutter) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("understudy").font(Theme.grotesk(22, .medium)).tracking(-0.4)
+                Text(model.projectName ?? "No project").font(Theme.grotesk(12, .light)).foregroundStyle(Theme.grey).lineLimit(1)
+            }
+            .frame(width: ShowGrid.labelWidth, alignment: .leading)
+            ModeTabs()
+            Spacer(minLength: Theme.gutter)
+            TextButton(title: "Window ⌘T", color: Theme.grey) { openWindow(id: "timeline") }
+                .help("Open the timeline in its own window")
+            VStack(alignment: .trailing, spacing: 2) {
+                CompactClock(readout: model.readout, color: model.hasShowCode ? model.clockColor : Theme.quiet)
+                Text(model.clockState.uppercased()).font(Theme.mono(10, bold: true)).tracking(1.2).foregroundStyle(model.clockColor)
+            }
+        }
+        .frame(height: 64)
+    }
+}
+
+/// The four modes as small tabs (⌘1–4). The current one is filled in its colour.
+struct ModeTabs: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        let continuous = model.settings.recordMode == .continuous
+        HStack(spacing: 0) {
+            tab("Stop", "⌘1", .stop, nil)
+            tab(continuous ? "Record" : "Rec arm", "⌘2", .record, Theme.signal)
+            tab("Play to code", "⌘3", .playback, Theme.lock)
+            tab("Timeline", "⌘4", .timeline, Theme.paper)
+        }
+        .overlay(Rectangle().strokeBorder(Theme.rule, lineWidth: 1))
+        .fixedSize()
+    }
+
+    private func tab(_ title: String, _ key: String, _ mode: AppModel.Mode, _ fill: Color?) -> some View {
+        let active = model.mode == mode
+        return Button { model.requestMode(mode) } label: {
+            Text(title.uppercased())
+                .font(Theme.mono(11, bold: active)).tracking(1.2)
+                .padding(.horizontal, 14).padding(.vertical, 9)
+                .foregroundStyle(active && fill != nil ? Theme.ink : (active ? Theme.paper : Theme.grey))
+                .background(active ? (fill ?? Theme.fill) : Color.clear)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("\(title) (\(key))")
+    }
+}
+
+/// The show timecode on one line, in fixed cells, watching only the readout.
+private struct CompactClock: View {
+    @ObservedObject var readout: Readout
+    let color: Color
+
+    var body: some View {
+        TimecodeText(text: readout.ltcText.hasPrefix("--") ? "--:--:--:--" : readout.ltcText, size: 34, weight: .light)
+            .foregroundStyle(color)
     }
 }

@@ -18,7 +18,21 @@ struct Take: Identifiable, Hashable {
 @MainActor
 final class AppModel: ObservableObject {
     enum Mode: String, CaseIterable {
-        case stop, record, playback
+        case stop, record, playback, timeline
+    }
+
+    /// Decks are playing footage back: chasing show code, or following the timeline.
+    var isPlayingBack: Bool { mode == .playback || mode == .timeline }
+
+    /// The main window shows the timeline workspace: Timeline mode, or Record driven by the timeline.
+    var showsTimelineWorkspace: Bool {
+        mode == .timeline || (mode == .record && settings.showCodeSource == .timeline)
+    }
+
+    /// Show code comes from the song timeline rather than the LTC input: always in Timeline mode,
+    /// and in Stop and Record when Settings says so. Play to code always chases the LTC input.
+    var showCodeFromTimeline: Bool {
+        mode == .timeline || (mode != .playback && settings.showCodeSource == .timeline)
     }
 
     @Published var settings: AppSettings {
@@ -28,8 +42,42 @@ final class AppModel: ObservableObject {
             settingsChanged(from: oldValue)
         }
     }
-    @Published private(set) var mode: Mode = .stop
-    @Published private(set) var ltcText = "--:--:--:--"
+    @Published private(set) var mode: Mode = .stop {
+        // Dev Record sends the track timecode out (see devTimecodeChannel); other modes don't.
+        didSet { if mode != oldValue { applyTimelineOutputs() } }
+    }
+    /// While recording from the timeline (dev Record) with LTC out off: the song-audio device's
+    /// channel the songs' own timecode plays on, the one after the music pair (e.g. 3).
+    @Published private(set) var devTimecodeChannel: Int?
+    /// OSC control in: listening state ("Listening on 9000"), or what's wrong.
+    @Published private(set) var oscStatus = "Off"
+    /// The last OSC message received, for checking a controller is reaching Understudy.
+    @Published private(set) var lastOSC: String?
+    /// Result of the last marker export, deploy or push.
+    @Published var linkMessage: String?
+    @Published private(set) var linkBusy = false
+    let osc = OSCServer()
+    let projects = ProjectManager()
+    /// AES67 out (test), when on.
+    private var aes67: AES67Sender?
+    private var aes67State: TimelineModel.RenderState?
+    @Published private(set) var aes67Status: String?
+    private var lastAES67Status = 0.0
+    let updater = Updater()
+    private var projectCreated = Date()
+    private var projectSave: Task<Void, Never>?
+    /// When Record was last pressed: the {date}/{time} in recording names.
+    private(set) var recordStartedAt: Date?
+    /// Dante out through Dante Virtual Soundcard: off, sending, or what's stopping it.
+    @Published private(set) var danteStatus: DanteOut.Status = .off
+    private var danteSoundcard: DanteOut.Device?
+    private var lastDanteCheck = 0.0
+    /// The show clock text and input meters change every frame; they live in `readout` so only
+    /// the digits and meters redraw, not the whole window.
+    let readout = Readout()
+    var ltcText: String { readout.ltcText }
+    /// Whether the clock has any code to show (it reads dashes otherwise); changes rarely.
+    @Published private(set) var hasShowCode = false
     @Published private(set) var ltcRolling = false
     @Published private(set) var ltcFreewheeling = false
     /// Code is rolling, its rate is known (and matches the set rate when fixed), and it isn't freewheeling.
@@ -39,7 +87,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var audioDevices: [AudioInputDevice] = []
     @Published private(set) var audioError: String?
     /// Peak level per channel of the open input, dBFS (−60…0), with meter-style fall-off.
-    @Published private(set) var inputLevels: [Float] = []
+    var inputLevels: [Float] { readout.inputLevels }
     /// The open input's channels, as the device names them ("" where it doesn't).
     @Published private(set) var inputChannelNames: [String] = []
     @Published private(set) var takes: [Take] = []
@@ -47,8 +95,13 @@ final class AppModel: ObservableObject {
         didSet { if selectedTake != oldValue { decks.forEach { $0.resetChase() } } }
     }
 
-    let decks: [DeckController]
+    /// One controller per deck in the show (1–16), indexed by deck id.
+    @Published private(set) var decks: [DeckController] = []
     let discovery = DeckDiscovery()
+    let timeline = TimelineModel()
+    /// Last paused timeline seek sent to the decks.
+    private var sentSeek = -1
+    private var lastSeekSent = 0.0
     let showMachine = ShowMachine()
     let backup = TakeBackup()
     let confidence = ConfidenceMonitor()
@@ -73,18 +126,7 @@ final class AppModel: ObservableObject {
         settings = loaded
         clock = LTCClock(rate: loaded.ltcRate, freewheel: loaded.freewheelSeconds)
         decks = loaded.decks.map { DeckController(id: $0.id) }
-        for deck in decks {
-            deck.buildsTakeMaps = loaded.recordMode == .continuous
-            deck.onRecordingFinished = { [weak self] in self?.scheduleTakeRefresh() }
-            deck.onClipsRefreshed = { [weak self, weak deck] in
-                guard let self, let deck else { return }
-                self.fileTakeMaps(deck)
-            }
-            deck.onReady = { [weak self, weak deck] in
-                guard let self, let deck else { return }
-                self.deckReady(deck)
-            }
-        }
+        for deck in decks { wire(deck) }
         for config in loaded.decks where config.enabled {
             decks[config.id].connect(host: config.host)
         }
@@ -110,6 +152,11 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(Mode.stop.rawValue, forKey: lastModeKey)
         }
         applyConfidence()
+        applyTimelineOutputs()
+        osc.onMessage = { [weak self] message, from in self?.handleOSC(message, from: from) }
+        osc.onState = { [weak self] in self?.refreshOSCStatus() }
+        applyOSC()
+        applyAES67()
         // Back into Record or Play after a restart, if asked. Decks are brought into the mode as
         // they connect (deckReady); a deck that kept recording through the restart is left alone.
         if loaded.resumeLastMode,
@@ -171,8 +218,11 @@ final class AppModel: ObservableObject {
         // Re-sending the current mode would split a recording or re-cue every deck.
         guard newMode != mode || newMode == .stop else { return }
         pendingMode = nil
+        if mode == .timeline, newMode != .timeline { timeline.stop() }
         // Never copy files off the decks while they record.
         if newMode == .record, backup.isRunning { backup.cancel() }
+        // One time for the whole take, so every deck's file (and a deck that rejoins) shares it.
+        if newMode == .record { recordStartedAt = Date() }
         mode = newMode
         syncInput()
         UserDefaults.standard.set(newMode.rawValue, forKey: Self.lastModeKey)
@@ -186,7 +236,8 @@ final class AppModel: ObservableObject {
             scheduleTakeRefresh()
         case .record:
             active.forEach { arm($0) }
-        case .playback:
+        case .playback, .timeline:
+            sentSeek = -1
             guard !active.isEmpty else {
                 rebuildTakes()
                 return
@@ -202,7 +253,14 @@ final class AppModel: ObservableObject {
     }
 
     private func arm(_ deck: DeckController) {
-        deck.arm(prefix: settings.decks[deck.id].name, mode: settings.recordMode, dropFrame: ltcRate.isDropFrame)
+        deck.arm(prefix: recordName(for: deck.id), mode: settings.recordMode, dropFrame: ltcRate.isDropFrame)
+    }
+
+    /// The file name a deck records under for the take started at `recordStartedAt` (the deck adds _0001…).
+    func recordName(for id: Int, at date: Date? = nil) -> String {
+        settings.recordNaming.name(deck: settings.decks[id].name, number: id + 1,
+                                   show: timeline.currentSetlist?.name ?? "",
+                                   at: date ?? recordStartedAt ?? Date())
     }
 
     /// A deck (re)connected: bring it into the current mode. A deck that's already recording is
@@ -217,13 +275,102 @@ final class AppModel: ObservableObject {
         case .record:
             deck.owesStop = false
             if deck.transport.status != .record { arm(deck) }
-        case .playback:
+        case .playback, .timeline:
             deck.owesStop = false
+            sentSeek = -1
             deck.enterPlayback { [weak self] in self?.rebuildTakes() }
         }
     }
 
     // MARK: Decks
+
+    private func wire(_ deck: DeckController) {
+        deck.buildsTakeMaps = settings.recordMode == .continuous
+        deck.onRecordingFinished = { [weak self] in self?.scheduleTakeRefresh() }
+        deck.onClipsRefreshed = { [weak self, weak deck] in
+            guard let self, let deck else { return }
+            self.fileTakeMaps(deck)
+        }
+        deck.onReady = { [weak self, weak deck] in
+            guard let self, let deck else { return }
+            self.deckReady(deck)
+        }
+    }
+
+    // MARK: Deck list
+
+    var canAddDeck: Bool { !setupLocked && settings.decks.count < AppSettings.maxDecks }
+    var canRemoveDeck: Bool { !setupLocked && settings.decks.count > 1 }
+
+    /// Adds a deck at the end (up to 16), named after the last one's pattern.
+    func addDeck() {
+        guard canAddDeck else { return }
+        let n = settings.decks.count
+        var list = settings.decks
+        list.append(DeckConfig(id: n, name: "ME \(n + 1)", host: ""))
+        setDeckList(list)
+    }
+
+    /// Removes deck `id`; the ones after it move up a number (their take maps go with them).
+    func removeDeck(_ id: Int) {
+        guard canRemoveDeck, settings.decks.indices.contains(id) else { return }
+        var list = settings.decks
+        list.remove(at: id)
+        setDeckList(list, removed: [id])
+    }
+
+    /// Applies an edited deck list (Assign decks): entries keep their old ids, new ones have ids
+    /// past the end, missing ids were removed.
+    func applyDeckDraft(_ draft: [DeckConfig]) {
+        guard !setupLocked else { return }
+        let oldCount = settings.decks.count
+        let kept = Set(draft.map(\.id).filter { $0 < oldCount })
+        let removed = (0..<oldCount).filter { !kept.contains($0) }
+        var list = draft
+        for i in list.indices { list[i].host = list[i].host.trimmingCharacters(in: .whitespaces) }
+        if removed.isEmpty, list.count == oldCount {
+            for i in list.indices where list[i] != settings.decks[i] {
+                let old = settings.decks[i]
+                settings.decks[i] = list[i]
+                if list[i].host != old.host || list[i].enabled != old.enabled { applyHost(i) }
+            }
+        } else {
+            setDeckList(list, removed: removed)
+        }
+    }
+
+    /// Makes the deck list `configs` (from a project, or after an add/remove): controllers are
+    /// added, dropped or rebuilt to match, and every deck reconnects to its address.
+    func setDeckList(_ configs: [DeckConfig], removed: [Int] = []) {
+        let list = AppSettings.normalized(configs)
+        if let first = removed.min(), first < decks.count {
+            // Controllers from the first removed one on are rebuilt under their new numbers.
+            for deck in decks[first...] {
+                if deck.transport.status == .record { deck.stopTransport() }
+                deck.disconnect()
+            }
+            var count = decks.count
+            for id in removed.sorted(by: >) {
+                TakeMapStore.removeDeck(id: id, count: count)
+                count -= 1
+            }
+            decks.removeSubrange(first...)
+        }
+        while decks.count > list.count {
+            let deck = decks.removeLast()
+            if deck.transport.status == .record { deck.stopTransport() }
+            deck.disconnect()
+        }
+        while decks.count < list.count {
+            let deck = DeckController(id: decks.count)
+            wire(deck)
+            decks.append(deck)
+        }
+        settings.decks = list
+        settings.normalizeDecks()
+        for id in list.indices { applyHost(id) }
+        applyConfidence()
+    }
 
     func applyHost(_ id: Int) {
         let config = settings.decks[id]
@@ -357,6 +504,26 @@ final class AppModel: ObservableObject {
         if settings.followLatestTake || selectedTake >= takes.count {
             selectedTake = 0
         }
+        // A new recording: put the set in the order it played, if asked (once per take).
+        if timeline.autoOrderFromTakes, let latest = takes.first, latest.clipID != lastAutoOrderedClip,
+           latest.logged == true {
+            lastAutoOrderedClip = latest.clipID
+            orderSetByTake(0)
+        }
+    }
+
+    private var lastAutoOrderedClip: Int?
+
+    /// Puts the timeline's set in the order its songs played in a take (0 = latest), read from the
+    /// take's show-code map on the first deck that has one.
+    @discardableResult
+    func orderSetByTake(_ offset: Int) -> Bool {
+        for deck in activeDecks {
+            guard let clip = deck.clip(takeOffset: offset), let map = deck.maps.map(for: clip), !map.isEmpty else { continue }
+            return timeline.orderSet(by: map, takeName: "take #\(clip.id) (\(clip.name))") > 0
+        }
+        timeline.message = "That take has no show-code map yet (record with continuous recording to make one)."
+        return false
     }
 
     // MARK: Timecode
@@ -495,7 +662,7 @@ final class AppModel: ObservableObject {
         let deviceID = device?.id ?? AudioDeviceCatalog.defaultInputDeviceID()
         inputChannelNames = deviceID.map { AudioDeviceCatalog.inputChannelNames($0, count: count) }
             ?? Array(repeating: "", count: count)
-        inputLevels = Array(repeating: -60, count: count)
+        readout.inputLevels = Array(repeating: -60, count: count)
         // Record what's really open: if the chosen device is missing, that's the system default.
         openInput = audio.isRunning ? (device?.uid, wanted.channel) : nil
         if audio.isRunning, wanted.uid != nil, device == nil {
@@ -513,6 +680,8 @@ final class AppModel: ObservableObject {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else { return }
         // Reopen if what's open isn't what's wanted (the interface came back) or nothing is open.
         if openInput?.uid != wantedInput().uid || !audio.isRunning { openAudio() }
+        // Dante Virtual Soundcard started, stopped or restarted; any output device came or went.
+        applyTimelineOutputs()
     }
 
     private func watchAudio(now: Double) {
@@ -543,7 +712,7 @@ final class AppModel: ObservableObject {
             let db = min(0, max(-60, 20 * log10(max(peak, 1e-6))))
             levels[i] = max(db, levels[i] - fall)
         }
-        if levels != inputLevels { inputLevels = levels }
+        if levels != inputLevels { readout.inputLevels = levels }
     }
 
     private func ingest(_ event: AudioLTCInput.Event) {
@@ -585,8 +754,21 @@ final class AppModel: ObservableObject {
             || settings.playbackAudioChannel != old.playbackAudioChannel {
             syncInput()
         }
+        if settings.timelineOutputUID != old.timelineOutputUID || settings.timelineOutputChannel != old.timelineOutputChannel
+            || settings.ltcOutputUID != old.ltcOutputUID || settings.ltcOutputChannel != old.ltcOutputChannel
+            || settings.ltcOutUseTrackTimecode != old.ltcOutUseTrackTimecode
+            || settings.danteOut != old.danteOut || settings.danteInterface != old.danteInterface
+            || settings.showCodeSource != old.showCodeSource {
+            applyTimelineOutputs()
+        }
         if settings.chase != old.chase || settings.deckTimecodeAtVideoRate != old.deckTimecodeAtVideoRate {
             decks.forEach { $0.resetChase() }
+        }
+        if settings.oscEnabled != old.oscEnabled || settings.oscPort != old.oscPort { applyOSC() }
+        if settings.aes67Enabled != old.aes67Enabled || settings.aes67Interface != old.aes67Interface
+            || settings.aes67Multicast != old.aes67Multicast || settings.aes67Name != old.aes67Name { applyAES67() }
+        if settings.decks != old.decks || settings.recordNaming != old.recordNaming || targets(of: settings) != targets(of: old) {
+            scheduleProjectSave()
         }
     }
 
@@ -596,6 +778,9 @@ final class AppModel: ObservableObject {
         let now = HostClock.now()
         var snapshot = clock.snapshot(at: now)
         if !rateKnown { snapshot = LTCSnapshot(rolling: false, position: nil, jumped: false, fps: snapshot.fps) }
+        // The timeline keeps its playhead (and end-of-set stop) current in every mode.
+        timeline.rate = ltcRate
+        let timelineSnapshot = timeline.snapshot(at: now)
         updateReadout(now: now, rolling: snapshot.rolling)
         let pollDue = now - lastPoll >= 0.1
         if pollDue { lastPoll = now }
@@ -603,17 +788,135 @@ final class AppModel: ObservableObject {
             watchAudio(now: now)
             confidence.checkStale(now: now)
         }
+        if let aes67 {
+            // The sender renders on its own thread: hand it the timeline whenever it changes.
+            let state = timeline.renderState()
+            if state != aes67State { aes67State = state; aes67.update(state) }
+            if now - lastAES67Status >= 0.5 { lastAES67Status = now; refreshAES67Status() }
+        }
+        if settings.danteOut, now - lastDanteCheck >= 2 {
+            lastDanteCheck = now
+            updateDanteStatus()
+        }
         if now - lastSlotRefresh >= 15 {
             lastSlotRefresh = now
             activeDecks.forEach { $0.refreshSlots() }
         }
-        if pollDue && rateKnown { logTakes() }
+        if pollDue && (rateKnown || showCodeFromTimeline) { logTakes() }
         if mode == .playback { chase(snapshot, now: now, pollDue: pollDue) }
+        if mode == .timeline {
+            // Scrubbing a playing timeline: park the decks under the playhead as it moves (like a
+            // paused seek); when it settles, fast pickup starts them from there.
+            if timeline.isScrubbing {
+                seekDecksToPlayhead(now: now)
+            } else {
+                chase(timelineSnapshot, now: now, pollDue: pollDue)
+                if !timeline.isPlaying { seekDecksToPlayhead(now: now) }
+            }
+        }
+    }
+
+    // MARK: Timeline
+
+    /// Dev/test: record on the decks while the timeline runs. Show code comes from the timeline, so
+    /// takes log against each song's code; the timeline stays on screen. Leaving Record asks first.
+    func startTimelineRecording() {
+        settings.showCodeSource = .timeline
+        requestMode(.record)
+    }
+
+    /// Show code (LTC frames) at host time `t` from whichever source is in charge.
+    private func showPosition(at t: Double) -> Double? {
+        showCodeFromTimeline ? timeline.showFrames(at: t) : clock.position(at: t)
+    }
+
+    /// Paused timeline: park every deck on the frame under the playhead (scrub, frame step).
+    /// Throttled; the latest position always goes out.
+    private func seekDecksToPlayhead(now: Double) {
+        guard timeline.seekCount != sentSeek, now - lastSeekSent >= 0.06,
+              let show = timeline.layout.showSeconds(at: timeline.playhead) else { return }
+        sentSeek = timeline.seekCount
+        lastSeekSent = now
+        let ltcFrames = show * ltcRate.exact
+        for deck in activeDecks {
+            guard let target = playbackTarget(deck, ltcFrames: ltcFrames) else { continue }
+            deck.resetChase()
+            deck.cue(clipID: target.clipID, frame: target.frame)
+        }
+    }
+
+    func applyTimelineOutputs() {
+        timeline.useTrackTimecode = settings.ltcOutUseTrackTimecode
+        danteSoundcard = settings.danteOut ? DanteOut.soundcard(in: AudioDeviceCatalog.outputDevices().map {
+            DanteOut.Device(uid: $0.uid, name: $0.name, channels: $0.channels, model: $0.model)
+        }) : nil
+        updateDanteStatus()
+        if danteStatus.isRouted, let card = danteSoundcard {
+            // Left and right on DVS 1–2, timecode on 3, on the one device so they stay locked.
+            if devTimecodeChannel != nil { devTimecodeChannel = nil }
+            reroute(music: AudioRoute(deviceUID: card.uid, channel: DanteOut.musicChannel),
+                    ltc: AudioRoute(deviceUID: card.uid, channel: DanteOut.timecodeChannel))
+            return
+        }
+        var ltcRoute = settings.ltcOutputChannel.map { AudioRoute(deviceUID: settings.ltcOutputUID, channel: $0) }
+        // Dev Record with LTC out off: the songs' own timecode goes out on the song-audio device,
+        // on the channel after the music (3 for music on 1–2), so the decks or a recorder can take it.
+        let recordingFromTimeline = mode == .record && showCodeFromTimeline
+        let devChannel = DevTimecodeOut.channel(
+            recordingFromTimeline: recordingFromTimeline, ltcOutSet: ltcRoute != nil,
+            musicChannel: settings.timelineOutputChannel,
+            deviceChannels: recordingFromTimeline ? AudioDeviceCatalog.outputChannels(uid: settings.timelineOutputUID) : 0
+        )
+        if let devChannel { ltcRoute = AudioRoute(deviceUID: settings.timelineOutputUID, channel: devChannel) }
+        if devChannel != devTimecodeChannel { devTimecodeChannel = devChannel }
+        reroute(music: AudioRoute(deviceUID: settings.timelineOutputUID, channel: settings.timelineOutputChannel),
+                ltc: ltcRoute)
+    }
+
+    /// Re-points the timeline's outputs; a playing timeline carries on through the change.
+    private func reroute(music: AudioRoute, ltc: AudioRoute?) {
+        if timeline.player.configure(music: music, ltc: ltc) { timeline.resumeAudioAfterReroute() }
+    }
+
+    /// Re-reads whether the preferred Dante port has a link (the soundcard is re-read on device changes).
+    private func updateDanteStatus() {
+        let port = settings.danteInterface
+        let status = DanteOut.status(
+            enabled: settings.danteOut, soundcard: danteSoundcard,
+            port: port.map { bsd in DeckDiscovery.networkPorts().first { $0.bsd == bsd }?.label ?? bsd },
+            portLinked: port.map(DeckDiscovery.hasLink) ?? true
+        )
+        if status != danteStatus { danteStatus = status }
+    }
+
+    /// Where the timeline's timecode is going, for status lines: "Dante 3", "LTC out ch 4" or nil (off).
+    var timecodeOutLabel: String? {
+        if danteStatus.isRouted { return "Dante ch \(DanteOut.timecodeChannel + 1)" }
+        if let channel = devTimecodeChannel { return "Track TC ch \(channel + 1) (dev)" }
+        return settings.ltcOutputChannel.map { "LTC out ch \($0 + 1)" }
+    }
+
+    private func setClockText(_ text: String) {
+        if text != readout.ltcText { readout.ltcText = text }
+        let has = !text.hasPrefix("--")
+        if has != hasShowCode { hasShowCode = has }
     }
 
     private func updateReadout(now: Double, rolling: Bool) {
+        if showCodeFromTimeline {
+            // The timeline is the clock: show its code, not whatever arrives on the LTC input.
+            let text = timeline.showTimecode?.display(dropFrame: ltcRate.isDropFrame) ?? "--:--:--:--"
+            setClockText(text)
+            let playing = timeline.isPlaying
+            if playing != ltcRolling { ltcRolling = playing }
+            if playing != ltcLocked { ltcLocked = playing }
+            if ltcFreewheeling { ltcFreewheeling = false }
+            if ltcInfo != "TIMELINE" { ltcInfo = "TIMELINE" }
+            if ltcWarning != nil { ltcWarning = nil }
+            return
+        }
         let text = clock.timecode(at: now)?.display(dropFrame: ltcRate.isDropFrame) ?? "--:--:--:--"
-        if text != ltcText { ltcText = text }
+        setClockText(text)
         if rolling != ltcRolling { ltcRolling = rolling }
         let freewheeling = clock.isFreewheeling(at: now)
         if freewheeling != ltcFreewheeling { ltcFreewheeling = freewheeling }
@@ -649,7 +952,7 @@ final class AppModel: ObservableObject {
             let dropFrame = deckDropFrame(deck)
             guard let rate = deckTimecodeRate(deck, dropFrame: dropFrame) else { continue }
             deck.poll { [weak self, weak deck] timecode, observedAt in
-                guard let self, let deck, let ltcAt = self.clock.position(at: observedAt) else { return }
+                guard let self, let deck, let ltcAt = self.showPosition(at: observedAt) else { return }
                 deck.logTakeReading(
                     ltcSeconds: ltcAt / ltcFPS,
                     deckSeconds: self.deckSeconds(timecode, rate: rate),
@@ -660,25 +963,47 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The selected take on a deck, and how show code maps onto it.
+    private struct PlaybackContext {
+        let clip: DeckClip
+        let map: TakeMap
+        let clipStart: Double
+        let video: FrameRate
+        let tcRate: FrameRate
+    }
+
+    private func playbackContext(_ deck: DeckController) -> PlaybackContext? {
+        let logged = deck.clip(takeOffset: selectedTake).flatMap { deck.maps.map(for: $0) }
+        // Read deck timecode the way the deck counted when this take was recorded.
+        let dropFrame = logged?.deckDropFrame ?? deckDropFrame(deck)
+        guard let clip = deck.clip(takeOffset: selectedTake),
+              let video = deck.videoRate(dropFrame: dropFrame),
+              let tcRate = deckTimecodeRate(deck, dropFrame: dropFrame)
+        else { return nil }
+        let (clipStart, clipEnd) = deckSpan(clip, rate: tcRate)
+        // Logged show code if this take has it; otherwise assume the clip was stamped with show code.
+        let map = (logged ?? .identity(deckStart: clipStart, duration: clipEnd - clipStart))
+            .clipped(toDeck: clipStart, clipEnd)
+        return PlaybackContext(clip: clip, map: map, clipStart: clipStart, video: video, tcRate: tcRate)
+    }
+
+    /// Clip and frame on a deck for show code `ltcFrames`, or nil if the take has no footage there.
+    private func playbackTarget(_ deck: DeckController, ltcFrames: Double) -> (clipID: Int, frame: Int)? {
+        guard let context = playbackContext(deck),
+              let deckAt = context.map.deckSeconds(atLTC: ltcFrames / ltcRate.exact) else { return nil }
+        return (context.clip.id, Int(((deckAt - context.clipStart) * context.video.exact).rounded()))
+    }
+
     private func chase(_ snapshot: LTCSnapshot, now: Double, pollDue: Bool) {
         let ltcFPS = ltcRate.exact
 
         for deck in activeDecks {
             let config = settings.decks[deck.id]
-            let logged = deck.clip(takeOffset: selectedTake).flatMap { deck.maps.map(for: $0) }
-            // Read deck timecode the way the deck counted when this take was recorded.
-            let dropFrame = logged?.deckDropFrame ?? deckDropFrame(deck)
-            guard let clip = deck.clip(takeOffset: selectedTake),
-                  let video = deck.videoRate(dropFrame: dropFrame),
-                  let tcRate = deckTimecodeRate(deck, dropFrame: dropFrame)
-            else {
+            guard let context = playbackContext(deck) else {
                 if deck.chase != DeckChaseState() { deck.resetChase() }
                 continue
             }
-            let (clipStart, clipEnd) = deckSpan(clip, rate: tcRate)
-            // Logged show code if this take has it; otherwise assume the clip was stamped with show code.
-            let map = (logged ?? .identity(deckStart: clipStart, duration: clipEnd - clipStart))
-                .clipped(toDeck: clipStart, clipEnd)
+            let (clip, map, clipStart, video, tcRate) = (context.clip, context.map, context.clipStart, context.video, context.tcRate)
             let input = DeckChaseInput(
                 startLatencyFrames: config.playOffsetFrames,
                 coverage: map.segments.map { ($0.ltcStart * ltcFPS)..<($0.ltcEnd * ltcFPS) },
@@ -695,11 +1020,14 @@ final class AppModel: ObservableObject {
                 case .cue(let target):
                     guard let deckAt = map.deckSeconds(atLTC: Double(target) / ltcFPS) else { continue }
                     deck.cue(clipID: clip.id, frame: Int(((deckAt - clipStart) * video.exact).rounded()))
+                case .cueAndPlay(let target):
+                    guard let deckAt = map.deckSeconds(atLTC: Double(target) / ltcFPS) else { continue }
+                    deck.cueAndPlay(clipID: clip.id, frame: Int(((deckAt - clipStart) * video.exact).rounded()))
                 case .play:
                     deck.play()
                 case .stop:
                     deck.stopTransport()
-                case .learnOffset(let by):
+                case .learnOffset(let by), .trimOffset(let by):
                     // Same setting Calibrate writes, shown in deck Setup; half-frame steps, ±30 frames.
                     let adjusted = settings.decks[deck.id].playOffsetFrames + by
                     settings.decks[deck.id].playOffsetFrames = max(-30, min(30, (adjusted * 2).rounded() / 2))
@@ -708,8 +1036,9 @@ final class AppModel: ObservableObject {
 
             if pollDue, case .playing = deck.chase.phase {
                 deck.poll { [weak self, weak deck] timecode, observedAt in
+                    // Against the code the deck is chasing: the timeline in Timeline mode, LTC in otherwise.
                     guard let self, let deck,
-                          let ltcAt = self.clock.position(at: observedAt),
+                          let ltcAt = self.mode == .timeline ? self.timeline.showFrames(at: observedAt) : self.clock.position(at: observedAt),
                           let expected = map.deckSeconds(atLTC: ltcAt / ltcFPS)
                     else { return }
                     deck.noteDrift((self.deckSeconds(timecode, rate: tcRate) - expected) * ltcFPS)
@@ -717,4 +1046,328 @@ final class AppModel: ObservableObject {
             }
         }
     }
+}
+
+/// Readouts that change every frame (show clock text, input meters), observed only by the views
+/// that draw them.
+@MainActor
+final class Readout: ObservableObject {
+    @Published var ltcText = "--:--:--:--"
+    @Published var inputLevels: [Float] = []
+}
+
+// MARK: - OSC control and show links
+
+extension AppModel {
+    func applyOSC() {
+        if settings.oscEnabled { osc.listen(on: settings.oscPort) } else { osc.stop() }
+        refreshOSCStatus()
+    }
+
+    func refreshOSCStatus() {
+        let status = !settings.oscEnabled ? "Off" : (osc.problem ?? "Listening on UDP \(settings.oscPort)")
+        if status != oscStatus { oscStatus = status }
+    }
+
+    /// A Stream Deck, MA3 or anything else asked for something.
+    func handleOSC(_ message: OSCMessage, from: String) {
+        let args = message.arguments.map(\.text).joined(separator: " ")
+        lastOSC = "\(message.address)\(args.isEmpty ? "" : " " + args)  ·  \(from)"
+        guard let command = RemoteControl.command(for: message, types: timeline.markerTypes) else { return }
+        perform(command)
+    }
+
+    func perform(_ command: RemoteCommand) {
+        switch command {
+        case .play: timeline.play()
+        case .pause, .stop: timeline.pause()
+        case .togglePlay: timeline.togglePlay()
+        case .nextSong: timeline.nextSong()
+        case .previousSong: timeline.previousSong()
+        case .gotoSong(let n): timeline.jump(toSong: n - 1)
+        case .addMarker(let kind, let label): timeline.addMarker(kind, label: label)
+        case .nextMarker: timeline.nextMarker()
+        case .previousMarker: timeline.previousMarker()
+        case .mode(let name):
+            let modes: [String: Mode] = ["stop": .stop, "record": .record, "play": .playback, "timeline": .timeline]
+            if let m = modes[name] { requestMode(m) }
+        }
+    }
+
+    // MARK: Markers out
+
+    private var markerSetName: String {
+        let name = timeline.currentSetlist?.name ?? "Set"
+        return "Understudy · \(name)"
+    }
+
+    /// Markers on the set (or all, if the set has none placed).
+    var markersToSend: [Marker] {
+        let placed = timeline.layout.placed(timeline.markers).map(\.marker)
+        return placed.isEmpty ? timeline.markers : placed
+    }
+
+    func exportMarkersCSV() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(timeline.currentSetlist?.name ?? "Markers") markers.csv"
+        panel.allowedContentTypes = [.commaSeparatedText]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let csv = MarkerExport.csv(timeline.markers, rate: ltcRate, songs: timeline.songs, types: timeline.markerTypes)
+        do {
+            try csv.write(to: url, atomically: true, encoding: .utf8)
+            linkMessage = "Exported \(timeline.markers.count) markers to \(url.lastPathComponent)."
+        } catch {
+            linkMessage = "Couldn't write \(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    /// A grandMA3 plugin (XML + Lua) that builds the sequence and timecode show on the console.
+    func exportMA3Plugin() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "understudy_markers.xml"
+        panel.allowedContentTypes = [.xml]
+        panel.message = "Save the plugin into the console's plugins folder (or a USB stick), then import it in the Plugins pool."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let luaName = url.deletingPathExtension().lastPathComponent + ".lua"
+        let markers = markersToSend
+        let lua = MA3Deploy.pluginLua(markers, rate: ltcRate, sequence: settings.ma3Sequence, timecode: settings.ma3Timecode,
+                                      name: markerSetName, types: timeline.markerTypes)
+        let xml = MA3Deploy.pluginXML(name: "Understudy markers", luaFile: luaName)
+        do {
+            try xml.write(to: url, atomically: true, encoding: .utf8)
+            try lua.write(to: url.deletingLastPathComponent().appendingPathComponent(luaName), atomically: true, encoding: .utf8)
+            linkMessage = "MA3 plugin saved: \(url.lastPathComponent) + \(luaName) (\(markers.count) markers)."
+        } catch {
+            linkMessage = "Couldn't write the plugin: \(error.localizedDescription)"
+        }
+    }
+
+    /// Builds the markers on a grandMA3 over OSC: Sequence N (one cue each) and Timecode M (Goto events).
+    func deployMarkersToMA3(confirm: Bool = true) {
+        let markers = markersToSend
+        guard !markers.isEmpty else { linkMessage = "No markers to send."; return }
+        guard let sender = OSCSender(host: settings.ma3Host, port: settings.ma3Port) else {
+            linkMessage = "Set the grandMA3's IP in Settings › Show control."
+            return
+        }
+        if confirm {
+            let alert = NSAlert()
+            alert.messageText = "Send \(markers.count) markers to grandMA3 at \(settings.ma3Host)?"
+            alert.informativeText = "This replaces Sequence \(settings.ma3Sequence) and Timecode \(settings.ma3Timecode) on the console."
+            alert.addButton(withTitle: "Send")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        let steps = MA3Deploy.steps(markers, rate: ltcRate, sequence: settings.ma3Sequence, timecode: settings.ma3Timecode,
+                                    name: markerSetName, types: timeline.markerTypes)
+        let address = settings.ma3Prefix.isEmpty ? "/cmd" : "/\(settings.ma3Prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/cmd"
+        let (seq, tc) = (settings.ma3Sequence, settings.ma3Timecode)
+        linkBusy = true
+        linkMessage = "Sending to grandMA3…"
+        Task { @MainActor [weak self] in
+            do {
+                for (i, step) in steps.enumerated() {
+                    try await sender.send(OSCMessage(address, [.string(step.command)]))
+                    if step.pause > 0 { try await Task.sleep(nanoseconds: UInt64(step.pause * 1e9)) }
+                    if i % 10 == 0 { self?.linkMessage = "Sending to grandMA3… \(i + 1)/\(steps.count)" }
+                }
+                self?.linkMessage = "Sent \(markers.count) markers to grandMA3: Sequence \(seq) and Timecode \(tc). (OSC can't confirm; check the console.)"
+            } catch {
+                self?.linkMessage = "grandMA3: \(error.localizedDescription)"
+            }
+            self?.linkBusy = false
+        }
+    }
+
+    /// Writes the markers onto a disguise track (notes, sections or CUE tags).
+    func pushMarkersToD3() {
+        let markers = markersToSend
+        guard !markers.isEmpty else { linkMessage = "No markers to send."; return }
+        guard D3Client.base(settings.d3Host) != nil else {
+            linkMessage = "Set the disguise machine's IP in Settings › Show control."
+            return
+        }
+        let start = Timecode(settings.d3TrackStart).map { Double($0.frameIndex(at: ltcRate.ltcRate)) / ltcRate.ltcRate.exact } ?? 0
+        let script = D3Push.script(markers, rate: ltcRate, trackName: settings.d3Track.isEmpty ? nil : settings.d3Track,
+                                   style: settings.d3Style, trackStartSeconds: start, types: timeline.markerTypes)
+        let host = settings.d3Host
+        linkBusy = true
+        linkMessage = "Sending to disguise…"
+        Task { @MainActor [weak self] in
+            do {
+                let result = try await D3Client.execute(host: host, script: script)
+                if let code = result.status?.code, code != 0 {
+                    self?.linkMessage = "disguise: \(result.status?.message ?? "error \(code)")"
+                } else if let inner = D3Client.resultDictionary(result.returnValue) {
+                    let placed = inner["placed"] as? Int ?? 0
+                    let skipped = (inner["skipped"] as? [String]) ?? []
+                    let track = inner["track"] as? String ?? "?"
+                    let tags = inner["tcTags"] as? Int ?? 0
+                    self?.linkMessage = "disguise: \(placed) markers on “\(track)”" + (tags > 0 ? " (placed by its \(tags) TC tag\(tags == 1 ? "" : "s"))" : "")
+                        + (skipped.isEmpty ? "." : "; \(skipped.count) outside the track.")
+                } else {
+                    self?.linkMessage = "disguise answered: \(result.returnValue ?? result.pythonLog ?? "no result")"
+                }
+            } catch {
+                self?.linkMessage = "disguise: \(error.localizedDescription)"
+            }
+            self?.linkBusy = false
+        }
+    }
+}
+
+// MARK: - Projects
+
+extension AppModel {
+    var projectName: String? { projects.current?.name }
+
+    func targets(of s: AppSettings) -> ShowTargets {
+        var t = ShowTargets()
+        t.ma3Host = s.ma3Host; t.ma3Port = s.ma3Port; t.ma3Prefix = s.ma3Prefix
+        t.ma3Sequence = s.ma3Sequence; t.ma3Timecode = s.ma3Timecode
+        t.d3Host = s.d3Host; t.d3Track = s.d3Track; t.d3Style = s.d3Style; t.d3TrackStart = s.d3TrackStart
+        return t
+    }
+
+    private func apply(_ t: ShowTargets) {
+        settings.ma3Host = t.ma3Host; settings.ma3Port = t.ma3Port; settings.ma3Prefix = t.ma3Prefix
+        settings.ma3Sequence = t.ma3Sequence; settings.ma3Timecode = t.ma3Timecode
+        settings.d3Host = t.d3Host; settings.d3Track = t.d3Track; settings.d3Style = t.d3Style; settings.d3TrackStart = t.d3TrackStart
+    }
+
+    /// The open show as a project file.
+    func currentProjectFile() -> ProjectFile {
+        var f = ProjectFile(name: projectName ?? "Untitled", created: projectCreated, show: timeline.content(),
+                            decks: settings.decks, recordNaming: settings.recordNaming, targets: targets(of: settings))
+        f.modified = Date()
+        return f
+    }
+
+    /// Opens a project: its show, decks, recording names and marker targets. Not while recording.
+    @discardableResult
+    func openProject(_ layout: ProjectLayout) -> Bool {
+        guard mode != .record else {
+            projects.lastError = "Stop recording before opening another project."
+            return false
+        }
+        if projects.current != nil { saveProjectNow() }
+        do {
+            let file = try projects.read(layout)
+            projectSave?.cancel()
+            projects.didOpen(layout)
+            projectCreated = file.created
+            hookTimeline()
+            timeline.analysisRoot = layout.analysis
+            timeline.load(file.show)
+            if file.decks != settings.decks { setDeckList(file.decks) }
+            settings.recordNaming = file.recordNaming
+            apply(file.targets)
+            linkMessage = nil
+            refreshTakes()
+            return true
+        } catch {
+            projects.lastError = "Couldn't open \(layout.name): \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Makes a new project under the projects folder and opens it. `keepShow` carries the open
+    /// show over (songs, set, markers); otherwise it starts empty. Decks carry over either way.
+    @discardableResult
+    func newProject(named name: String, keepShow: Bool, show: ShowContent? = nil) -> Bool {
+        let content = show ?? (keepShow ? timeline.content() : ShowContent())
+        let file = ProjectFile(name: name, show: content, decks: settings.decks, recordNaming: settings.recordNaming,
+                               targets: targets(of: settings))
+        do {
+            let layout = try projects.create(named: name, file: file)
+            return openProject(layout)
+        } catch {
+            projects.lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    /// The show from before projects (if any): songs and set kept in Application Support.
+    var legacyShow: ShowContent? {
+        guard let show = TimelineModel.legacyContent(), !show.songs.isEmpty else { return nil }
+        return show
+    }
+
+    func closeProject() {
+        guard mode != .record else { return }
+        saveProjectNow()
+        timeline.stop()
+        projects.close()
+    }
+
+    /// Copies every song's audio from outside the project folder into it.
+    func collectProjectFiles() {
+        timeline.collectAudio()
+    }
+
+    private func hookTimeline() {
+        timeline.onChange = { [weak self] in self?.scheduleProjectSave() }
+        timeline.adoptFile = { [weak self] url, asset in self?.projects.adopt(url, as: asset) }
+        timeline.adoptAudio = { [weak self] path, done in self?.projects.adoptAudio(path, done: done) }
+    }
+
+    func scheduleProjectSave() {
+        guard projects.current != nil else { return }
+        projectSave?.cancel()
+        projectSave = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            self?.saveProjectNow()
+        }
+    }
+
+    func saveProjectNow() {
+        projectSave?.cancel()
+        projectSave = nil
+        guard projects.current != nil else { return }
+        projects.save(currentProjectFile())
+    }
+}
+
+// MARK: - AES67 out (test)
+
+extension AppModel {
+    /// The IPv4 address of a network port, if it has one.
+    func address(of bsd: String?) -> String? {
+        guard let bsd else { return nil }
+        return DeckDiscovery.localNetworks().first { $0.interface == bsd }?.address
+    }
+
+    func applyAES67() {
+        aes67?.stop()
+        aes67 = nil
+        aes67State = nil
+        guard settings.aes67Enabled else { aes67Status = nil; return }
+        guard let ip = address(of: settings.aes67Interface) else {
+            aes67Status = "Choose the network port the stream goes out of (it needs an IPv4 address)."
+            return
+        }
+        let group = settings.aes67Multicast.trimmingCharacters(in: .whitespaces)
+        let config = AES67Sender.Config(interfaceIP: ip, multicast: group.isEmpty ? AES67.defaultMulticast(for: ip) : group,
+                                        name: settings.aes67Name.isEmpty ? "Understudy" : settings.aes67Name)
+        let sender = AES67Sender(config: config)
+        if let problem = sender.start() {
+            aes67Status = problem
+            return
+        }
+        aes67 = sender
+        refreshAES67Status()
+    }
+
+    func refreshAES67Status() {
+        guard let aes67 else { return }
+        let s = aes67.status
+        let group = settings.aes67Multicast.isEmpty ? (address(of: settings.aes67Interface).map(AES67.defaultMulticast) ?? "?") : settings.aes67Multicast
+        var text = "Sending \(group):\(AES67.defaultPort) · 3 ch L24/48k · "
+        text += s.ptpLocked ? "PTP locked to \(s.grandmaster ?? "?")" : "no PTP master: free-running (Dante won't accept it)"
+        if let p = s.problem, !s.ptpLocked { text += " · \(p)" }
+        if text != aes67Status { aes67Status = text }
+    }
+
+    var aes67Locked: Bool { aes67?.status.ptpLocked ?? false }
 }
