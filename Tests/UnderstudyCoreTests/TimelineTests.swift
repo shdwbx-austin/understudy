@@ -271,3 +271,68 @@ struct SetlistTests {
         #expect(abs(placed[1].takeTime - 230) < 1e-6)
     }
 }
+
+/// Downtime between songs, looping a song or a section, and stopping after each song.
+struct TimelineRehearsalTests {
+    // Two 10 s songs at 30 fps, 2 s lead-in each.
+    private let a = Song(name: "A", start: Timecode("01:00:00:00")!, end: Timecode("01:00:10:00")!)
+    private let b = Song(name: "B", start: Timecode("02:00:00:00")!, end: Timecode("02:00:10:00")!)
+
+    @Test func downtimeSitsBeforeEachLeadInButTheFirst() {
+        let layout = TimelineLayout(ordered: [a, b], rate: .fps30, gap: 2, downtime: 30)
+        #expect(layout.items[0].timelineStart == 2)
+        // A ends at 12; 30 s downtime; B's lead-in 42–44; B 44–54.
+        #expect(layout.leadInStart(1) == 42)
+        #expect(layout.items[1].timelineStart == 44)
+        #expect(layout.totalDuration == 54)
+        // No code in downtime; code again from B's lead-in.
+        #expect(layout.showSeconds(at: 20) == nil)
+        #expect(layout.downtimeSong(at: 20) == 1)
+        #expect(layout.downtimeSong(at: 43) == nil)
+        #expect(abs((layout.showSeconds(at: 42) ?? 0) - 7198) < 1e-6)
+        // Markers still land on their song.
+        #expect(layout.timelineTime(forShowSeconds: 7201) == 45)
+    }
+
+    @Test func noDowntimeIsTheOldLayout() {
+        let old = TimelineLayout(ordered: [a, b], rate: .fps30, gap: 2)
+        #expect(old.items[1].timelineStart == 14)
+        #expect(old.downtimeSong(at: 12.5) == nil)
+        #expect(old.showSeconds(at: 12.5) != nil)
+    }
+
+    @Test func songLoopGoesBackToItsLeadIn() {
+        let layout = TimelineLayout(ordered: [a, b], rate: .fps30, gap: 2)
+        let loop = LoopSetting(mode: .song)
+        #expect(layout.loopRange(loop, at: 5) == 0..<12)
+        #expect(layout.transition(from: 11.99, to: 12.01, loop: loop, stopAfterSong: false) == .jump(to: 0))
+        #expect(layout.transition(from: 5, to: 5.01, loop: loop, stopAfterSong: false) == .none)
+        // Looping wins over stopping.
+        #expect(layout.transition(from: 11.99, to: 12.01, loop: loop, stopAfterSong: true) == .jump(to: 0))
+    }
+
+    @Test func sectionLoopFollowsItsSongWhenTheSetIsReordered() {
+        // Section 3–6 s into B (show code).
+        let loop = LoopSetting(mode: .section, sectionStart: 7203, sectionEnd: 7206)
+        let ab = TimelineLayout(ordered: [a, b], rate: .fps30, gap: 2)
+        #expect(ab.loopRange(loop, at: 0) == 17..<20)
+        let ba = TimelineLayout(ordered: [b, a], rate: .fps30, gap: 2)
+        #expect(ba.loopRange(loop, at: 0) == 5..<8)
+        #expect(ba.transition(from: 7.99, to: 8.02, loop: loop, stopAfterSong: false) == .jump(to: 5))
+        // Played into from before the section: loops once inside it.
+        #expect(ba.transition(from: 4.9, to: 5.1, loop: loop, stopAfterSong: false) == .none)
+        // Ends given backwards still work; too short is no loop.
+        #expect(ba.loopRange(LoopSetting(mode: .section, sectionStart: 7206, sectionEnd: 7203), at: 0) == 5..<8)
+        #expect(ba.loopRange(LoopSetting(mode: .section, sectionStart: 7203, sectionEnd: 7203.05), at: 0) == nil)
+    }
+
+    @Test func stopAfterSongParksOnTheNextLeadIn() {
+        let layout = TimelineLayout(ordered: [a, b], rate: .fps30, gap: 2, downtime: 30)
+        let off = LoopSetting()
+        // Skips the downtime: ready on B's lead-in.
+        #expect(layout.transition(from: 11.99, to: 12.01, loop: off, stopAfterSong: true) == .stop(at: 42))
+        #expect(layout.transition(from: 11.99, to: 12.01, loop: off, stopAfterSong: false) == .none)
+        // The last song ends the set as before.
+        #expect(layout.transition(from: 53.99, to: 54.01, loop: off, stopAfterSong: true) == .none)
+    }
+}

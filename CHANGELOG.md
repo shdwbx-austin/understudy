@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **Loop a song or a section.** LOOP under the timeline loops the song under the playhead (from its lead-in) or a section: I and O at the playhead, or two selected markers › Loop Between Them. L turns it on and off. Sections are held on show code, so they follow their song when the set is reordered. Shown as a bar on the set and a band on the current song.
+- **Stop after song.** The timeline can stop at the end of each song, parked on the next song's lead-in, instead of rolling on.
+- **Downtime between songs.** Time before each lead-in with no code, audio or LTC out, like a show's changeovers; the decks wait on the next song's first frame and the bar counts down. Lead-in and downtime share one control under the timeline.
+- **Edit several markers at once.** ⌘-click or ⇧-click markers on the track or in the list (or Select all), then change their type, label, move them by frames or seconds, loop between them, or delete them together. Dragging one of a selection moves them all.
+- **Zoom into the current song** (pinch, ⌘= / ⌘−, + / − by the ruler, ⌘0 for the whole song). The view follows the playhead and the ruler goes down to frames.
+- Loop, stop-after-song and downtime are saved with the project.
+
 ## 0.5.0 — 2026-11-16
 
 - **Program · View · Decks.** The main window is now three screens, built around the timeline for lighting and screens programmers and producers:

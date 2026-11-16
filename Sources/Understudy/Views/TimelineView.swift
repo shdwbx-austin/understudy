@@ -138,6 +138,15 @@ struct TimelineTrack: View {
                     let x = item.timelineStart * scale
                     let w = max(1, item.duration * scale)
                     let current = timeline.currentSongID == item.song.id
+                    // Downtime before it: no code, no audio.
+                    if index > 0, timeline.downtime > 0 {
+                        let dx = max(0, leadX - timeline.downtime * scale)
+                        Rectangle().fill(Theme.ink)
+                            .overlay { Rectangle().fill(Theme.quiet.opacity(0.6)).frame(height: 1) }
+                            .frame(width: max(0, leadX - dx), height: geo.size.height - 28)
+                            .offset(x: dx, y: 28)
+                            .help("Downtime: \(Int(timeline.downtime)) s with no code before \(item.song.name)")
+                    }
                     // Lead-in.
                     Rectangle()
                         .fill(Theme.rule.opacity(0.35))
@@ -187,6 +196,13 @@ struct TimelineTrack: View {
                 // Along the bottom of the song blocks, clear of the names.
                 MarkerTicks(timeline: timeline, scale: scale, height: 10)
                     .offset(y: geo.size.height - 11)
+                // The loop, as a bar along the top of the song blocks.
+                if let r = timeline.loopRange {
+                    Rectangle().fill(Theme.paper)
+                        .frame(width: max(2, (r.upperBound - r.lowerBound) * scale), height: 3)
+                        .offset(x: r.lowerBound * scale, y: 25)
+                        .allowsHitTesting(false)
+                }
                 // Playhead.
                 let width = geo.size.width
                 PlayheadLine(head: timeline.head, playing: timeline.isPlaying, height: geo.size.height) { t in
@@ -249,13 +265,13 @@ struct TransportBar: View {
                 .keyboardShortcut(.rightArrow, modifiers: .shift).opacity(0).frame(width: 0)
 
             PlayheadTime(head: timeline.head, total: timeline.layout.totalDuration)
+            DowntimeReadout(timeline: timeline, head: timeline.head)
             Spacer()
+            LoopMenu(timeline: timeline)
+            StopAfterSongToggle(timeline: timeline)
+            GapsButton(timeline: timeline)
             if outputs {
                 OutputStatus(showToggle: !compact)
-                Stepper(value: $timeline.gap, in: 0...10, step: 0.5) {
-                    Text(String(format: "LEAD-IN %.1f S", timeline.gap)).font(Theme.mono(10)).tracking(1.2)
-                }
-                .help("Gap before each song, so the decks can park on its footage and be rolling on its first frame")
             }
             if !compact {
                 TextButton(title: "Find audio…") { timeline.chooseAudioFolder() }
@@ -469,4 +485,114 @@ private struct SongRow: View {
 func clock(_ seconds: Double) -> String {
     let s = Int(max(0, seconds).rounded(.down))
     return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String(format: "%d:%02d", s / 60, s % 60)
+}
+
+// MARK: - Rehearsal controls
+
+/// Loop off, the song under the playhead, or a section (I and O set its ends; or two selected
+/// markers). L turns it on and off.
+struct LoopMenu: View {
+    @ObservedObject var timeline: TimelineModel
+
+    var body: some View {
+        let mode = timeline.loop.mode
+        Menu {
+            Button(mark(.off) + "No Loop") { timeline.setLoop(.off) }
+            Button(mark(.song) + "Loop This Song") { timeline.setLoop(.song) }
+            Button(mark(.section) + "Loop Section") { timeline.setLoop(.section) }
+                .disabled(!timeline.loop.hasSection)
+            Divider()
+            Button("Set Loop In at Playhead   I") { timeline.setLoopIn() }
+            Button("Set Loop Out at Playhead   O") { timeline.setLoopOut() }
+            Button("Loop Between Selected Markers") { timeline.loopSelectedMarkers() }
+                .disabled(timeline.selectedMarkerIDs.count < 2)
+        } label: {
+            HStack(spacing: 6) {
+                Rectangle().fill(mode == .off ? Color.clear : Theme.paper).frame(width: 7, height: 7)
+                    .overlay(Rectangle().strokeBorder(mode == .off ? Theme.grey : Theme.paper, lineWidth: 1))
+                Text(mode == .off ? "LOOP" : mode == .song ? "LOOP SONG" : "LOOP SECTION")
+                    .font(Theme.mono(10)).tracking(1.2)
+                    .foregroundStyle(mode == .off ? Theme.grey : Theme.paper)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Loop the song or a section (L on and off; I and O set a section)")
+    }
+
+    private func mark(_ m: LoopSetting.Mode) -> String { timeline.loop.mode == m ? "✓ " : "   " }
+}
+
+/// Stop at the end of each song, parked on the next one, instead of rolling on.
+struct StopAfterSongToggle: View {
+    @ObservedObject var timeline: TimelineModel
+
+    var body: some View {
+        let on = timeline.stopAfterSong
+        Button { timeline.stopAfterSong.toggle() } label: {
+            HStack(spacing: 6) {
+                Rectangle().fill(on ? Theme.paper : Color.clear).frame(width: 7, height: 7)
+                    .overlay(Rectangle().strokeBorder(on ? Theme.paper : Theme.grey, lineWidth: 1))
+                Text("STOP AFTER SONG").font(Theme.mono(10)).tracking(1.2).foregroundStyle(on ? Theme.paper : Theme.grey)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("On: the timeline stops at the end of each song, ready on the next one's lead-in. Off: it rolls straight on.")
+    }
+}
+
+/// In the downtime between songs: how long until the next one, and which it is.
+struct DowntimeReadout: View {
+    @ObservedObject var timeline: TimelineModel
+    @ObservedObject var head: PlayheadClock
+
+    var body: some View {
+        if let i = timeline.downtimeSong, timeline.layout.items.indices.contains(i) {
+            let left = max(0, timeline.layout.leadInStart(i) - head.position)
+            Text(String(format: "DOWNTIME %d:%02d · NEXT ", Int(left) / 60, Int(left) % 60) + timeline.layout.items[i].song.name.uppercased())
+                .font(Theme.mono(10, bold: true)).tracking(1.2).foregroundStyle(Theme.amber)
+                .lineLimit(1)
+        }
+    }
+}
+
+/// Lead-in and downtime, set once per show: one line on the bar, the steppers in a popover.
+struct GapsButton: View {
+    @ObservedObject var timeline: TimelineModel
+    @State private var open = false
+
+    var body: some View {
+        Button { open.toggle() } label: {
+            Text(String(format: "LEAD-IN %.1f S", timeline.gap) + (timeline.downtime > 0 ? String(format: " · DOWN %.0f S", timeline.downtime) : ""))
+                .font(Theme.mono(10)).tracking(1.2).lineLimit(1)
+                .foregroundStyle(Theme.paper)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("Lead-in before each song and downtime between songs")
+        .popover(isPresented: $open, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 14) {
+                Stepper(value: $timeline.gap, in: 0...10, step: 0.5) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(String(format: "Lead-in  %.1f s", timeline.gap)).font(Theme.grotesk(14))
+                        Text("Before each song, with code running, so the decks are parked and rolling on its first frame.")
+                            .font(Theme.grotesk(11, .light)).foregroundStyle(Theme.grey).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Stepper(value: $timeline.downtime, in: 0...600, step: 5) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(timeline.downtime > 0 ? String(format: "Downtime  %.0f s", timeline.downtime) : "Downtime  off").font(Theme.grotesk(14))
+                        Text("Between songs, before the lead-in: no code, no audio, no LTC out, like a show's changeovers. The decks wait on the next song.")
+                            .font(Theme.grotesk(11, .light)).foregroundStyle(Theme.grey).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .padding(16)
+            .frame(width: 320)
+        }
+    }
 }

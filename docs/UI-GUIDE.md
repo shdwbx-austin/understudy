@@ -130,7 +130,16 @@ The playlist and timeline. The playlist collapses to a slim rail (⌃⌘S); its 
 - **The marker bar:** type chips plus **Send / Export**.
 - **The current song** up close (ruler, waveform, markers with draggable handles, playhead),
   with the **marker list** beside it.
-- **Transport, then take and deck chips,** then a one-line status message.
+- **Transport, then take and deck chips,** then a one-line status message. The transport's right
+  side holds the rehearsal controls in the same mono caps: LOOP (a menu), STOP AFTER SONG (a
+  square that fills), and one LEAD-IN · DOWN line that opens a popover with both steppers.
+  Settings used once per show go in a popover, not on the bar; at 1440 wide two steppers wrapped.
+- **Zoom** draws only what's on screen (the waveform is sliced, the ruler only ticks the visible
+  span), so 32× stays light. `ZoomFollower` watches the playhead on its own and moves the window
+  only when the playhead leaves it.
+- **Several markers:** selected tags get the white outline, selected rows a white edge, and a
+  SELECTED bar above the list (Edit menu, Delete, Done). Downtime on the set is an ink gap with a
+  hairline; the loop is a white bar along the top of the set and a band on the current song.
 
 ### View (`ViewScreen`)
 
@@ -191,6 +200,9 @@ After CuePoints' start window:
   | 1–9 | drop a marker of that type |
   | M | drop another marker of the last type |
   | [ ] | previous/next marker |
+  | I / O / L | loop in / loop out / loop on-off |
+  | ⌘-click, ⇧-click | select several markers; Esc back to one |
+  | ⌘= / ⌘− / ⌘0 | zoom the current song in / out / whole song |
   | ⌘T | timeline window |
   | ⌘N / ⌘O / ⇧⌘W | new / open / close project |
 

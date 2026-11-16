@@ -48,6 +48,8 @@ struct UnderstudyApp: App {
                 Toggle("View", isOn: screenBinding(.view)).keyboardShortcut("2", modifiers: .command)
                 Toggle("Decks", isOn: screenBinding(.decks)).keyboardShortcut("3", modifiers: .command)
                 Divider()
+                ZoomCommands(timeline: model.timeline)
+                Divider()
                 OpenTimelineCommand()
                 OpenVideoCommand()
                 Divider()
@@ -228,5 +230,22 @@ private struct MarkerCommands: View {
         // from text fields too.
         Button("Next Marker   ]") { timeline.nextMarker() }
         Button("Previous Marker   [") { timeline.previousMarker() }
+    }
+}
+
+/// View menu: zoom on the current song.
+private struct ZoomCommands: View {
+    @ObservedObject var timeline: TimelineModel
+
+    var body: some View {
+        Button("Zoom In") { timeline.setZoom(timeline.detailZoom * 2) }
+            .keyboardShortcut("=", modifiers: .command)
+            .disabled(timeline.detailZoom >= TimelineModel.maxZoom)
+        Button("Zoom Out") { timeline.setZoom(timeline.detailZoom / 2) }
+            .keyboardShortcut("-", modifiers: .command)
+            .disabled(timeline.detailZoom <= 1)
+        Button("Whole Song") { timeline.setZoom(1) }
+            .keyboardShortcut("0", modifiers: .command)
+            .disabled(timeline.detailZoom <= 1)
     }
 }

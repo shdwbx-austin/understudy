@@ -20,6 +20,21 @@ final class TimelineModel: ObservableObject {
     @Published var gap: Double = 2 {
         didSet { if gap != oldValue { layoutChanged() } }
     }
+    /// Time between songs with no code, audio or LTC, before each lead-in (a show's changeovers).
+    @Published var downtime: Double = 0 {
+        didSet { if downtime != oldValue { layoutChanged() } }
+    }
+    /// Stop at the end of each song, parked on the next one's lead-in, instead of rolling on.
+    @Published var stopAfterSong = false {
+        didSet { if stopAfterSong != oldValue { save() } }
+    }
+    /// Loop the current song or a section.
+    @Published var loop = LoopSetting() {
+        didSet { if loop != oldValue { save() } }
+    }
+    /// The current song's zoom (1 = the whole song across the width).
+    @Published var detailZoom: Double = 1
+    static let maxZoom = 32.0
     /// Saved sets. The current one follows every change to the set.
     @Published private(set) var setlists: [Setlist] = []
     @Published private(set) var currentSetlistID: UUID?
@@ -62,7 +77,13 @@ final class TimelineModel: ObservableObject {
     @Published var hiddenMarkerKinds: Set<MarkerKind> = [] {
         didSet { if hiddenMarkerKinds != oldValue { save() } }
     }
-    @Published var selectedMarkerID: UUID?
+    /// The marker last chosen (where the playhead went, the anchor for ⇧-click ranges).
+    @Published var selectedMarkerID: UUID? {
+        didSet { if let id = selectedMarkerID, !selectedMarkerIDs.contains(id) { selectedMarkerIDs = [id] } }
+    }
+    /// Every selected marker: ⌘-click adds or removes one, ⇧-click a range. Edits from the list's
+    /// selection bar or a selected marker's menu apply to all of them.
+    @Published var selectedMarkerIDs: Set<UUID> = []
     /// The marker type editor is open (from the marker bar, a chip, or Markers › Edit Marker Types…).
     @Published var editingMarkerTypes = false
     /// The project's marker types: names, colours, order (keys 1–9).
@@ -458,7 +479,7 @@ final class TimelineModel: ObservableObject {
             if setlists[i].songs != names { setlists[i].songs = names }
         }
         analyzeAudio()
-        layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, library: songs)
+        layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, downtime: downtime, library: songs)
         player.update(layout: layout)
         var paths = Set(songs.compactMap(\.audioPath))
         for analysis in analyses.values {
@@ -625,6 +646,26 @@ final class TimelineModel: ObservableObject {
 
     /// Called by the app's loop: what the chase engine sees, and the playhead for the UI.
     func snapshot(at now: Double) -> LTCSnapshot {
+        // Loop back or stop after a song, before the chase engine sees the new position.
+        if isPlaying, !isScrubbing {
+            let t = transport.position(at: now)
+            if let previous = lastPlayPosition {
+                switch layout.transition(from: previous, to: t, loop: loop, stopAfterSong: stopAfterSong) {
+                case .jump(let to): jumpWhilePlaying(to: to)
+                case .stop(let at):
+                    pause()
+                    seek(to: at)
+                case .none: break
+                }
+            }
+        }
+        lastPlayPosition = isPlaying && !isScrubbing ? transport.position(at: now) : nil
+        // Into a downtime: the decks park on the next song's lead-in once.
+        let downtimeNow = isPlaying ? layout.downtimeSong(at: transport.position(at: now)) : nil
+        if downtimeNow != downtimeSong {
+            downtimeSong = downtimeNow
+            if downtimeNow != nil { seekCount &+= 1 }
+        }
         let snap = transport.snapshot(at: now, layout: layout)
         if isPlaying {
             let t = transport.position(at: now)
@@ -636,6 +677,73 @@ final class TimelineModel: ObservableObject {
             }
         }
         return snap
+    }
+
+    private var lastPlayPosition: Double?
+    /// Playing through the downtime before this song (nil otherwise).
+    @Published private(set) var downtimeSong: Int?
+
+    /// Show code the decks should be parked on: under the playhead, or in downtime the next
+    /// song's first lead-in frame, so they're ready when its code starts.
+    var parkShowSeconds: Double? {
+        if let i = downtimeSong ?? layout.downtimeSong(at: playhead) { return layout.showSeconds(at: layout.leadInStart(i)) }
+        return layout.showSeconds(at: playhead)
+    }
+
+    /// The current song's zoom, 1 (whole song) to `maxZoom`.
+    func setZoom(_ z: Double) {
+        let clamped = min(max(1, z), Self.maxZoom)
+        if abs(clamped - detailZoom) > 0.001 { detailZoom = clamped }
+    }
+
+    // MARK: Loops
+
+    /// The loop's range on the timeline now (for drawing), if one is on.
+    var loopRange: Range<Double>? { layout.loopRange(loop, at: playhead) }
+
+    func setLoop(_ mode: LoopSetting.Mode) {
+        if mode == .section, !loop.hasSection {
+            message = "Set a section first: I at its start, O at its end (or select two markers › Loop Between Them)."
+            return
+        }
+        loop.mode = mode
+    }
+
+    /// L: loop off, or back to the last kind of loop (the song if none).
+    func toggleLoop() {
+        if loop.mode != .off { lastLoopMode = loop.mode; loop.mode = .off } else { loop.mode = lastLoopMode == .section && loop.hasSection ? .section : .song }
+    }
+    private var lastLoopMode: LoopSetting.Mode = .song
+
+    /// I and O: a section end at the playhead, on show code.
+    func setLoopIn() { setLoopEnd(start: true) }
+    func setLoopOut() { setLoopEnd(start: false) }
+
+    private func setLoopEnd(start: Bool) {
+        let t = isPlaying ? transport.position(at: HostClock.now()) : playhead
+        guard let show = layout.showSeconds(at: t) else {
+            message = "Loop points go on a song: move the playhead onto the set first."
+            return
+        }
+        var next = loop
+        if start { next.sectionStart = show } else { next.sectionEnd = show }
+        // A new start after the old end (or the other way round) starts a fresh section.
+        if let a = next.sectionStart, let b = next.sectionEnd, a >= b {
+            if start { next.sectionEnd = nil } else { next.sectionStart = nil }
+        }
+        if next.hasSection { next.mode = .section }
+        loop = next
+        message = next.hasSection ? nil : (start ? "Loop in set. Press O at the end of the section." : "Loop out set. Press I at the start of the section.")
+    }
+
+    /// Loop from the first selected marker to the last.
+    func loopSelectedMarkers() {
+        let frames = selectedMarkers.map(\.frame)
+        guard let lo = frames.min(), let hi = frames.max(), hi > lo else {
+            message = "Select two or more markers to loop between them."
+            return
+        }
+        loop = LoopSetting(mode: .section, sectionStart: Double(lo) / rate.exact, sectionEnd: Double(hi) / rate.exact)
     }
 
     // MARK: Markers
@@ -676,7 +784,59 @@ final class TimelineModel: ObservableObject {
 
     func removeMarker(_ id: UUID) {
         markers.removeAll { $0.id == id }
+        selectedMarkerIDs.remove(id)
         if selectedMarkerID == id { selectedMarkerID = nil }
+        save()
+    }
+
+    // MARK: Several markers
+
+    var selectedMarkers: [Marker] { markers.filter { selectedMarkerIDs.contains($0.id) } }
+
+    /// Click: just this one. ⌘: add or remove it. ⇧: everything from the anchor to it, in `order`.
+    func select(_ id: UUID, toggle: Bool = false, extendIn order: [UUID]? = nil) {
+        if let order, let anchor = selectedMarkerID, let a = order.firstIndex(of: anchor), let b = order.firstIndex(of: id) {
+            selectedMarkerIDs.formUnion(order[min(a, b)...max(a, b)])
+        } else if toggle {
+            if selectedMarkerIDs.contains(id) {
+                selectedMarkerIDs.remove(id)
+                if selectedMarkerID == id { selectedMarkerID = selectedMarkerIDs.first }
+            } else {
+                selectedMarkerIDs.insert(id)
+                selectedMarkerID = id
+            }
+        } else {
+            selectedMarkerIDs = [id]
+            selectedMarkerID = id
+        }
+    }
+
+    func selectMarkers(_ ids: [UUID]) {
+        selectedMarkerIDs = Set(ids)
+        if let first = ids.first, selectedMarkerID.map({ !selectedMarkerIDs.contains($0) }) ?? true { selectedMarkerID = first }
+    }
+
+    func clearMarkerSelection() {
+        selectedMarkerIDs = selectedMarkerID.map { [$0] } ?? []
+    }
+
+    /// Change the type, the label, or move by whole frames, for every one of `ids` at once.
+    func updateMarkers(_ ids: Set<UUID>, kind: MarkerKind? = nil, label: String? = nil, moveFrames: Int = 0) {
+        guard !ids.isEmpty else { return }
+        for i in markers.indices where ids.contains(markers[i].id) {
+            if let kind { markers[i].kind = kind }
+            if let label { markers[i].label = label }
+            if moveFrames != 0 { markers[i].frame = max(0, markers[i].frame + moveFrames) }
+        }
+        if let kind { lastKind = kind; hiddenMarkerKinds.remove(kind) }
+        markers.sort { $0.frame < $1.frame }
+        save()
+    }
+
+    func removeMarkers(_ ids: Set<UUID>) {
+        markers.removeAll { ids.contains($0.id) }
+        selectedMarkerIDs.subtract(ids)
+        if let id = selectedMarkerID, ids.contains(id) { selectedMarkerID = nil }
         save()
     }
 
@@ -709,6 +869,7 @@ final class TimelineModel: ObservableObject {
 
     /// Jumps to a marker (keeps playing if playing).
     func go(to marker: Marker) {
+        selectedMarkerIDs = [marker.id]
         selectedMarkerID = marker.id
         if let t = time(of: marker) { isPlaying ? jumpWhilePlaying(to: t) : seek(to: t) }
     }
@@ -752,7 +913,9 @@ final class TimelineModel: ObservableObject {
         ShowContent(songs: songs, gap: gap, setlists: setlists, currentSetlist: currentSetlistID,
                     autoOrderFromTakes: autoOrderFromTakes, markers: markers,
                     hiddenMarkerKinds: hiddenMarkerKinds.sorted { $0.rawValue < $1.rawValue },
-                    markerTypes: markerTypes == .defaults ? nil : markerTypes)
+                    markerTypes: markerTypes == .defaults ? nil : markerTypes,
+                    downtime: downtime > 0 ? downtime : nil, stopAfterSong: stopAfterSong ? true : nil,
+                    loop: loop == LoopSetting() ? nil : loop)
     }
 
     /// Opens a show (paths already resolved to absolute).
@@ -770,10 +933,15 @@ final class TimelineModel: ObservableObject {
         markers = stored.markers ?? []
         hiddenMarkerKinds = Set(stored.hiddenMarkerKinds ?? [])
         markerTypes = stored.markerTypes ?? .defaults
+        downtime = stored.downtime ?? 0
+        stopAfterSong = stored.stopAfterSong ?? false
+        loop = stored.loop ?? LoopSetting()
+        detailZoom = 1
         lastKind = nil
         selectedMarkerID = nil
+        selectedMarkerIDs = []
         message = nil
-        layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, library: songs)
+        layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, downtime: downtime, library: songs)
         player.update(layout: layout)
         seek(to: 0)
         analyzeAudio()

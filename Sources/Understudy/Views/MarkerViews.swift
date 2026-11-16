@@ -158,10 +158,16 @@ struct MarkerOverlay: View {
         ZStack(alignment: .topLeading) {
             ForEach(items, id: \.marker.id) { item in
                 let m = item.marker
-                let dx = dragging?.id == m.id ? dragging!.dx : 0
+                // Dragging a selected marker moves the whole selection.
+                let dx: CGFloat = {
+                    guard let d = dragging else { return 0 }
+                    if d.id == m.id { return d.dx }
+                    let group = timeline.selectedMarkerIDs
+                    return group.count > 1 && group.contains(d.id) && group.contains(m.id) ? d.dx : 0
+                }()
                 let x = CGFloat((item.time - from) * scale) + dx
                 if x >= -2, x <= width + 2 {
-                    let selected = timeline.selectedMarkerID == m.id
+                    let selected = timeline.selectedMarkerIDs.contains(m.id)
                     let color = timeline.markerTypes.color(m.kind)
                     let key = timeline.markerTypes.number(m.kind).map(String.init) ?? ""
                     Rectangle().fill(color.opacity(selected ? 1 : 0.7))
@@ -194,12 +200,18 @@ struct MarkerOverlay: View {
                                 .onEnded { v in
                                     dragging = nil
                                     let frames = Int((Double(v.translation.width) / scale * timeline.rate.exact).rounded())
-                                    if frames != 0 { timeline.updateMarker(m.id, frame: m.frame + frames) }
+                                    guard frames != 0 else { return }
+                                    let group = timeline.selectedMarkerIDs
+                                    if group.count > 1, group.contains(m.id) {
+                                        timeline.updateMarkers(group, moveFrames: frames)
+                                    } else {
+                                        timeline.updateMarker(m.id, frame: m.frame + frames)
+                                    }
                                 }
                         )
-                        .onTapGesture { timeline.go(to: m) }
+                        .onTapGesture { MarkerClick.handle(m, timeline: timeline, order: items.map(\.marker.id)) }
                         .contextMenu { MarkerContextMenu(timeline: timeline, marker: m) }
-                        .help("\(timeline.markerTypes.name(m.kind))\(m.label.isEmpty ? "" : ": \(m.label)") · \(m.timecode(rate: timeline.rate).description). Drag to move.")
+                        .help("\(timeline.markerTypes.name(m.kind))\(m.label.isEmpty ? "" : ": \(m.label)") · \(m.timecode(rate: timeline.rate).description). Drag to move; ⌘-click or ⇧-click to select several.")
                 }
             }
         }
@@ -225,11 +237,36 @@ struct MarkerTicks: View {
     }
 }
 
+/// A click on a marker: plain goes there (and selects just it); ⌘ adds or removes it from the
+/// selection; ⇧ selects the run from the last one chosen. ⌘ and ⇧ don't move the playhead.
+@MainActor
+enum MarkerClick {
+    static func handle(_ m: Marker, timeline: TimelineModel, order: [UUID]) {
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) {
+            timeline.select(m.id, toggle: true)
+        } else if flags.contains(.shift) {
+            timeline.select(m.id, extendIn: order)
+        } else {
+            timeline.go(to: m)
+        }
+    }
+}
+
 struct MarkerContextMenu: View {
     @ObservedObject var timeline: TimelineModel
     let marker: Marker
 
     var body: some View {
+        let group = timeline.selectedMarkerIDs
+        if group.count > 1, group.contains(marker.id) {
+            MarkerGroupActions(timeline: timeline, ids: group)
+        } else {
+            single
+        }
+    }
+
+    @ViewBuilder private var single: some View {
         Button("Go To Marker") { timeline.go(to: marker) }
         Button("Rename…") {
             if let name = promptForText("Marker label", value: marker.label) { timeline.updateMarker(marker.id, label: name) }
@@ -241,6 +278,57 @@ struct MarkerContextMenu: View {
         }
         Divider()
         Button("Delete Marker") { timeline.removeMarker(marker.id) }
+    }
+}
+
+/// What can be done to several markers at once: type, label, move, loop, delete.
+struct MarkerGroupActions: View {
+    @ObservedObject var timeline: TimelineModel
+    let ids: Set<UUID>
+
+    var body: some View {
+        Text("\(ids.count) Markers Selected")
+        Menu("Type") {
+            ForEach(timeline.markerTypes.types) { type in
+                Button(type.name) { timeline.updateMarkers(ids, kind: type.id) }
+            }
+        }
+        Button("Label All…") {
+            if let name = promptForText("Label for \(ids.count) markers", value: commonLabel) { timeline.updateMarkers(ids, label: name) }
+        }
+        Button("Clear Labels") { timeline.updateMarkers(ids, label: "") }
+        Menu("Move") {
+            let fps = Int(timeline.rate.exact.rounded())
+            Button("Back 1 Second") { timeline.updateMarkers(ids, moveFrames: -fps) }
+            Button("Back 1 Frame") { timeline.updateMarkers(ids, moveFrames: -1) }
+            Button("Forward 1 Frame") { timeline.updateMarkers(ids, moveFrames: 1) }
+            Button("Forward 1 Second") { timeline.updateMarkers(ids, moveFrames: fps) }
+            Divider()
+            Button("By…") {
+                if let text = promptForText("Move \(ids.count) markers by frames (negative = earlier), or seconds with s (e.g. -1.5s)", value: "0"),
+                   let frames = Self.frames(text, fps: timeline.rate.exact), frames != 0 {
+                    timeline.updateMarkers(ids, moveFrames: frames)
+                }
+            }
+        }
+        Button("Loop Between Them") {
+            timeline.loopSelectedMarkers()
+        }
+        Divider()
+        Button("Delete \(ids.count) Markers") { timeline.removeMarkers(ids) }
+    }
+
+    /// The label they share, if they all have the same one.
+    private var commonLabel: String {
+        let labels = Set(timeline.markers.filter { ids.contains($0.id) }.map(\.label))
+        return labels.count == 1 ? labels.first! : ""
+    }
+
+    /// "12" frames, "-3", "1.5s" or "-2 s" seconds.
+    static func frames(_ text: String, fps: Double) -> Int? {
+        let t = text.trimmingCharacters(in: .whitespaces).lowercased()
+        if t.hasSuffix("s"), let s = Double(t.dropLast().trimmingCharacters(in: .whitespaces)) { return Int((s * fps).rounded()) }
+        return Int(t)
     }
 }
 
@@ -260,8 +348,9 @@ func promptForText(_ title: String, value: String) -> String? {
 
 // MARK: - List
 
-/// The markers, CuePoints style: time, type, label. Click a row to go there; double-click the
-/// label to rename; Delete removes the selected one. Shows the current song's, or the whole set's.
+/// The markers: time, type, label. Click a row to go there; ⌘-click or ⇧-click to select several
+/// and change them together; double-click the label to rename; Delete removes the selection.
+/// Shows the current song's, or the whole set's.
 struct MarkerList: View {
     @ObservedObject var timeline: TimelineModel
     @State private var wholeSet = false
@@ -283,8 +372,15 @@ struct MarkerList: View {
                 Text(wholeSet ? "WHOLE SET" : "THIS SONG").font(Theme.mono(9)).tracking(1.2).foregroundStyle(Theme.grey)
                 Text("· \(rows.count)").font(Theme.mono(9)).foregroundStyle(Theme.quiet)
                 Spacer()
+                Button("Select all") { timeline.selectMarkers(rows.map(\.id)) }
+                    .buttonStyle(.plain).font(Theme.mono(9, bold: true)).foregroundStyle(Theme.grey)
+                    .disabled(rows.isEmpty)
+                    .help("Select every marker in the list, to change them together")
                 Button(wholeSet ? "This song" : "Whole set") { wholeSet.toggle() }
                     .buttonStyle(.plain).font(Theme.mono(9, bold: true)).foregroundStyle(Theme.grey)
+            }
+            if timeline.selectedMarkerIDs.count > 1 {
+                SelectionBar(timeline: timeline)
             }
             HStack(spacing: 8) {
                 Text("TIME").frame(width: 82, alignment: .leading)
@@ -309,16 +405,21 @@ struct MarkerList: View {
             }
         }
         .background(
-            // Delete removes the selected marker (when no label is being edited).
+            // Delete removes the selected markers (when no label is being edited).
             Button("") {
-                if editing == nil, let id = timeline.selectedMarkerID { timeline.removeMarker(id) }
+                guard editing == nil else { return }
+                if timeline.selectedMarkerIDs.count > 1 {
+                    timeline.removeMarkers(timeline.selectedMarkerIDs)
+                } else if let id = timeline.selectedMarkerID {
+                    timeline.removeMarker(id)
+                }
             }
             .keyboardShortcut(.delete, modifiers: []).opacity(0)
         )
     }
 
     @ViewBuilder private func row(_ m: Marker) -> some View {
-        let selected = timeline.selectedMarkerID == m.id
+        let selected = timeline.selectedMarkerIDs.contains(m.id)
         HStack(spacing: 8) {
             Text(m.timecode(rate: timeline.rate).display(dropFrame: timeline.rate.isDropFrame))
                 .font(Theme.mono(11)).monospacedDigit().frame(width: 82, alignment: .leading)
@@ -342,9 +443,36 @@ struct MarkerList: View {
         }
         .padding(.vertical, 4).padding(.horizontal, 6)
         .background(selected ? Theme.fill : Color.clear)
+        .overlay(alignment: .leading) {
+            if selected, timeline.selectedMarkerIDs.count > 1 { Rectangle().fill(Theme.paper).frame(width: 2) }
+        }
         .contentShape(Rectangle())
-        .onTapGesture { timeline.go(to: m) }
+        .onTapGesture { MarkerClick.handle(m, timeline: timeline, order: rows.map(\.id)) }
         .contextMenu { MarkerContextMenu(timeline: timeline, marker: m) }
+    }
+}
+
+/// Above the list while several markers are selected: how many, and what to do to all of them.
+private struct SelectionBar: View {
+    @ObservedObject var timeline: TimelineModel
+
+    var body: some View {
+        let ids = timeline.selectedMarkerIDs
+        HStack(spacing: 12) {
+            Text("\(ids.count) SELECTED").font(Theme.mono(9, bold: true)).tracking(1.2)
+            Menu { MarkerGroupActions(timeline: timeline, ids: ids) } label: {
+                Text("Edit").font(Theme.grotesk(12, .regular))
+            }
+            .menuStyle(.borderlessButton).fixedSize()
+            Button("Delete") { timeline.removeMarkers(ids) }
+                .buttonStyle(.plain).font(Theme.grotesk(12, .light)).foregroundStyle(Theme.signal)
+            Spacer()
+            Button("Done") { timeline.clearMarkerSelection() }
+                .buttonStyle(.plain).font(Theme.grotesk(12, .light)).foregroundStyle(Theme.grey)
+                .help("Back to one marker (Esc)")
+        }
+        .padding(.horizontal, 6).padding(.vertical, 5)
+        .background(Rectangle().fill(Theme.fill))
     }
 }
 
@@ -480,7 +608,8 @@ struct MarkerTypesSheet: ViewModifier {
 // MARK: - Keys
 
 /// The timeline's single-key commands: 1–9 drop a marker of that type, M another of the last
-/// type, ] and [ step to the next and previous marker. Read straight off the window's key events
+/// type, ] and [ step to the next and previous marker, I and O set a loop section, L loops on and
+/// off, Esc drops a multiple selection. Read straight off the window's key events
 /// rather than as SwiftUI shortcuts, which only sometimes register (never reliably inside a
 /// pull-down menu), and left alone while a text field is being typed in, so a label or an
 /// address can still contain digits and brackets.
@@ -495,7 +624,7 @@ struct MarkerKeys: NSViewRepresentable {
 
     func updateNSView(_ view: Catcher, context: Context) { view.timeline = timeline }
 
-    enum Key: Equatable { case next, previous, again, type(Int) }
+    enum Key: Equatable { case next, previous, again, type(Int), loopIn, loopOut, loop, clear }
 
     /// What a key press means, or nil to let it through. Layout-independent for [ and ]: their
     /// key positions (ANSI 33 and 30) count even where the layout puts other characters there.
@@ -505,6 +634,10 @@ struct MarkerKeys: NSViewRepresentable {
         case "]": return .next
         case "[": return .previous
         case "m": return .again
+        case "i": return .loopIn
+        case "o": return .loopOut
+        case "l": return .loop
+        case "\u{1b}": return .clear
         case let c where c.count == 1 && ("1"..."9").contains(c): return .type(Int(c)!)
         default:
             if keyCode == 30 { return .next }
@@ -533,6 +666,12 @@ struct MarkerKeys: NSViewRepresentable {
                 case .next: timeline.nextMarker()
                 case .previous: timeline.previousMarker()
                 case .again: if !event.isARepeat { timeline.addMarker() }
+                case .loopIn: if !event.isARepeat { timeline.setLoopIn() }
+                case .loopOut: if !event.isARepeat { timeline.setLoopOut() }
+                case .loop: if !event.isARepeat { timeline.toggleLoop() }
+                case .clear:
+                    guard timeline.selectedMarkerIDs.count > 1 else { return event }
+                    timeline.clearMarkerSelection()
                 case .type(let n):
                     let types = timeline.markerTypes.types
                     guard n - 1 < min(types.count, MarkerTypes.keyed) else { return event }

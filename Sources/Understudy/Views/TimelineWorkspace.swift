@@ -306,68 +306,124 @@ private struct PlaylistRow: View {
 
 // MARK: - Current song, up close
 
-/// The song under the playhead (with its lead-in) stretched across the width, a seconds ruler
-/// with show timecode, and the playhead. Drag for fine scrubbing within the song.
+/// The song under the playhead (with its lead-in) stretched across the width, a ruler with show
+/// timecode, and the playhead. Drag for fine scrubbing within the song. Zoom in (pinch, ⌘=, or the
+/// + by the ruler) to edit a section: the view follows the playhead, and the ruler goes down to
+/// single frames.
 struct SongDetailTrack: View {
     @ObservedObject var timeline: TimelineModel
+    /// Where the visible window starts when zoomed in (timeline seconds), kept on the playhead.
+    @State private var viewStart: Double = 0
+    @State private var pinchBase: Double?
 
     var body: some View {
         GeometryReader { geo in
             if let index = timeline.currentIndex ?? (timeline.layout.items.isEmpty ? nil : 0) {
                 let item = timeline.layout.items[index]
-                let from = item.timelineStart - timeline.gap
-                let span = max(item.timelineEnd - from, 1)
-                let scale = geo.size.width / span
-                let step = Self.tickStep(span: span, width: geo.size.width)
+                let gap = timeline.gap
+                let from = item.timelineStart - gap
+                let full = max(item.timelineEnd - from, 1)
+                let zoom = min(max(1, timeline.detailZoom), TimelineModel.maxZoom)
+                let span = full / zoom
+                let start = zoom <= 1.0001 ? from : min(max(from, viewStart), item.timelineEnd - span)
+                let end = start + span
+                let width = geo.size.width
+                let height = geo.size.height
+                let scale = width / span
+                let x: (Double) -> CGFloat = { CGFloat(($0 - start) * scale) }
+                let fps = timeline.rate.exact
+                let step = Self.tickStep(span: span, width: width, fps: fps)
                 ZStack(alignment: .topLeading) {
                     Rectangle().fill(Theme.fill)
                     // Lead-in.
-                    Rectangle().fill(Theme.rule.opacity(0.35))
-                        .frame(width: timeline.gap * scale, height: geo.size.height - 22)
-                        .offset(y: 22)
-                    // Song body, with its waveform.
-                    if let path = item.song.audioPath, let peaks = timeline.waveforms[path], let audio = item.song.audioDuration {
-                        // Placed by the audio's own timecode (pre-roll shows in the lead-in).
-                        let offset = max(-timeline.gap, item.song.audioOffset ?? 0)
-                        WaveformView(peaks: peaks, color: Theme.paper.opacity(0.32)).equatable()
-                            .frame(width: max(1, audio * scale), height: (geo.size.height - 22) * 0.62)
-                            .offset(x: (timeline.gap + offset) * scale, y: 22 + (geo.size.height - 22) * 0.3)
+                    let leadEnd = min(width, x(item.timelineStart))
+                    if leadEnd > 0 {
+                        Rectangle().fill(Theme.rule.opacity(0.35))
+                            .frame(width: leadEnd - max(0, x(from)), height: height - 22)
+                            .offset(x: max(0, x(from)), y: 22)
                     }
-                    Rectangle().strokeBorder(Theme.paper, lineWidth: 1)
-                        .frame(width: item.duration * scale, height: geo.size.height - 22)
-                        .offset(x: timeline.gap * scale, y: 22)
-                    // Ruler: song-relative time, show timecode at each tick.
-                    ForEach(Array(stride(from: 0.0, through: item.duration, by: step)), id: \.self) { s in
-                        let x = (timeline.gap + s) * scale
-                        Rectangle().fill(Theme.rule).frame(width: 1, height: 10).offset(x: x, y: 12)
-                        Text(clock(s)).font(Theme.mono(9)).foregroundStyle(Theme.grey)
-                            .fixedSize()
-                            .offset(x: x + 3, y: 0)
+                    // The loop, if it's on this part of the song.
+                    if let r = timeline.loopRange, r.upperBound > start, r.lowerBound < end {
+                        let a = max(0, x(r.lowerBound)), b = min(width, x(r.upperBound))
+                        Rectangle().fill(Theme.paper.opacity(0.07))
+                            .frame(width: max(1, b - a), height: height - 22)
+                            .overlay(alignment: .top) { Rectangle().fill(Theme.paper).frame(height: 2) }
+                            .offset(x: a, y: 22)
+                            .allowsHitTesting(false)
+                        Text("LOOP").font(Theme.mono(8, bold: true)).tracking(1).foregroundStyle(Theme.paper)
+                            .offset(x: a + 4, y: height - 14)
+                            .allowsHitTesting(false)
+                    }
+                    // Waveform: only the part on screen, so zooming in stays light.
+                    if let path = item.song.audioPath, let peaks = timeline.waveforms[path], !peaks.isEmpty,
+                       let audio = item.song.audioDuration, audio > 0 {
+                        let audioStart = item.timelineStart + max(-gap, item.song.audioOffset ?? 0)
+                        let a0 = max(0, start - audioStart), a1 = min(audio, end - audioStart)
+                        if a1 > a0 {
+                            let n = Double(peaks.count)
+                            let lo = max(0, min(peaks.count - 1, Int((a0 / audio * n).rounded(.down))))
+                            let hi = max(lo + 1, min(peaks.count, Int((a1 / audio * n).rounded(.up))))
+                            let t0 = Double(lo) / n * audio, t1 = Double(hi) / n * audio
+                            WaveformView(peaks: Array(peaks[lo..<hi]), color: Theme.paper.opacity(0.32)).equatable()
+                                .frame(width: max(1, (t1 - t0) * scale), height: (height - 22) * 0.62)
+                                .offset(x: x(audioStart + t0), y: 22 + (height - 22) * 0.3)
+                        }
+                    }
+                    // Song outline (its ends run off screen when zoomed in).
+                    let s0 = max(-2, x(item.timelineStart)), s1 = min(width + 2, x(item.timelineEnd))
+                    if s1 > s0 {
+                        Rectangle().strokeBorder(Theme.paper, lineWidth: 1)
+                            .frame(width: s1 - s0, height: height - 22)
+                            .offset(x: s0, y: 22)
+                    }
+                    // Ruler: song-relative time, frames when zoomed in close.
+                    let first = (max(0, start - item.timelineStart) / step).rounded(.up) * step
+                    let last = min(item.duration, end - item.timelineStart)
+                    if last >= first {
+                        ForEach(Array(stride(from: first, through: last, by: step)), id: \.self) { s in
+                            let px = x(item.timelineStart + s)
+                            Rectangle().fill(Theme.rule).frame(width: 1, height: 10).offset(x: px, y: 12)
+                            Text(Self.label(s, step: step, fps: fps)).font(Theme.mono(9)).foregroundStyle(Theme.grey)
+                                .fixedSize()
+                                .offset(x: px + 3, y: 0)
+                        }
                     }
                     VStack(alignment: .leading, spacing: 3) {
                         Text(String(format: "%02d  ", index + 1) + item.song.name).font(Theme.grotesk(15, .medium)).lineLimit(1)
                         Text(item.song.start.description + (item.song.audioPath == nil ? "  ·  NO AUDIO" : ""))
                             .font(Theme.mono(9)).foregroundStyle(Theme.grey)
                     }
-                    .padding(.leading, timeline.gap * scale + 8)
+                    .padding(.leading, max(8, x(item.timelineStart) + 8))
                     .padding(.top, 30)
-                    MarkerOverlay(timeline: timeline, from: from, scale: scale, width: geo.size.width, height: geo.size.height)
+                    .allowsHitTesting(false)
+                    MarkerOverlay(timeline: timeline, from: start, scale: scale, width: width, height: height)
                     // Playhead.
-                    let width = geo.size.width
-                    PlayheadLine(head: timeline.head, playing: timeline.isPlaying, height: geo.size.height) { t in
-                        let px = (t - from) * scale
+                    PlayheadLine(head: timeline.head, playing: timeline.isPlaying, height: height) { t in
+                        let px = (t - start) * scale
                         return px >= 0 && px <= width ? px : nil
                     }
+                    ZoomFollower(head: timeline.head, from: from, to: item.timelineEnd, span: span, zoomed: zoom > 1.0001,
+                                 playing: timeline.isPlaying, viewStart: $viewStart)
                 }
                 .contentShape(Rectangle())
-                // Click or drag within the song; while playing it keeps playing from there.
+                // Click or drag within the view; while playing it keeps playing from there.
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
-                            timeline.scrub(to: from + min(max(0, value.location.x), geo.size.width) / scale)
+                            timeline.scrub(to: start + min(max(0, value.location.x), width) / scale)
                         }
                         .onEnded { _ in timeline.endScrub() }
                 )
+                .simultaneousGesture(
+                    MagnificationGesture()
+                        .onChanged { v in
+                            let base = pinchBase ?? timeline.detailZoom
+                            pinchBase = base
+                            timeline.setZoom(base * v)
+                        }
+                        .onEnded { _ in pinchBase = nil }
+                )
+                .overlay(alignment: .topTrailing) { ZoomControls(timeline: timeline).padding(.trailing, 4) }
             } else {
                 Rectangle().fill(Theme.fill)
             }
@@ -379,11 +435,83 @@ struct SongDetailTrack: View {
         })
     }
 
-    /// A ruler step giving labels at least ~70 pt apart.
-    static func tickStep(span: Double, width: CGFloat) -> Double {
-        let steps: [Double] = [1, 2, 5, 10, 15, 30, 60, 120, 300]
+    /// A ruler step giving labels at least ~70 pt apart: whole frames when zoomed in close.
+    static func tickStep(span: Double, width: CGFloat, fps: Double = 30) -> Double {
+        let frame = 1 / max(fps, 1)
+        let steps: [Double] = [frame, 2 * frame, 5 * frame, 10 * frame, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300]
         let perSecond = Double(width) / span
         return steps.first { $0 * perSecond >= 70 } ?? 600
+    }
+
+    /// m:ss, or m:ss:ff when ticks are under a second apart.
+    static func label(_ s: Double, step: Double, fps: Double) -> String {
+        if step >= 1 { return clock(s) }
+        let frames = Int((s * fps).rounded())
+        let perSecond = Int(fps.rounded())
+        let whole = frames / max(perSecond, 1)
+        return String(format: "%d:%02d:%02d", whole / 60, whole % 60, frames % max(perSecond, 1))
+    }
+}
+
+/// Keeps a zoomed-in view on the playhead: pages along while playing, centres on a jump. Watches
+/// the playhead on its own, so the track only redraws when the view actually moves.
+private struct ZoomFollower: View {
+    @ObservedObject var head: PlayheadClock
+    let from: Double
+    let to: Double
+    let span: Double
+    let zoomed: Bool
+    let playing: Bool
+    @Binding var viewStart: Double
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .onAppear { centre(head.position) }
+            .onChange(of: span) { _ in centre(head.position) }
+            .onChange(of: from) { _ in centre(head.position) }
+            .onChange(of: head.position) { p in follow(p) }
+    }
+
+    private func follow(_ p: Double) {
+        guard zoomed else { return }
+        if p < viewStart || p > viewStart + span * 0.95 {
+            viewStart = clamp(playing ? p - span * 0.1 : p - span / 2)
+        }
+    }
+
+    private func centre(_ p: Double) { viewStart = clamp(p - span / 2) }
+    private func clamp(_ s: Double) -> Double { min(max(from, s), max(from, to - span)) }
+}
+
+/// − 4× + FIT, by the ruler.
+private struct ZoomControls: View {
+    @ObservedObject var timeline: TimelineModel
+
+    var body: some View {
+        let zoom = timeline.detailZoom
+        HStack(spacing: 8) {
+            button("−", "Zoom out (⌘−)", enabled: zoom > 1) { timeline.setZoom(zoom / 2) }
+            Text(zoom <= 1.0001 ? "SONG" : String(format: zoom < 10 ? "%.1f×" : "%.0f×", zoom))
+                .font(Theme.mono(9)).foregroundStyle(zoom > 1 ? Theme.paper : Theme.grey)
+                .frame(minWidth: 30)
+            button("+", "Zoom in (⌘=), or pinch", enabled: zoom < TimelineModel.maxZoom) { timeline.setZoom(zoom * 2) }
+            if zoom > 1 { button("FIT", "Whole song (⌘0)", enabled: true) { timeline.setZoom(1) } }
+        }
+        .padding(.horizontal, 6).padding(.vertical, 2)
+        .background(Theme.ink)
+    }
+
+    private func button(_ title: String, _ help: String, enabled: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(Theme.mono(title.count == 1 ? 12 : 9, bold: true))
+                .foregroundStyle(enabled ? Theme.paper : Theme.quiet)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .help(help)
     }
 }
 
