@@ -9,11 +9,14 @@ public struct ShowContent: Codable, Equatable, Sendable {
     public var autoOrderFromTakes: Bool?
     public var markers: [Marker]?
     public var hiddenMarkerKinds: [MarkerKind]?
+    /// The project's marker types (nil: the built-in seven).
+    public var markerTypes: MarkerTypes?
 
     public init() {}
 
     public init(songs: [Song], gap: Double, setlists: [Setlist]?, currentSetlist: UUID?, autoOrderFromTakes: Bool?,
-                markers: [Marker]?, hiddenMarkerKinds: [MarkerKind]?) {
+                markers: [Marker]?, hiddenMarkerKinds: [MarkerKind]?, markerTypes: MarkerTypes? = nil) {
+        self.markerTypes = markerTypes
         self.songs = songs
         self.gap = gap
         self.setlists = setlists

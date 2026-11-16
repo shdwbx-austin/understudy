@@ -2,19 +2,24 @@ import AppKit
 import SwiftUI
 import UnderstudyCore
 
-extension MarkerKind {
-    /// One colour per type, after CuePoints' cue colours, toned for the black UI.
-    var color: Color {
-        switch self {
-        case .choreo: return Color(red: 0.95, green: 0.45, blue: 0.33)
-        case .audio: return Color(red: 0.33, green: 0.68, blue: 0.92)
-        case .video: return Color(red: 0.58, green: 0.45, blue: 0.95)
-        case .notes: return Color(red: 0.40, green: 0.56, blue: 0.98)
-        case .lighting: return Color(red: 0.95, green: 0.30, blue: 0.36)
-        case .pyro: return Color(red: 0.36, green: 0.80, blue: 0.45)
-        case .automation: return Color(red: 0.86, green: 0.40, blue: 0.86)
-        }
+extension Color {
+    /// "#RRGGBB" (or "RRGGBB").
+    init(hex: String) {
+        let h = hex.trimmingCharacters(in: CharacterSet(charactersIn: "# "))
+        let v = UInt32(h, radix: 16) ?? 0x9A9A9A
+        self.init(red: Double((v >> 16) & 0xFF) / 255, green: Double((v >> 8) & 0xFF) / 255, blue: Double(v & 0xFF) / 255)
     }
+
+    /// "#RRGGBB" for storing.
+    var hexString: String {
+        let c = NSColor(self).usingColorSpace(.sRGB) ?? .gray
+        return String(format: "#%02X%02X%02X", Int((c.redComponent * 255).rounded()), Int((c.greenComponent * 255).rounded()),
+                      Int((c.blueComponent * 255).rounded()))
+    }
+}
+
+extension MarkerTypes {
+    func color(_ kind: MarkerKind) -> Color { Color(hex: type(kind).color) }
 }
 
 // MARK: - Bar
@@ -28,28 +33,8 @@ struct MarkerBar: View {
     var body: some View {
         HStack(spacing: 8) {
             Text("MARKERS").font(Theme.mono(9)).tracking(1.2).foregroundStyle(Theme.grey)
-            ForEach(MarkerKind.allCases, id: \.self) { kind in
-                let hidden = timeline.hiddenMarkerKinds.contains(kind)
-                Button { timeline.addMarker(kind) } label: {
-                    HStack(spacing: 5) {
-                        Text("\(kind.number)").font(Theme.mono(9, bold: true))
-                            .frame(width: 14, height: 14)
-                            .background(Circle().fill(kind.color.opacity(hidden ? 0.3 : 1)))
-                            .foregroundStyle(Theme.ink)
-                        Text(kind.title).font(Theme.grotesk(12, .medium))
-                            .foregroundStyle(hidden ? Theme.quiet : kind.color)
-                    }
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Capsule().fill(kind.color.opacity(hidden ? 0.05 : 0.14)))
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(KeyEquivalent(Character("\(kind.number)")), modifiers: [])
-                .help("Add a \(kind.title) marker at the playhead (\(kind.number)). Right-click to hide or show \(kind.title) markers.")
-                .contextMenu {
-                    Button(hidden ? "Show \(kind.title) Markers" : "Hide \(kind.title) Markers") {
-                        if hidden { timeline.hiddenMarkerKinds.remove(kind) } else { timeline.hiddenMarkerKinds.insert(kind) }
-                    }
-                }
+            ForEach(Array(timeline.markerTypes.types.enumerated()), id: \.element.id) { index, type in
+                MarkerChip(timeline: timeline, type: type, number: index < MarkerTypes.keyed ? index + 1 : nil)
             }
             // M: another marker of the last type.
             Button("") { timeline.addMarker() }.keyboardShortcut("m", modifiers: []).opacity(0).frame(width: 0)
@@ -60,10 +45,47 @@ struct MarkerBar: View {
     }
 }
 
+/// One marker type: click (or press its number) to drop one; right-click to hide or show its markers.
+private struct MarkerChip: View {
+    @ObservedObject var timeline: TimelineModel
+    let type: MarkerType
+    let number: Int?
+
+    var body: some View {
+        let hidden = timeline.hiddenMarkerKinds.contains(type.id)
+        let color = Color(hex: type.color)
+        let chip = Button { timeline.addMarker(type.id) } label: {
+            HStack(spacing: 5) {
+                Text(number.map(String.init) ?? "·").font(Theme.mono(9, bold: true))
+                    .frame(width: 14, height: 14)
+                    .background(Circle().fill(color.opacity(hidden ? 0.3 : 1)))
+                    .foregroundStyle(Theme.ink)
+                Text(type.name).font(Theme.grotesk(12, .medium)).lineLimit(1)
+                    .foregroundStyle(hidden ? Theme.quiet : color)
+            }
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Capsule().fill(color.opacity(hidden ? 0.05 : 0.14)))
+        }
+        .buttonStyle(.plain)
+        .help("Add a \(type.name) marker at the playhead\(number.map { " (\($0))" } ?? ""). Right-click to hide or show \(type.name) markers.")
+        .contextMenu {
+            Button(hidden ? "Show \(type.name) Markers" : "Hide \(type.name) Markers") {
+                if hidden { timeline.hiddenMarkerKinds.remove(type.id) } else { timeline.hiddenMarkerKinds.insert(type.id) }
+            }
+        }
+        if let number {
+            chip.keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: [])
+        } else {
+            chip
+        }
+    }
+}
+
 /// Export and send: CSV, grandMA3 (plugin file or straight over OSC), disguise (over the network).
 struct MarkerMenu: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var timeline: TimelineModel
+    @State private var editTypes = false
 
     var body: some View {
         Menu {
@@ -79,13 +101,15 @@ struct MarkerMenu: View {
             Button("Previous Marker") { timeline.previousMarker() }.keyboardShortcut("[", modifiers: [])
             Divider()
             Button("Show All Types") { timeline.hiddenMarkerKinds = [] }.disabled(timeline.hiddenMarkerKinds.isEmpty)
+            Button("Edit Marker Types…") { editTypes = true }
             Button("Show Control Settings…") { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) }
         } label: {
             Text("SEND / EXPORT").font(Theme.mono(10, bold: true)).tracking(1.2)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help("Send markers to grandMA3 or disguise, or export them")
+        .help("Send markers to grandMA3 or disguise, export them, or edit the marker types")
+        .sheet(isPresented: $editTypes) { MarkerTypesEditor(timeline: timeline) }
     }
 }
 
@@ -107,7 +131,7 @@ struct MarkerOverlay: View {
         var out: [UUID: Int] = [:]
         for item in items {
             let x = CGFloat((item.time - from) * scale) + 6
-            let w = CGFloat(item.marker.displayName.count) * 6.6 + 10
+            let w = CGFloat(item.marker.displayName(in: timeline.markerTypes).count) * 6.6 + 10
             let lane = ends.firstIndex { $0 <= x } ?? ends.count
             if lane == ends.count { ends.append(x + w) } else { ends[lane] = x + w }
             out[item.marker.id] = min(lane, 2)
@@ -125,13 +149,13 @@ struct MarkerOverlay: View {
                 let x = CGFloat((item.time - from) * scale) + dx
                 if x >= -2, x <= width + 2 {
                     let selected = timeline.selectedMarkerID == m.id
-                    Rectangle().fill(m.kind.color.opacity(selected ? 1 : 0.8))
+                    Rectangle().fill(timeline.markerTypes.color(m.kind).opacity(selected ? 1 : 0.8))
                         .frame(width: selected ? 2 : 1, height: height - 22)
                         .offset(x: x - (selected ? 1 : 0.5), y: 22)
                         .allowsHitTesting(false)
-                    Text(m.displayName)
+                    Text(m.displayName(in: timeline.markerTypes))
                         .font(Theme.grotesk(11, .medium))
-                        .foregroundStyle(m.kind.color)
+                        .foregroundStyle(timeline.markerTypes.color(m.kind))
                         .lineLimit(1)
                         .fixedSize()
                         .padding(.horizontal, 3)
@@ -139,7 +163,7 @@ struct MarkerOverlay: View {
                         .offset(x: x + 6, y: height - 18 - CGFloat(lane[m.id] ?? 0) * 17)
                         .allowsHitTesting(false)
                     // Handle: drag to move (snaps to frames), click to go, right-click for more.
-                    Circle().fill(m.kind.color)
+                    Circle().fill(timeline.markerTypes.color(m.kind))
                         .overlay(Circle().strokeBorder(Theme.paper, lineWidth: selected ? 1.5 : 0))
                         .frame(width: 11, height: 11)
                         .contentShape(Rectangle().inset(by: -4))
@@ -155,7 +179,7 @@ struct MarkerOverlay: View {
                         )
                         .onTapGesture { timeline.go(to: m) }
                         .contextMenu { MarkerContextMenu(timeline: timeline, marker: m) }
-                        .help("\(m.kind.title)\(m.label.isEmpty ? "" : ": \(m.label)") · \(m.timecode(rate: timeline.rate).description). Drag to move.")
+                        .help("\(timeline.markerTypes.name(m.kind))\(m.label.isEmpty ? "" : ": \(m.label)") · \(m.timecode(rate: timeline.rate).description). Drag to move.")
                 }
             }
         }
@@ -173,7 +197,7 @@ struct MarkerTicks: View {
         Canvas { context, size in
             for item in timeline.placedMarkers {
                 let x = CGFloat(item.time * scale)
-                context.fill(Path(CGRect(x: x - 0.5, y: 0, width: 1, height: height)), with: .color(item.marker.kind.color.opacity(0.85)))
+                context.fill(Path(CGRect(x: x - 0.5, y: 0, width: 1, height: height)), with: .color(timeline.markerTypes.color(item.marker.kind).opacity(0.85)))
             }
         }
         .frame(height: height)
@@ -191,8 +215,8 @@ struct MarkerContextMenu: View {
             if let name = promptForText("Marker label", value: marker.label) { timeline.updateMarker(marker.id, label: name) }
         }
         Menu("Type") {
-            ForEach(MarkerKind.allCases, id: \.self) { kind in
-                Button((kind == marker.kind ? "✓ " : "   ") + kind.title) { timeline.updateMarker(marker.id, kind: kind) }
+            ForEach(timeline.markerTypes.types) { type in
+                Button((type.id == marker.kind ? "✓ " : "   ") + type.name) { timeline.updateMarker(marker.id, kind: type.id) }
             }
         }
         Divider()
@@ -244,7 +268,7 @@ struct MarkerList: View {
             }
             HStack(spacing: 8) {
                 Text("TIME").frame(width: 82, alignment: .leading)
-                Text("TYPE").frame(width: 62, alignment: .leading)
+                Text("TYPE").frame(width: 92, alignment: .leading)
                 Text("LABEL")
             }
             .font(Theme.mono(8)).tracking(1).foregroundStyle(Theme.quiet)
@@ -259,7 +283,7 @@ struct MarkerList: View {
                 }
             }
             if rows.isEmpty {
-                Text("Press 1–7 (or click a type) to drop a marker at the playhead.")
+                Text("Press 1–9 (or click a type) to drop a marker at the playhead.")
                     .font(Theme.grotesk(11, .light)).foregroundStyle(Theme.grey)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -278,8 +302,8 @@ struct MarkerList: View {
         HStack(spacing: 8) {
             Text(m.timecode(rate: timeline.rate).display(dropFrame: timeline.rate.isDropFrame))
                 .font(Theme.mono(11)).monospacedDigit().frame(width: 82, alignment: .leading)
-            Text(m.kind.title).font(Theme.grotesk(12, .medium)).foregroundStyle(m.kind.color)
-                .frame(width: 62, alignment: .leading)
+            Text(timeline.markerTypes.name(m.kind)).font(Theme.grotesk(12, .medium)).foregroundStyle(timeline.markerTypes.color(m.kind))
+                .lineLimit(1).minimumScaleFactor(0.8).frame(width: 92, alignment: .leading)
             if editing == m.id {
                 TextField("Label", text: $draft)
                     .textFieldStyle(.plain).font(Theme.grotesk(12))
@@ -297,5 +321,125 @@ struct MarkerList: View {
         .contentShape(Rectangle())
         .onTapGesture { timeline.go(to: m) }
         .contextMenu { MarkerContextMenu(timeline: timeline, marker: m) }
+    }
+}
+
+// MARK: - Editing types
+
+/// The project's marker types: name, colour, order (the first nine get keys 1–9). Drag to reorder.
+struct MarkerTypesEditor: View {
+    @ObservedObject var timeline: TimelineModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Marker types").font(Theme.grotesk(24, .medium))
+                Spacer()
+                TextButton(title: "Done", color: Theme.lock) { dismiss() }
+            }
+            Text("Saved with the project. Drag to reorder: the first nine are keys 1–9 and OSC numbers /marker/1–9; OSC also takes the name.")
+                .font(Theme.grotesk(12, .light)).foregroundStyle(Theme.grey)
+                .fixedSize(horizontal: false, vertical: true)
+            List {
+                ForEach(Array(timeline.markerTypes.types.enumerated()), id: \.element.id) { index, type in
+                    TypeRow(timeline: timeline, index: index, type: type)
+                }
+                .onMove { from, to in timeline.markerTypes.types.move(fromOffsets: from, toOffset: to) }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .frame(minHeight: 300)
+            HStack {
+                TextButton(title: "+ Add type", color: timeline.markerTypes.types.count < MarkerTypes.maxTypes ? Theme.paper : Theme.quiet) {
+                    let n = timeline.markerTypes.types.count
+                    let color = MarkerTypes.palette[n % MarkerTypes.palette.count]
+                    timeline.markerTypes.add(name: "Type \(n + 1)", color: color)
+                }
+                .disabled(timeline.markerTypes.types.count >= MarkerTypes.maxTypes)
+                Spacer()
+                TextButton(title: "Reset to defaults", color: Theme.grey) { resetDefaults() }
+            }
+        }
+        .padding(24)
+        .frame(width: 560, height: 520)
+        .background(Theme.ink)
+        .foregroundStyle(Theme.paper)
+        .preferredColorScheme(.dark)
+    }
+
+    /// Back to the seven built-in types; markers of other types move to the first.
+    private func resetDefaults() {
+        let custom = timeline.markerTypes.types.filter { t in !MarkerTypes.defaults.types.contains { $0.id == t.id } }
+        let inUse = custom.reduce(0) { $0 + timeline.markerCount($1.id) }
+        if inUse > 0 {
+            let alert = NSAlert()
+            alert.messageText = "Reset marker types?"
+            alert.informativeText = "\(inUse) marker\(inUse == 1 ? "" : "s") of your own types will become \(MarkerTypes.defaults.types[0].name)."
+            alert.addButton(withTitle: "Reset")
+            alert.addButton(withTitle: "Cancel")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        for t in custom { timeline.removeMarkerType(t.id, moveTo: MarkerTypes.defaults.types[0].id) }
+        timeline.markerTypes = .defaults
+    }
+}
+
+private struct TypeRow: View {
+    @ObservedObject var timeline: TimelineModel
+    let index: Int
+    let type: MarkerType
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(index < MarkerTypes.keyed ? "\(index + 1)" : "·")
+                .font(Theme.mono(11, bold: true)).frame(width: 18)
+                .foregroundStyle(Theme.grey)
+            ColorPicker("", selection: Binding(
+                get: { Color(hex: type.color) },
+                set: { c in update { $0.color = c.hexString } }
+            ), supportsOpacity: false)
+            .labelsHidden()
+            .frame(width: 44)
+            TextField("Name", text: Binding(get: { type.name }, set: { v in update { $0.name = v } }))
+                .textFieldStyle(.plain).font(Theme.grotesk(15, .medium))
+                .foregroundStyle(Color(hex: type.color))
+            Spacer()
+            let count = timeline.markerCount(type.id)
+            Text(count == 0 ? "unused" : "\(count) marker\(count == 1 ? "" : "s")")
+                .font(Theme.mono(10)).foregroundStyle(Theme.grey)
+            Button { remove() } label: { Text("×").font(Theme.grotesk(18)) }
+                .buttonStyle(.plain).foregroundStyle(Theme.grey)
+                .disabled(timeline.markerTypes.types.count <= 1)
+                .help("Remove this type")
+        }
+        .padding(.vertical, 4)
+        .listRowBackground(Color.clear)
+    }
+
+    private func update(_ change: (inout MarkerType) -> Void) {
+        guard let i = timeline.markerTypes.types.firstIndex(where: { $0.id == type.id }) else { return }
+        change(&timeline.markerTypes.types[i])
+    }
+
+    /// Unused: just goes. In use: move its markers to another type, or delete them with it.
+    private func remove() {
+        let count = timeline.markerCount(type.id)
+        guard count > 0 else { timeline.removeMarkerType(type.id, moveTo: nil); return }
+        let others = timeline.markerTypes.types.filter { $0.id != type.id }
+        let alert = NSAlert()
+        alert.messageText = "Remove “\(type.name)”?"
+        alert.informativeText = "\(count) marker\(count == 1 ? " uses" : "s use") it."
+        let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 240, height: 26))
+        picker.addItems(withTitles: others.map { "Move them to \($0.name)" })
+        alert.accessoryView = picker
+        alert.addButton(withTitle: "Move and Remove")
+        alert.addButton(withTitle: "Delete Them Too")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: timeline.removeMarkerType(type.id, moveTo: others[max(0, picker.indexOfSelectedItem)].id)
+        case .alertSecondButtonReturn: timeline.removeMarkerType(type.id, moveTo: nil)
+        default: break
+        }
     }
 }

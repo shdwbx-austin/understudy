@@ -2,38 +2,99 @@ import Foundation
 
 // MARK: - Markers
 
-/// What a marker is for, after CuePoints' cue types. Each has a number (its key, 1–7) and a colour.
-public enum MarkerKind: String, Codable, CaseIterable, Sendable {
-    case choreo, audio, video, notes, lighting, pyro, automation
+/// A marker's type, by id (what each marker stores). The seven built-in ids are the original
+/// fixed types, so markers saved before types were editable keep theirs.
+public struct MarkerKind: RawRepresentable, Hashable, Codable, Sendable {
+    public var rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public init(_ id: String) { rawValue = id }
 
-    public var title: String {
-        switch self {
-        case .choreo: return "Choreo"
-        case .audio: return "Audio"
-        case .video: return "Video"
-        case .notes: return "Notes"
-        case .lighting: return "Lighting"
-        case .pyro: return "Pyro"
-        case .automation: return "Automation"
-        }
+    public static let choreo = MarkerKind("choreo")
+    public static let audio = MarkerKind("audio")
+    public static let video = MarkerKind("video")
+    public static let notes = MarkerKind("notes")
+    public static let lighting = MarkerKind("lighting")
+    public static let pyro = MarkerKind("pyro")
+    public static let automation = MarkerKind("automation")
+}
+
+/// A marker type: its name and colour. Its place in the list gives its key (1–9).
+public struct MarkerType: Codable, Identifiable, Equatable, Sendable {
+    public var id: MarkerKind
+    public var name: String
+    /// "#RRGGBB".
+    public var color: String
+
+    public init(id: MarkerKind, name: String, color: String) {
+        self.id = id
+        self.name = name
+        self.color = color
+    }
+}
+
+/// The project's marker types, in order. Starts as CuePoints' seven; add, rename, recolour,
+/// reorder and remove freely.
+public struct MarkerTypes: Codable, Equatable, Sendable {
+    public var types: [MarkerType]
+
+    public static let maxTypes = 24
+    /// Types with a number key (1–9).
+    public static let keyed = 9
+
+    public static let defaults = MarkerTypes(types: [
+        MarkerType(id: .choreo, name: "Choreo", color: "#F27354"),
+        MarkerType(id: .audio, name: "Audio", color: "#54ADEB"),
+        MarkerType(id: .video, name: "Video", color: "#9473F2"),
+        MarkerType(id: .notes, name: "Notes", color: "#668FFA"),
+        MarkerType(id: .lighting, name: "Lighting", color: "#F24D5C"),
+        MarkerType(id: .pyro, name: "Pyro", color: "#5CCC73"),
+        MarkerType(id: .automation, name: "Automation", color: "#DB66DB"),
+    ])
+
+    public init(types: [MarkerType]) { self.types = types }
+
+    public func type(_ kind: MarkerKind) -> MarkerType {
+        types.first { $0.id == kind }
+            ?? MarkerType(id: kind, name: kind.rawValue.prefix(1).uppercased() + kind.rawValue.dropFirst(), color: "#9A9A9A")
     }
 
-    /// 1–7: the key that drops one, and its OSC number.
-    public var number: Int { (Self.allCases.firstIndex(of: self) ?? 0) + 1 }
+    public func name(_ kind: MarkerKind) -> String { type(kind).name }
 
-    /// From an OSC/text argument: a number 1–7 or a name ("lighting", "LX", "Pyro").
-    public init?(argument: String) {
+    /// Its key (1–9), if it has one.
+    public func number(_ kind: MarkerKind) -> Int? {
+        guard let i = types.firstIndex(where: { $0.id == kind }), i < Self.keyed else { return nil }
+        return i + 1
+    }
+
+    /// From an OSC or text argument: a number (its key), its name, or its id; a few common
+    /// abbreviations match the built-in types when they're in the list.
+    public func kind(forArgument argument: String) -> MarkerKind? {
         let a = argument.trimmingCharacters(in: .whitespaces).lowercased()
-        if let n = Int(a), (1...Self.allCases.count).contains(n) {
-            self = Self.allCases[n - 1]
-            return
-        }
+        guard !a.isEmpty else { return nil }
+        if let n = Int(a) { return types.indices.contains(n - 1) ? types[n - 1].id : nil }
+        if let t = types.first(where: { $0.name.lowercased() == a || $0.id.rawValue == a }) { return t.id }
         let aliases: [String: MarkerKind] = ["lx": .lighting, "light": .lighting, "lights": .lighting,
                                              "vx": .video, "vid": .video, "sfx": .audio, "sound": .audio,
                                              "note": .notes, "auto": .automation, "chor": .choreo,
                                              "choreography": .choreo, "fx": .pyro]
-        if let k = Self(rawValue: a) ?? aliases[a] { self = k } else { return nil }
+        if let k = aliases[a], types.contains(where: { $0.id == k }) { return k }
+        return nil
     }
+
+    /// Adds a type with a fresh id; returns it.
+    @discardableResult
+    public mutating func add(name: String, color: String) -> MarkerKind {
+        let base = name.lowercased().filter { $0.isLetter || $0.isNumber }
+        var id = base.isEmpty ? "type" : base
+        var n = 2
+        while types.contains(where: { $0.id.rawValue == id }) { id = (base.isEmpty ? "type" : base) + "\(n)"; n += 1 }
+        types.append(MarkerType(id: MarkerKind(id), name: name, color: color))
+        return MarkerKind(id)
+    }
+
+    /// Colours offered for a new type, in turn.
+    public static let palette = ["#F27354", "#54ADEB", "#9473F2", "#668FFA", "#F24D5C", "#5CCC73", "#DB66DB",
+                                 "#F2B544", "#4DD9C9", "#B3B3B3", "#F28CB8", "#8CC63F"]
 }
 
 /// A point in the show worth finding again, placed on show timecode so it stays with its song
@@ -55,8 +116,8 @@ public struct Marker: Codable, Identifiable, Equatable, Sendable {
     public func timecode(rate: FrameRate) -> Timecode { Timecode(frameIndex: frame, rate: rate.ltcRate) }
     /// Seconds of show code (real time, frame / exact rate).
     public func seconds(rate: FrameRate) -> Double { Double(frame) / rate.ltcRate.exact }
-    /// The label, or the type when there's no label.
-    public var displayName: String { label.isEmpty ? kind.title : label }
+    /// The label, or the type's name when there's no label.
+    public func displayName(in types: MarkerTypes) -> String { label.isEmpty ? types.name(kind) : label }
 }
 
 extension TimelineLayout {
@@ -81,14 +142,14 @@ extension TimelineLayout {
 
 public enum MarkerExport {
     /// Spreadsheet-friendly: Timecode, Type, Label, Song, Seconds. One row per marker, in time order.
-    public static func csv(_ markers: [Marker], rate: FrameRate, songs: [Song] = []) -> String {
+    public static func csv(_ markers: [Marker], rate: FrameRate, songs: [Song] = [], types: MarkerTypes = .defaults) -> String {
         func esc(_ s: String) -> String {
             s.contains(where: { $0 == "," || $0 == "\"" || $0 == "\n" }) ? "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\"" : s
         }
         var lines = ["Timecode,Type,Label,Song,Seconds"]
         for m in markers.sorted(by: { $0.frame < $1.frame }) {
             let song = songName(for: m, rate: rate, songs: songs) ?? ""
-            lines.append([m.timecode(rate: rate).display(dropFrame: rate.isDropFrame), m.kind.title, esc(m.label), esc(song),
+            lines.append([m.timecode(rate: rate).display(dropFrame: rate.isDropFrame), esc(types.name(m.kind)), esc(m.label), esc(song),
                           String(format: "%.3f", m.seconds(rate: rate))].joined(separator: ","))
         }
         return lines.joined(separator: "\n") + "\n"
@@ -139,14 +200,15 @@ public enum MA3Deploy {
     }
 
     /// The cue name for a marker: "01:00:24:16 Choreo – Verse 2".
-    public static func cueName(_ m: Marker, rate: FrameRate) -> String {
+    public static func cueName(_ m: Marker, rate: FrameRate, types: MarkerTypes = .defaults) -> String {
         let tc = m.timecode(rate: rate).display(dropFrame: rate.isDropFrame)
-        return m.label.isEmpty ? "\(tc) \(m.kind.title)" : "\(tc) \(m.kind.title) – \(m.label)"
+        let kind = types.name(m.kind)
+        return m.label.isEmpty ? "\(tc) \(kind)" : "\(tc) \(kind) – \(m.label)"
     }
 
     /// Every message, in order. Replaces sequence `sequence` and timecode show `timecode`.
     public static func steps(_ markers: [Marker], rate: FrameRate, sequence: Int, timecode: Int,
-                             name: String, batch: Int = 25) -> [Step] {
+                             name: String, types: MarkerTypes = .defaults, batch: Int = 25) -> [Step] {
         let sorted = markers.sorted { $0.frame < $1.frame }
         var out: [Step] = []
         func cmd(_ c: String, _ pause: Double = 0.05) { out.append(Step(command: c, pause: pause)) }
@@ -156,7 +218,7 @@ public enum MA3Deploy {
         cmd("Label Sequence \(sequence) \(quoted(name))")
         for (i, m) in sorted.enumerated() {
             cmd("Store Sequence \(sequence) Cue \(i + 1) /NoConfirmation")
-            cmd("Label Sequence \(sequence) Cue \(i + 1) \(quoted(cueName(m, rate: rate)))")
+            cmd("Label Sequence \(sequence) Cue \(i + 1) \(quoted(cueName(m, rate: rate, types: types)))")
         }
         // Timecode show: one track on the sequence, one Goto event per marker.
         cmd("Delete Timecode \(timecode) /NoConfirmation", 0.2)
@@ -182,7 +244,8 @@ public enum MA3Deploy {
 
     /// The same build as a grandMA3 plugin (import it in the Plugins pool, then run it), for a
     /// console that isn't on the network.
-    public static func pluginLua(_ markers: [Marker], rate: FrameRate, sequence: Int, timecode: Int, name: String) -> String {
+    public static func pluginLua(_ markers: [Marker], rate: FrameRate, sequence: Int, timecode: Int, name: String,
+                                 types: MarkerTypes = .defaults) -> String {
         let sorted = markers.sorted { $0.frame < $1.frame }
         var lua = """
         -- Understudy markers: \(sorted.count) as Sequence \(sequence) (one cue each) and Timecode \(timecode) (Goto events).
@@ -191,7 +254,7 @@ public enum MA3Deploy {
 
         """
         for m in sorted {
-            lua += "  {raw=\(rawTime(m.seconds(rate: rate))), name='\(luaText(cueName(m, rate: rate)))'},\n"
+            lua += "  {raw=\(rawTime(m.seconds(rate: rate))), name='\(luaText(cueName(m, rate: rate, types: types)))'},\n"
         }
         lua += """
         }
@@ -274,9 +337,9 @@ public enum D3Push {
     /// Python 2.7 for the execute endpoint (run inside Designer's `runner` function, so `return`
     /// gives the result). Returns {track, placed, skipped, tcTags}.
     public static func script(_ markers: [Marker], rate: FrameRate, trackName: String?, style: Style,
-                              trackStartSeconds: Double) -> String {
+                              trackStartSeconds: Double, types: MarkerTypes = .defaults) -> String {
         let rows = markers.sorted { $0.frame < $1.frame }.map { m in
-            "(\(String(format: "%.6f", m.seconds(rate: rate))), \(py(m.kind.title)), \(py(m.label)))"
+            "(\(String(format: "%.6f", m.seconds(rate: rate))), \(py(types.name(m.kind))), \(py(m.label)))"
         }.joined(separator: ", ")
         // Track lookup that works across Designer versions (setlist attribute names have moved).
         let pick = """

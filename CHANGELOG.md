@@ -17,6 +17,8 @@
   - **Timecode source for recording:** Settings › Timecode input › Show code: Song timeline (or the SHOW CODE FOR RECORD box in the timeline window). Stop and Record then take show code from the timeline, so takes log against it with no cable, while LTC out sends the same code to the decks' timecode inputs, disguise or another recorder.
   - **Scrub and step:** drag the playhead, or use frame steps (← →), one-second steps (⇧← →) and song jumps (⌥← →). While paused, the decks seek to the exact frame.
 
+- **Custom marker types**, saved with the project: Send / Export › Edit Marker Types… adds, renames, recolours (colour picker), reorders (drag; the first nine are keys 1–9 and OSC `/marker/1`–`9`) and removes types. Removing a type in use moves its markers to another type or deletes them; Reset to defaults brings back the seven. OSC `/marker/<name>` and `/marker "<name>"` take your own names, and grandMA3, disguise and CSV exports use them. Projects and markers made before keep their types.
+
 - **Updates itself** from GitHub Releases (Sparkle): checks once a day and from Understudy › Check for Updates…, downloads in the background and installs on relaunch. The start window shows the version and whether you're up to date. Needs the release signing setup in docs/RELEASING.md; builds without an update key have updating switched off.
 - **Installer**: `Understudy-<version>.pkg` installs to /Applications and hands the app to the person who installed it, so updates never ask for an admin password. CI signs it and the app with the Developer ID, notarizes both and publishes the update feed (appcast.xml) with each tagged release, once the secrets in docs/RELEASING.md are added.
 

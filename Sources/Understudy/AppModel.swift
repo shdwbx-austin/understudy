@@ -1059,7 +1059,7 @@ extension AppModel {
     func handleOSC(_ message: OSCMessage, from: String) {
         let args = message.arguments.map(\.text).joined(separator: " ")
         lastOSC = "\(message.address)\(args.isEmpty ? "" : " " + args)  ·  \(from)"
-        guard let command = RemoteControl.command(for: message) else { return }
+        guard let command = RemoteControl.command(for: message, types: timeline.markerTypes) else { return }
         perform(command)
     }
 
@@ -1098,7 +1098,7 @@ extension AppModel {
         panel.nameFieldStringValue = "\(timeline.currentSetlist?.name ?? "Markers") markers.csv"
         panel.allowedContentTypes = [.commaSeparatedText]
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let csv = MarkerExport.csv(timeline.markers, rate: ltcRate, songs: timeline.songs)
+        let csv = MarkerExport.csv(timeline.markers, rate: ltcRate, songs: timeline.songs, types: timeline.markerTypes)
         do {
             try csv.write(to: url, atomically: true, encoding: .utf8)
             linkMessage = "Exported \(timeline.markers.count) markers to \(url.lastPathComponent)."
@@ -1116,7 +1116,8 @@ extension AppModel {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let luaName = url.deletingPathExtension().lastPathComponent + ".lua"
         let markers = markersToSend
-        let lua = MA3Deploy.pluginLua(markers, rate: ltcRate, sequence: settings.ma3Sequence, timecode: settings.ma3Timecode, name: markerSetName)
+        let lua = MA3Deploy.pluginLua(markers, rate: ltcRate, sequence: settings.ma3Sequence, timecode: settings.ma3Timecode,
+                                      name: markerSetName, types: timeline.markerTypes)
         let xml = MA3Deploy.pluginXML(name: "Understudy markers", luaFile: luaName)
         do {
             try xml.write(to: url, atomically: true, encoding: .utf8)
@@ -1143,7 +1144,8 @@ extension AppModel {
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
-        let steps = MA3Deploy.steps(markers, rate: ltcRate, sequence: settings.ma3Sequence, timecode: settings.ma3Timecode, name: markerSetName)
+        let steps = MA3Deploy.steps(markers, rate: ltcRate, sequence: settings.ma3Sequence, timecode: settings.ma3Timecode,
+                                    name: markerSetName, types: timeline.markerTypes)
         let address = settings.ma3Prefix.isEmpty ? "/cmd" : "/\(settings.ma3Prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/cmd"
         let (seq, tc) = (settings.ma3Sequence, settings.ma3Timecode)
         linkBusy = true
@@ -1173,7 +1175,7 @@ extension AppModel {
         }
         let start = Timecode(settings.d3TrackStart).map { Double($0.frameIndex(at: ltcRate.ltcRate)) / ltcRate.ltcRate.exact } ?? 0
         let script = D3Push.script(markers, rate: ltcRate, trackName: settings.d3Track.isEmpty ? nil : settings.d3Track,
-                                   style: settings.d3Style, trackStartSeconds: start)
+                                   style: settings.d3Style, trackStartSeconds: start, types: timeline.markerTypes)
         let host = settings.d3Host
         linkBusy = true
         linkMessage = "Sending to disguise…"

@@ -144,7 +144,7 @@ public enum RemoteCommand: Equatable, Sendable {
 public enum RemoteControl {
     public static let prefix = "understudy"
 
-    public static func command(for m: OSCMessage) -> RemoteCommand? {
+    public static func command(for m: OSCMessage, types: MarkerTypes = .defaults) -> RemoteCommand? {
         var parts = m.address.lowercased().split(separator: "/").map(String.init)
         if parts.first == prefix { parts.removeFirst() }
         guard let head = parts.first else { return nil }
@@ -174,13 +174,13 @@ public enum RemoteControl {
                 case "next": return .nextMarker
                 case "prev", "previous": return .previousMarker
                 default:
-                    guard let kind = MarkerKind(argument: parts[1]) else { return nil }
+                    guard let kind = types.kind(forArgument: parts[1]) else { return nil }
                     return .addMarker(kind, label: string(0) ?? "")
                 }
             }
             // /marker [type] [label]: a string that names a type sets it; any other string is the label.
             if let first = string(0) {
-                if let kind = MarkerKind(argument: first) { return .addMarker(kind, label: string(1) ?? "") }
+                if let kind = types.kind(forArgument: first) { return .addMarker(kind, label: string(1) ?? "") }
                 return .addMarker(nil, label: first)
             }
             return .addMarker(nil, label: "")

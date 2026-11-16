@@ -63,8 +63,16 @@ final class TimelineModel: ObservableObject {
         didSet { if hiddenMarkerKinds != oldValue { save() } }
     }
     @Published var selectedMarkerID: UUID?
-    /// The type a bare "add marker" (M, or OSC /marker) uses: the last one chosen.
-    private(set) var lastMarkerKind: MarkerKind = .choreo
+    /// The project's marker types: names, colours, order (keys 1–9).
+    @Published var markerTypes: MarkerTypes = .defaults {
+        didSet { if markerTypes != oldValue { save() } }
+    }
+    /// The type a bare "add marker" (M, or OSC /marker) uses: the last one chosen (or the first).
+    private var lastKind: MarkerKind?
+    var lastMarkerKind: MarkerKind {
+        if let k = lastKind, markerTypes.types.contains(where: { $0.id == k }) { return k }
+        return markerTypes.types.first?.id ?? .choreo
+    }
     @Published var message: String?
 
     /// Show timecode rate the songs and decks count in (the show LTC rate).
@@ -626,7 +634,7 @@ final class TimelineModel: ObservableObject {
     @discardableResult
     func addMarker(_ kind: MarkerKind? = nil, label: String = "") -> Marker? {
         let kind = kind ?? lastMarkerKind
-        lastMarkerKind = kind
+        lastKind = kind
         // While playing, the transport is ahead of the last UI refresh: read it now.
         let t = isPlaying ? transport.position(at: HostClock.now()) : playhead
         guard let show = layout.showSeconds(at: t) else {
@@ -644,7 +652,7 @@ final class TimelineModel: ObservableObject {
 
     func updateMarker(_ id: UUID, kind: MarkerKind? = nil, label: String? = nil, frame: Int? = nil) {
         guard let i = markers.firstIndex(where: { $0.id == id }) else { return }
-        if let kind { markers[i].kind = kind; lastMarkerKind = kind }
+        if let kind { markers[i].kind = kind; lastKind = kind }
         if let label { markers[i].label = label }
         if let frame { markers[i].frame = max(0, frame) }
         markers.sort { $0.frame < $1.frame }
@@ -654,6 +662,22 @@ final class TimelineModel: ObservableObject {
     func removeMarker(_ id: UUID) {
         markers.removeAll { $0.id == id }
         if selectedMarkerID == id { selectedMarkerID = nil }
+        save()
+    }
+
+    /// How many markers have each type.
+    func markerCount(_ kind: MarkerKind) -> Int { markers.filter { $0.kind == kind }.count }
+
+    /// Removes a type; its markers move to `moveTo`, or go with it when nil.
+    func removeMarkerType(_ kind: MarkerKind, moveTo: MarkerKind?) {
+        guard markerTypes.types.count > 1 else { return }
+        if let moveTo {
+            for i in markers.indices where markers[i].kind == kind { markers[i].kind = moveTo }
+        } else {
+            markers.removeAll { $0.kind == kind }
+        }
+        hiddenMarkerKinds.remove(kind)
+        markerTypes.types.removeAll { $0.id == kind }
         save()
     }
 
@@ -708,7 +732,8 @@ final class TimelineModel: ObservableObject {
     func content() -> ShowContent {
         ShowContent(songs: songs, gap: gap, setlists: setlists, currentSetlist: currentSetlistID,
                     autoOrderFromTakes: autoOrderFromTakes, markers: markers,
-                    hiddenMarkerKinds: hiddenMarkerKinds.sorted { $0.number < $1.number })
+                    hiddenMarkerKinds: hiddenMarkerKinds.sorted { $0.rawValue < $1.rawValue },
+                    markerTypes: markerTypes == .defaults ? nil : markerTypes)
     }
 
     /// Opens a show (paths already resolved to absolute).
@@ -725,6 +750,8 @@ final class TimelineModel: ObservableObject {
         autoOrderFromTakes = stored.autoOrderFromTakes ?? false
         markers = stored.markers ?? []
         hiddenMarkerKinds = Set(stored.hiddenMarkerKinds ?? [])
+        markerTypes = stored.markerTypes ?? .defaults
+        lastKind = nil
         selectedMarkerID = nil
         message = nil
         layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, library: songs)

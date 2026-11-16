@@ -7,12 +7,46 @@ struct MarkerTests {
     let rate = FrameRate.fps30
     func frame(_ tc: String) -> Int { Timecode(tc)!.frameIndex(at: .fps30) }
 
-    @Test func kindsHaveNumbersAndAliases() {
-        #expect(MarkerKind.choreo.number == 1 && MarkerKind.automation.number == 7)
-        #expect(MarkerKind(argument: "5") == .lighting)
-        #expect(MarkerKind(argument: "LX") == .lighting)
-        #expect(MarkerKind(argument: "Pyro") == .pyro)
-        #expect(MarkerKind(argument: "8") == nil && MarkerKind(argument: "banana") == nil)
+    @Test func defaultTypesHaveKeysAndAliases() {
+        let t = MarkerTypes.defaults
+        #expect(t.number(.choreo) == 1 && t.number(.automation) == 7)
+        #expect(t.kind(forArgument: "5") == .lighting)
+        #expect(t.kind(forArgument: "LX") == .lighting)
+        #expect(t.kind(forArgument: "Pyro") == .pyro)
+        #expect(t.kind(forArgument: "8") == nil && t.kind(forArgument: "banana") == nil)
+    }
+
+    /// Custom types: added, renamed, recoloured, reordered; their names reach every export.
+    @Test func customTypes() throws {
+        var t = MarkerTypes.defaults
+        let cam = t.add(name: "Camera Move", color: "#F2B544")
+        let cam2 = t.add(name: "Camera Move", color: "#000000")
+        #expect(cam.rawValue == "cameramove" && cam2.rawValue == "cameramove2")
+        t.types.removeAll { $0.id == .audio }
+        let moved = t.types.remove(at: t.types.count - 2)   // Camera Move to the top
+        t.types.insert(moved, at: 0)
+        #expect(t.number(cam) == 1 && t.number(.choreo) == 2)
+        #expect(t.kind(forArgument: "1") == cam && t.kind(forArgument: "camera move") == cam && t.kind(forArgument: "cameramove") == cam)
+        #expect(t.kind(forArgument: "sfx") == nil)          // alias for a type that's gone
+        // A type removed from the list still reads, by its id.
+        #expect(t.name(.audio) == "Audio" && t.type(.audio).color == "#9A9A9A")
+        let m = Marker(frame: frame("01:00:24:16"), kind: cam, label: "")
+        #expect(m.displayName(in: t) == "Camera Move")
+        #expect(MarkerExport.csv([m], rate: rate, types: t).contains("01:00:24:16,Camera Move,,"))
+        #expect(MA3Deploy.cueName(m, rate: rate, types: t) == "01:00:24:16 Camera Move")
+        #expect(D3Push.script([m], rate: rate, trackName: nil, style: .notes, trackStartSeconds: 0, types: t).contains("'Camera Move'"))
+        #expect(RemoteControl.command(for: OSCMessage("/understudy/marker/1"), types: t) == .addMarker(cam, label: ""))
+        #expect(RemoteControl.command(for: OSCMessage("/understudy/marker", [.string("Camera Move"), .string("Push in")]), types: t)
+                == .addMarker(cam, label: "Push in"))
+        // Types travel with the project; old files get the defaults; markers keep their ids.
+        var show = ShowContent()
+        show.markerTypes = t
+        show.markers = [m]
+        let back = try JSONDecoder().decode(ShowContent.self, from: JSONEncoder().encode(show))
+        #expect(back.markerTypes == t && back.markers?.first?.kind == cam)
+        let old = try JSONDecoder().decode(Marker.self, from: Data(#"{"id":"6B0C1D2E-3F40-4A5B-8C6D-7E8F90A1B2C3","frame":5,"kind":"pyro","label":""}"#.utf8))
+        #expect(old.kind == .pyro)
+        #expect(String(data: try JSONEncoder().encode(old.kind), encoding: .utf8) == "\"pyro\"")
     }
 
     /// Markers sit on show code, so they follow their song whatever the set order.
