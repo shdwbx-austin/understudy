@@ -226,6 +226,13 @@ private struct MarkerCommands: View {
         Button("Edit Marker Types…") { timeline.editingMarkerTypes = true }
             .keyboardShortcut("m", modifiers: [.command, .option])
         Divider()
+        Toggle("Name New Markers", isOn: $timeline.nameNewMarkers)
+        Button("Name Selected Marker   ↩") { timeline.nameSelectedMarker() }
+            .disabled(timeline.selectedMarkerID == nil)
+        Divider()
+        Toggle("Snap to Grid", isOn: $timeline.snap)
+        Button("Quantize Selected Markers   Q") { timeline.quantizeSelection() }
+        Divider()
         // ] and [ in the timeline (MarkerKeys); not menu shortcuts, which would take the keys
         // from text fields too.
         Button("Next Marker   ]") { timeline.nextMarker() }

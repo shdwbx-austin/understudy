@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Snap to the grid.** SNAP by GRID turns it on and picks the value (bar, 1/2, 1/4, 1/8, 1/16, 1/8 triplet). New markers and dragged markers land on the nearest line; dragging one of a selection moves them all by the same snapped amount.
+- **Quantize.** Q moves the selected markers onto the grid at the snap value; right-click › Quantize has every value and Halfway (50%). Markers in songs without a tempo stay put (and it says so).
+- **Name markers as you drop them.** After a type button, 1–9 or M, the new marker's label opens in the list: type, Return. Esc skips. Markers › Name New Markers turns it off; Return names the selected marker any time. OSC-dropped markers don't ask.
+
 ## 0.8.0 — 2026-11-16
 
 - **Tempo from the audio.** Each song's audio is listened to for its tempo and beat positions (in the background, with the waveform; songs analysed before get a quick tempo-only pass once). Each music channel is checked as well as the mix, so a click channel wins when there is one. Songs without a tempo of yours get it, marked ≈ (GRID ≈96, Tempo (≈96 BPM)…); a BPM in the file name is trusted for the tempo and the audio places the beats. Tempo… shows what was heard, how sure it is, and ÷2, ×2 and the runner-up tempos as one-click buttons. Typed-in tempos and downbeats you set are never replaced.

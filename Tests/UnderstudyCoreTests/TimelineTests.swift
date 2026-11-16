@@ -410,3 +410,25 @@ struct TempoEntryTests {
         #expect(SongTempo.barStride(barPoints: 0.1, minimum: 14) == nil)
     }
 }
+
+struct SnapQuantizeTests {
+    // 120 BPM: a beat every 0.5 s; bar 1 at 10 s.
+    let grid = BeatGrid(bpm: 120, beatsPerBar: 4, origin: 10)
+
+    @Test func snapsToTheNearestLineOfTheValue() {
+        #expect(grid.nearest(to: 10.74, note: .quarter) == 10.5)
+        #expect(grid.nearest(to: 10.76, note: .quarter) == 11)
+        #expect(grid.nearest(to: 10.13, note: .eighth) == 10.25)
+        #expect(grid.nearest(to: 11.1, note: .bar) == 12)       // bars every 2 s from 10
+        #expect(grid.nearest(to: 9.1, note: .bar) == 10)
+        #expect(abs(grid.nearest(to: 10.18, note: .eighthTriplet) - (10 + 1.0 / 6)) < 1e-9)
+        // Before the downbeat it still lines up with the bars.
+        #expect(grid.nearest(to: 7.4, note: .half) == 7)
+    }
+
+    @Test func quantizeStrength() {
+        #expect(grid.quantize(10.6, note: .quarter) == 10.5)
+        #expect(abs(grid.quantize(10.6, note: .quarter, strength: 0.5) - 10.55) < 1e-9)
+        #expect(grid.quantize(10.6, note: .quarter, strength: 0) == 10.6)
+    }
+}

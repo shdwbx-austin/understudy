@@ -49,6 +49,19 @@ public struct BeatGrid: Equatable, Sendable {
     public func nearestBeat(to seconds: Double) -> Double {
         origin + ((seconds - origin) / beatSeconds).rounded() * beatSeconds
     }
+
+    /// The nearest grid line at `note` (a bar, 1/4, 1/8…), lined up with the bars.
+    public func nearest(to seconds: Double, note: NoteValue) -> Double {
+        let step = note.beats(perBar: beatsPerBar) * beatSeconds
+        return origin + ((seconds - origin) / step).rounded() * step
+    }
+
+    /// `seconds` moved `strength` (0…1) of the way to the nearest grid line: 1 lands on it,
+    /// 0.5 halves the distance (keeps some feel).
+    public func quantize(_ seconds: Double, note: NoteValue, strength: Double = 1) -> Double {
+        let target = nearest(to: seconds, note: note)
+        return seconds + (target - seconds) * min(1, max(0, strength))
+    }
 }
 
 /// Note values to array markers on, in quarter-note beats.

@@ -66,7 +66,7 @@ private struct MarkerChip: View {
         let hidden = timeline.hiddenMarkerKinds.contains(type.id)
         let color = Color(hex: type.color)
         // A swatch, not a pill: a colour bar, the key in mono, the name in light type.
-        let chip = Button { timeline.addMarker(type.id) } label: {
+        let chip = Button { timeline.dropMarker(type.id) } label: {
             HStack(spacing: 7) {
                 Rectangle().fill(color.opacity(hidden ? 0.3 : 1)).frame(width: 3, height: 16)
                 Text(number.map(String.init) ?? "·").font(Theme.mono(10)).foregroundStyle(Theme.grey)
@@ -224,12 +224,8 @@ struct MarkerOverlay: View {
                                     dragging = nil
                                     let frames = Int((Double(v.translation.width) / scale * timeline.rate.exact).rounded())
                                     guard frames != 0 else { return }
-                                    let group = timeline.selectedMarkerIDs
-                                    if group.count > 1, group.contains(m.id) {
-                                        timeline.updateMarkers(group, moveFrames: frames)
-                                    } else {
-                                        timeline.updateMarker(m.id, frame: m.frame + frames)
-                                    }
+                                    // Snapped to the grid when Snap is on; a selection moves together.
+                                    timeline.drop(m.id, at: m.frame + frames)
                                 }
                         )
                         .onTapGesture { MarkerClick.handle(m, timeline: timeline, order: items.map(\.marker.id)) }
@@ -300,6 +296,7 @@ struct MarkerContextMenu: View {
                 Button((type.id == marker.kind ? "✓ " : "   ") + type.name) { timeline.updateMarker(marker.id, kind: type.id) }
             }
         }
+        QuantizeMenu(timeline: timeline, ids: [marker.id], title: "Snap to Grid")
         Divider()
         Button("Array From Here…") { ArrayPrompt.ask(timeline: timeline, anchor: marker) }
         if let array = marker.arrayID {
@@ -342,6 +339,7 @@ struct MarkerGroupActions: View {
                 }
             }
         }
+        QuantizeMenu(timeline: timeline, ids: ids)
         Button("Loop Between Them") {
             timeline.loopSelectedMarkers()
         }
@@ -517,6 +515,24 @@ enum ArrayPrompt {
     }
 }
 
+/// Quantize ▸ to the snap value (Q), any other grid value, or halfway there.
+struct QuantizeMenu: View {
+    @ObservedObject var timeline: TimelineModel
+    let ids: Set<UUID>
+    var title = "Quantize"
+
+    var body: some View {
+        Menu(title) {
+            Button("To \(timeline.snapNote.short)   Q") { timeline.quantize(ids) }
+            Button("Halfway to \(timeline.snapNote.short) (50%)") { timeline.quantize(ids, strength: 0.5) }
+            Divider()
+            ForEach(NoteValue.allCases, id: \.self) { note in
+                if note != timeline.snapNote { Button("To \(note.title)") { timeline.quantize(ids, note: note) } }
+            }
+        }
+    }
+}
+
 /// A one-line text prompt.
 @MainActor
 func promptForText(_ title: String, value: String) -> String? {
@@ -541,6 +557,7 @@ struct MarkerList: View {
     @State private var wholeSet = false
     /// The row the playhead has just passed (the "now" marker), kept in view as it plays.
     @State private var nowID: UUID?
+    @FocusState private var labelFocused: Bool
     @State private var editing: UUID?
     @State private var draft = ""
 
@@ -639,6 +656,14 @@ struct MarkerList: View {
                 .onChange(of: timeline.selectedMarkerID) { id in
                     if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id, anchor: .center) } }
                 }
+                // A marker just dropped (or Return on the selected one): its label opens for typing.
+                .onChange(of: timeline.namingMarkerID) { id in
+                    guard let id, let m = timeline.markers.first(where: { $0.id == id }) else { return }
+                    if !rows.contains(where: { $0.id == id }) { wholeSet = true }
+                    draft = m.label
+                    editing = id
+                    proxy.scrollTo(id, anchor: .center)
+                }
             }
             if rows.isEmpty {
                 Text("Press 1–9 (or click a type) to drop a marker at the playhead.")
@@ -658,6 +683,13 @@ struct MarkerList: View {
             }
             .keyboardShortcut(.delete, modifiers: []).opacity(0)
         )
+    }
+
+    /// Done typing a label: back to the timeline's keys.
+    private func finishNaming() {
+        editing = nil
+        labelFocused = false
+        timeline.namingMarkerID = nil
     }
 
     /// A run of arrayed hits on one line: where it starts, how many, how often. Click goes to the
@@ -719,10 +751,12 @@ struct MarkerList: View {
             }
             .frame(width: 92, alignment: .leading)
             if editing == m.id {
-                TextField("Label", text: $draft)
+                TextField("Name it, then Return (Esc to skip)", text: $draft)
                     .textFieldStyle(.plain).font(Theme.grotesk(12))
-                    .onSubmit { timeline.updateMarker(m.id, label: draft); editing = nil }
-                    .onExitCommand { editing = nil }
+                    .focused($labelFocused)
+                    .onAppear { labelFocused = true }
+                    .onSubmit { timeline.updateMarker(m.id, label: draft); finishNaming() }
+                    .onExitCommand { finishNaming() }
             } else {
                 Text(m.label.isEmpty ? "—" : m.label).font(Theme.grotesk(12))
                     .foregroundStyle(m.label.isEmpty ? Theme.quiet : Theme.paper).lineLimit(1)
@@ -941,7 +975,7 @@ struct MarkerKeys: NSViewRepresentable {
 
     func updateNSView(_ view: Catcher, context: Context) { view.timeline = timeline }
 
-    enum Key: Equatable { case next, previous, again, type(Int), loopIn, loopOut, loop, clearLoop, clear }
+    enum Key: Equatable { case next, previous, again, type(Int), loopIn, loopOut, loop, clearLoop, clear, quantize, name }
 
     /// What a key press means, or nil to let it through. Layout-independent for [ and ]: their
     /// key positions (ANSI 33 and 30) count even where the layout puts other characters there.
@@ -951,12 +985,15 @@ struct MarkerKeys: NSViewRepresentable {
         case "]": return .next
         case "[": return .previous
         case "m": return .again
+        case "q": return .quantize
         case "i": return .loopIn
         case "o": return .loopOut
         case "l": return modifiers.contains(.shift) ? .clearLoop : .loop
         case "\u{1b}": return .clear
         case let c where c.count == 1 && ("1"..."9").contains(c): return .type(Int(c)!)
+        case "\r": return .name
         default:
+            if keyCode == 36 || keyCode == 76 { return .name }   // Return, Enter
             if keyCode == 30 { return .next }
             if keyCode == 33 { return .previous }
             return nil
@@ -982,18 +1019,22 @@ struct MarkerKeys: NSViewRepresentable {
                 switch key {
                 case .next: timeline.nextMarker()
                 case .previous: timeline.previousMarker()
-                case .again: if !event.isARepeat { timeline.addMarker() }
+                case .again: if !event.isARepeat { timeline.dropMarker() }
+                case .name:
+                    guard timeline.selectedMarkerID != nil else { return event }
+                    timeline.nameSelectedMarker()
                 case .loopIn: if !event.isARepeat { timeline.setLoopIn() }
                 case .loopOut: if !event.isARepeat { timeline.setLoopOut() }
                 case .loop: if !event.isARepeat { timeline.toggleLoop() }
                 case .clearLoop: if !event.isARepeat { timeline.clearLoop() }
+                case .quantize: if !event.isARepeat { timeline.quantizeSelection() }
                 case .clear:
                     guard timeline.selectedMarkerIDs.count > 1 else { return event }
                     timeline.clearMarkerSelection()
                 case .type(let n):
                     let types = timeline.markerTypes.types
                     guard n - 1 < min(types.count, MarkerTypes.keyed) else { return event }
-                    if !event.isARepeat { timeline.addMarker(types[n - 1].id) }
+                    if !event.isARepeat { timeline.dropMarker(types[n - 1].id) }
                 }
                 return nil
             }
