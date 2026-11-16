@@ -316,9 +316,10 @@ private struct ConfidenceSettings: View {
                     Text("One deck").tag(ConfidenceLayout.single)
                 }
                 if model.settings.confidenceLayout == .quad {
-                    ForEach(0..<AppSettings.deckCount, id: \.self) { deck in
+                    ForEach(model.settings.decks.indices.filter { $0 < model.settings.confidenceQuadrants.count }, id: \.self) { deck in
                         Picker("\(String(format: "%02d", deck + 1))  \(model.settings.decks[deck].name)",
                                selection: $model.settings.confidenceQuadrants[deck]) {
+                            Text("Not on the multiviewer").tag(-1)
                             ForEach(0..<4, id: \.self) { q in
                                 Text(ConfidenceLayout.quadrantNames[q]).tag(q)
                             }
@@ -326,7 +327,7 @@ private struct ConfidenceSettings: View {
                     }
                 } else {
                     Picker("The image is", selection: $model.settings.confidenceSingleDeck) {
-                        ForEach(0..<AppSettings.deckCount, id: \.self) { deck in
+                        ForEach(model.settings.decks.indices, id: \.self) { deck in
                             Text("\(String(format: "%02d", deck + 1))  \(model.settings.decks[deck].name)").tag(deck)
                         }
                     }

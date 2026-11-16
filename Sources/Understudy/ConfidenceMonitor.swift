@@ -59,7 +59,7 @@ final class ConfidenceMonitor: ObservableObject {
         var regions: [Int: CGRect] = [:]
         switch layout {
         case .quad:
-            for (deck, quadrant) in quadrants.enumerated() {
+            for (deck, quadrant) in quadrants.enumerated() where (0..<4).contains(quadrant) {
                 let r = ConfidenceLayout.rect(quadrant: quadrant)
                 regions[deck] = CGRect(x: r.x, y: r.y, width: r.width, height: r.height)
             }

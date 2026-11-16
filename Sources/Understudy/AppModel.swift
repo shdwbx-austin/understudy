@@ -57,6 +57,9 @@ final class AppModel: ObservableObject {
     @Published var linkMessage: String?
     @Published private(set) var linkBusy = false
     let osc = OSCServer()
+    let projects = ProjectManager()
+    private var projectCreated = Date()
+    private var projectSave: Task<Void, Never>?
     /// When Record was last pressed: the {date}/{time} in recording names.
     private(set) var recordStartedAt: Date?
     /// Dante out through Dante Virtual Soundcard: off, sending, or what's stopping it.
@@ -86,7 +89,8 @@ final class AppModel: ObservableObject {
         didSet { if selectedTake != oldValue { decks.forEach { $0.resetChase() } } }
     }
 
-    let decks: [DeckController]
+    /// One controller per deck in the show (1–16), indexed by deck id.
+    @Published private(set) var decks: [DeckController] = []
     let discovery = DeckDiscovery()
     let timeline = TimelineModel()
     /// Last paused timeline seek sent to the decks.
@@ -116,18 +120,7 @@ final class AppModel: ObservableObject {
         settings = loaded
         clock = LTCClock(rate: loaded.ltcRate, freewheel: loaded.freewheelSeconds)
         decks = loaded.decks.map { DeckController(id: $0.id) }
-        for deck in decks {
-            deck.buildsTakeMaps = loaded.recordMode == .continuous
-            deck.onRecordingFinished = { [weak self] in self?.scheduleTakeRefresh() }
-            deck.onClipsRefreshed = { [weak self, weak deck] in
-                guard let self, let deck else { return }
-                self.fileTakeMaps(deck)
-            }
-            deck.onReady = { [weak self, weak deck] in
-                guard let self, let deck else { return }
-                self.deckReady(deck)
-            }
-        }
+        for deck in decks { wire(deck) }
         for config in loaded.decks where config.enabled {
             decks[config.id].connect(host: config.host)
         }
@@ -283,6 +276,94 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: Decks
+
+    private func wire(_ deck: DeckController) {
+        deck.buildsTakeMaps = settings.recordMode == .continuous
+        deck.onRecordingFinished = { [weak self] in self?.scheduleTakeRefresh() }
+        deck.onClipsRefreshed = { [weak self, weak deck] in
+            guard let self, let deck else { return }
+            self.fileTakeMaps(deck)
+        }
+        deck.onReady = { [weak self, weak deck] in
+            guard let self, let deck else { return }
+            self.deckReady(deck)
+        }
+    }
+
+    // MARK: Deck list
+
+    var canAddDeck: Bool { !setupLocked && settings.decks.count < AppSettings.maxDecks }
+    var canRemoveDeck: Bool { !setupLocked && settings.decks.count > 1 }
+
+    /// Adds a deck at the end (up to 16), named after the last one's pattern.
+    func addDeck() {
+        guard canAddDeck else { return }
+        let n = settings.decks.count
+        var list = settings.decks
+        list.append(DeckConfig(id: n, name: "ME \(n + 1)", host: ""))
+        setDeckList(list)
+    }
+
+    /// Removes deck `id`; the ones after it move up a number (their take maps go with them).
+    func removeDeck(_ id: Int) {
+        guard canRemoveDeck, settings.decks.indices.contains(id) else { return }
+        var list = settings.decks
+        list.remove(at: id)
+        setDeckList(list, removed: [id])
+    }
+
+    /// Applies an edited deck list (Assign decks): entries keep their old ids, new ones have ids
+    /// past the end, missing ids were removed.
+    func applyDeckDraft(_ draft: [DeckConfig]) {
+        guard !setupLocked else { return }
+        let oldCount = settings.decks.count
+        let kept = Set(draft.map(\.id).filter { $0 < oldCount })
+        let removed = (0..<oldCount).filter { !kept.contains($0) }
+        var list = draft
+        for i in list.indices { list[i].host = list[i].host.trimmingCharacters(in: .whitespaces) }
+        if removed.isEmpty, list.count == oldCount {
+            for i in list.indices where list[i] != settings.decks[i] {
+                let old = settings.decks[i]
+                settings.decks[i] = list[i]
+                if list[i].host != old.host || list[i].enabled != old.enabled { applyHost(i) }
+            }
+        } else {
+            setDeckList(list, removed: removed)
+        }
+    }
+
+    /// Makes the deck list `configs` (from a project, or after an add/remove): controllers are
+    /// added, dropped or rebuilt to match, and every deck reconnects to its address.
+    func setDeckList(_ configs: [DeckConfig], removed: [Int] = []) {
+        let list = AppSettings.normalized(configs)
+        if let first = removed.min(), first < decks.count {
+            // Controllers from the first removed one on are rebuilt under their new numbers.
+            for deck in decks[first...] {
+                if deck.transport.status == .record { deck.stopTransport() }
+                deck.disconnect()
+            }
+            var count = decks.count
+            for id in removed.sorted(by: >) {
+                TakeMapStore.removeDeck(id: id, count: count)
+                count -= 1
+            }
+            decks.removeSubrange(first...)
+        }
+        while decks.count > list.count {
+            let deck = decks.removeLast()
+            if deck.transport.status == .record { deck.stopTransport() }
+            deck.disconnect()
+        }
+        while decks.count < list.count {
+            let deck = DeckController(id: decks.count)
+            wire(deck)
+            decks.append(deck)
+        }
+        settings.decks = list
+        settings.normalizeDecks()
+        for id in list.indices { applyHost(id) }
+        applyConfidence()
+    }
 
     func applyHost(_ id: Int) {
         let config = settings.decks[id]
@@ -677,6 +758,9 @@ final class AppModel: ObservableObject {
             decks.forEach { $0.resetChase() }
         }
         if settings.oscEnabled != old.oscEnabled || settings.oscPort != old.oscPort { applyOSC() }
+        if settings.decks != old.decks || settings.recordNaming != old.recordNaming || targets(of: settings) != targets(of: old) {
+            scheduleProjectSave()
+        }
     }
 
     // MARK: Loop
@@ -1112,5 +1196,118 @@ extension AppModel {
             }
             self?.linkBusy = false
         }
+    }
+}
+
+// MARK: - Projects
+
+extension AppModel {
+    var projectName: String? { projects.current?.name }
+
+    func targets(of s: AppSettings) -> ShowTargets {
+        var t = ShowTargets()
+        t.ma3Host = s.ma3Host; t.ma3Port = s.ma3Port; t.ma3Prefix = s.ma3Prefix
+        t.ma3Sequence = s.ma3Sequence; t.ma3Timecode = s.ma3Timecode
+        t.d3Host = s.d3Host; t.d3Track = s.d3Track; t.d3Style = s.d3Style; t.d3TrackStart = s.d3TrackStart
+        return t
+    }
+
+    private func apply(_ t: ShowTargets) {
+        settings.ma3Host = t.ma3Host; settings.ma3Port = t.ma3Port; settings.ma3Prefix = t.ma3Prefix
+        settings.ma3Sequence = t.ma3Sequence; settings.ma3Timecode = t.ma3Timecode
+        settings.d3Host = t.d3Host; settings.d3Track = t.d3Track; settings.d3Style = t.d3Style; settings.d3TrackStart = t.d3TrackStart
+    }
+
+    /// The open show as a project file.
+    func currentProjectFile() -> ProjectFile {
+        var f = ProjectFile(name: projectName ?? "Untitled", created: projectCreated, show: timeline.content(),
+                            decks: settings.decks, recordNaming: settings.recordNaming, targets: targets(of: settings))
+        f.modified = Date()
+        return f
+    }
+
+    /// Opens a project: its show, decks, recording names and marker targets. Not while recording.
+    @discardableResult
+    func openProject(_ layout: ProjectLayout) -> Bool {
+        guard mode != .record else {
+            projects.lastError = "Stop recording before opening another project."
+            return false
+        }
+        if projects.current != nil { saveProjectNow() }
+        do {
+            let file = try projects.read(layout)
+            projectSave?.cancel()
+            projects.didOpen(layout)
+            projectCreated = file.created
+            hookTimeline()
+            timeline.analysisRoot = layout.analysis
+            timeline.load(file.show)
+            if file.decks != settings.decks { setDeckList(file.decks) }
+            settings.recordNaming = file.recordNaming
+            apply(file.targets)
+            linkMessage = nil
+            refreshTakes()
+            return true
+        } catch {
+            projects.lastError = "Couldn't open \(layout.name): \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Makes a new project under the projects folder and opens it. `keepShow` carries the open
+    /// show over (songs, set, markers); otherwise it starts empty. Decks carry over either way.
+    @discardableResult
+    func newProject(named name: String, keepShow: Bool, show: ShowContent? = nil) -> Bool {
+        let content = show ?? (keepShow ? timeline.content() : ShowContent())
+        let file = ProjectFile(name: name, show: content, decks: settings.decks, recordNaming: settings.recordNaming,
+                               targets: targets(of: settings))
+        do {
+            let layout = try projects.create(named: name, file: file)
+            return openProject(layout)
+        } catch {
+            projects.lastError = error.localizedDescription
+            return false
+        }
+    }
+
+    /// The show from before projects (if any): songs and set kept in Application Support.
+    var legacyShow: ShowContent? {
+        guard let show = TimelineModel.legacyContent(), !show.songs.isEmpty else { return nil }
+        return show
+    }
+
+    func closeProject() {
+        guard mode != .record else { return }
+        saveProjectNow()
+        timeline.stop()
+        projects.close()
+    }
+
+    /// Copies every song's audio from outside the project folder into it.
+    func collectProjectFiles() {
+        timeline.collectAudio()
+    }
+
+    private func hookTimeline() {
+        timeline.onChange = { [weak self] in self?.scheduleProjectSave() }
+        timeline.adoptFile = { [weak self] url, asset in self?.projects.adopt(url, as: asset) }
+        timeline.adoptAudio = { [weak self] path, done in self?.projects.adoptAudio(path, done: done) }
+    }
+
+    func scheduleProjectSave() {
+        guard projects.current != nil else { return }
+        projectSave?.cancel()
+        projectSave = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            self?.saveProjectNow()
+        }
+    }
+
+    func saveProjectNow() {
+        projectSave?.cancel()
+        projectSave = nil
+        guard projects.current != nil else { return }
+        projects.save(currentProjectFile())
     }
 }

@@ -429,13 +429,15 @@ struct DeckChips: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        HStack(spacing: 12) {
-            ForEach(model.decks.filter { !model.settings.decks[$0.id].host.trimmingCharacters(in: .whitespaces).isEmpty }, id: \.id) { deck in
+        let assigned = model.decks.filter { model.settings.decks.indices.contains($0.id) && !model.settings.decks[$0.id].host.trimmingCharacters(in: .whitespaces).isEmpty }
+        // Up to four across, then wrap: 16 decks make four rows of four.
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: max(1, min(4, assigned.count))), spacing: 8) {
+            ForEach(assigned, id: \.id) { deck in
                 DeckChip(deck: deck, config: model.settings.decks[deck.id])
             }
-            if model.settings.decks.allSatisfy({ $0.host.trimmingCharacters(in: .whitespaces).isEmpty }) {
-                Text("No decks assigned.").font(Theme.grotesk(13, .light)).foregroundStyle(Theme.grey)
-            }
+        }
+        if assigned.isEmpty {
+            Text("No decks assigned.").font(Theme.grotesk(13, .light)).foregroundStyle(Theme.grey)
         }
     }
 }

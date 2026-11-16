@@ -58,6 +58,22 @@ HyperDecks can't chase LTC natively. Understudy reads the show LTC itself and ha
 
 **Fast pickup** is on by default (Settings › Chase). Turn it off to park decks pre-roll ahead and fire `play` once they've settled: slower to pick up, for decks that locate slowly.
 
+## Projects
+
+Each show is a project folder, laid out like a disguise project:
+
+```
+<Projects folder>/<Name>/
+  <Name>.understudy     songs, set, setlists, markers, decks, recording names, MA3/disguise targets
+  history/              snapshots, at most one every 5 minutes (last 50 kept)
+  objects/AudioFile/    song audio, copied in
+  objects/SongList/     imported song lists
+  objects/Export/       marker exports
+  internal/analysis/    waveform and timecode caches
+```
+
+Understudy opens on a start window with recent projects, **Open…** and **New Project**, and the projects folder (**Change…**). Audio and song lists you bring in are copied into the project; File › **Copy All Audio Into Project** collects anything still outside it. On a show machine, tick **Open the last project at launch**. Audio devices, the LTC input, OSC port, Dante and chase tuning belong to the Mac (Settings), not the project.
+
 ## Timeline (rehearsing songs out of order)
 
 Timeline mode (**⌘4**) makes Understudy the clock instead of incoming LTC. Open the timeline with **⌘T**.

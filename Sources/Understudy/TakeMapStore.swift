@@ -38,6 +38,18 @@ final class TakeMapStore {
     private(set) var contents: Contents
     private let url: URL?
 
+    /// Deck `id` was removed from a list of `count`: its maps go, and later decks' files move up a
+    /// number so each physical deck keeps its maps.
+    static func removeDeck(id: Int, count: Int) {
+        let dir = TimelineModel.storeDirectory.appendingPathComponent("takemaps", isDirectory: true)
+        let fm = FileManager.default
+        func file(_ i: Int) -> URL { dir.appendingPathComponent("deck-\(i + 1).json") }
+        try? fm.removeItem(at: file(id))
+        for i in (id + 1)..<max(id + 1, count) where fm.fileExists(atPath: file(i).path) {
+            try? fm.moveItem(at: file(i), to: file(i - 1))
+        }
+    }
+
     init(deckID: Int) {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         let dir: URL? = TimelineModel.storeDirectory.appendingPathComponent("takemaps", isDirectory: true)

@@ -30,9 +30,20 @@ struct AssignDecksView: View {
                     SectionHead(index: 1, title: "Slots")
                         .padding(.top, 16)
                     ForEach(draft.indices, id: \.self) { i in
-                        SlotRow(config: $draft[i], duplicate: duplicate(i), found: model.discovery.found)
+                        SlotRow(config: $draft[i], number: i + 1, duplicate: duplicate(i), found: model.discovery.found,
+                                remove: draft.count > 1 ? { draft.remove(at: i) } : nil)
                         Rule(color: Theme.rule.opacity(0.6))
                     }
+                    HStack(spacing: 16) {
+                        TextButton(title: "+ Add deck", color: draft.count < AppSettings.maxDecks ? Theme.paper : Theme.quiet) {
+                            let next = (draft.map(\.id).max() ?? -1) + 1
+                            draft.append(DeckConfig(id: max(next, model.settings.decks.count), name: "ME \(draft.count + 1)", host: ""))
+                        }
+                        .disabled(draft.count >= AppSettings.maxDecks)
+                        Text("\(draft.count) OF \(AppSettings.maxDecks) DECKS · SAVED WITH THE PROJECT")
+                            .font(Theme.mono(9)).tracking(1.2).foregroundStyle(Theme.grey)
+                    }
+                    .padding(.top, 12)
                     NetworkList(discovery: model.discovery, draft: $draft)
                         .padding(.top, 28)
                 }
@@ -63,14 +74,7 @@ struct AssignDecksView: View {
 
     private func apply() {
         guard !model.setupLocked else { return }
-        for i in draft.indices {
-            var next = draft[i]
-            next.host = next.host.trimmingCharacters(in: .whitespaces)
-            let old = model.settings.decks[i]
-            guard next != old else { continue }
-            model.settings.decks[i] = next
-            if next.host != old.host || next.enabled != old.enabled { model.applyHost(i) }
-        }
+        model.applyDeckDraft(draft)
         dismiss()
     }
 }
@@ -78,13 +82,15 @@ struct AssignDecksView: View {
 /// One slot: number, name, address (with the found decks), on/off.
 private struct SlotRow: View {
     @Binding var config: DeckConfig
+    let number: Int
     let duplicate: Int?
     let found: [FoundDeck]
+    let remove: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: Theme.gutter) {
-                Text(String(format: "%02d", config.id + 1))
+                Text(String(format: "%02d", number))
                     .font(Theme.grotesk(26, .light))
                     .foregroundStyle(config.enabled ? Theme.paper : Theme.quiet)
                     .frame(width: 44, alignment: .leading)
@@ -117,6 +123,11 @@ private struct SlotRow: View {
                     .controlSize(.mini)
                     .tint(Theme.lock)
                     .font(Theme.mono(10))
+                if let remove {
+                    Button(action: remove) { Text("×").font(Theme.grotesk(18)) }
+                        .buttonStyle(.plain).foregroundStyle(Theme.grey)
+                        .help("Remove this deck (the ones after it move up)")
+                }
             }
             if let duplicate {
                 Text("SAME ADDRESS AS \(String(format: "%02d", duplicate + 1)) — ONE DECK CAN'T FILL TWO SLOTS")

@@ -26,8 +26,8 @@ enum AudioAnalyzer {
     static let scanSeconds = 20.0
     private static let version = 2
 
-    static func analyze(path: String, rate: FrameRate) -> AudioAnalysis? {
-        guard let folder = cacheFolder(for: path, rate: rate) else { return nil }
+    static func analyze(path: String, rate: FrameRate, root: URL) -> AudioAnalysis? {
+        guard let folder = cacheFolder(for: path, rate: rate, root: root) else { return nil }
         let meta = folder.appendingPathComponent("analysis.json")
         if let data = try? Data(contentsOf: meta), let cached = try? JSONDecoder().decode(AudioAnalysis.self, from: data),
            cached.musicPath.map({ FileManager.default.fileExists(atPath: $0) }) ?? true,
@@ -112,17 +112,18 @@ enum AudioAnalyzer {
          AVNumberOfChannelsKey: channels, AVEncoderBitDepthHintKey: bits]
     }
 
-    /// One folder per version of an audio file: path, size, date and show rate, hashed.
-    private static func cacheFolder(for path: String, rate: FrameRate) -> URL? {
+    /// One folder per version of an audio file: name, size, date and show rate, hashed (not the
+    /// full path, so a copy moved into the project keeps its analysis).
+    private static func cacheFolder(for path: String, rate: FrameRate, root: URL) -> URL? {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else { return nil }
         let size = (attributes[.size] as? NSNumber)?.int64Value ?? 0
         let date = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
         var hash: UInt64 = 0xcbf2_9ce4_8422_2325   // FNV-1a
-        for byte in "\(path)|\(size)|\(date)|\(rate.rawValue)|\(buckets)|\(version)".utf8 {
+        let name = URL(fileURLWithPath: path).lastPathComponent
+        for byte in "\(name)|\(size)|\(Int(date))|\(rate.rawValue)|\(buckets)|\(version)".utf8 {
             hash ^= UInt64(byte)
             hash = hash &* 0x100_0000_01b3
         }
-        return TimelineModel.storeDirectory.appendingPathComponent("audio", isDirectory: true)
-            .appendingPathComponent(String(format: "%016llx", hash), isDirectory: true)
+        return root.appendingPathComponent(String(format: "%016llx", hash), isDirectory: true)
     }
 }

@@ -44,9 +44,11 @@ public enum ShowCodeSource: String, Codable, CaseIterable, Sendable {
 }
 
 public struct AppSettings: Codable, Equatable, Sendable {
-    public static let deckCount = 4
+    /// Decks a new show starts with, and the most one Understudy controls.
+    public static let defaultDeckCount = 4
+    public static let maxDecks = 16
 
-    public var decks: [DeckConfig] = (1...AppSettings.deckCount).map { DeckConfig(id: $0 - 1, name: "ME \($0)", host: "") }
+    public var decks: [DeckConfig] = (1...AppSettings.defaultDeckCount).map { DeckConfig(id: $0 - 1, name: "ME \($0)", host: "") }
     /// Show timecode rate when not auto-detecting, and the last rate detected when auto.
     public var ltcRate: FrameRate = .fps29_97DF
     /// Work the rate out from incoming LTC.
@@ -144,7 +146,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         confidenceDeviceID = (try? c.decodeIfPresent(String.self, forKey: .confidenceDeviceID)) ?? d.confidenceDeviceID
         confidenceLayout = (try? c.decodeIfPresent(ConfidenceLayout.self, forKey: .confidenceLayout)) ?? d.confidenceLayout
         confidenceQuadrants = (try? c.decodeIfPresent([Int].self, forKey: .confidenceQuadrants)) ?? d.confidenceQuadrants
-        if confidenceQuadrants.count != Self.deckCount { confidenceQuadrants = d.confidenceQuadrants }
+        // (Sized to the deck list in normalizeDecks.)
         confidenceSingleDeck = (try? c.decodeIfPresent(Int.self, forKey: .confidenceSingleDeck)) ?? d.confidenceSingleDeck
         pictureCheck = (try? c.decodeIfPresent(PictureCheckSettings.self, forKey: .pictureCheck)) ?? d.pictureCheck
         showCodeSource = (try? c.decodeIfPresent(ShowCodeSource.self, forKey: .showCodeSource)) ?? d.showCodeSource
@@ -187,15 +189,18 @@ public struct AppSettings: Codable, Equatable, Sendable {
         }
     }
 
-    /// The app indexes decks by `id`, so ids must be exactly 0..<deckCount in order.
-    /// Repairs stored settings that don't match rather than crashing on launch.
+    /// The app indexes decks by `id`, so ids must be exactly 0..<count in order (1–16 decks).
+    /// Repairs stored settings that don't match rather than crashing on launch. The confidence
+    /// monitor's quadrant list follows the deck list (-1: not on the multiviewer).
     public mutating func normalizeDecks() {
-        let defaults = AppSettings().decks
-        decks = (0..<Self.deckCount).map { index in
-            guard var deck = decks.first(where: { $0.id == index }) ?? (decks.indices.contains(index) ? decks[index] : nil)
-            else { return defaults[index] }
-            deck.id = index
-            return deck
+        decks = Self.normalized(decks.sorted { $0.id < $1.id })
+        if confidenceQuadrants.count > decks.count {
+            confidenceQuadrants = Array(confidenceQuadrants.prefix(decks.count))
         }
+        while confidenceQuadrants.count < decks.count {
+            let i = confidenceQuadrants.count
+            confidenceQuadrants.append(i < 4 && !confidenceQuadrants.contains(i) ? i : -1)
+        }
+        if confidenceSingleDeck >= decks.count { confidenceSingleDeck = 0 }
     }
 }

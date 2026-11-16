@@ -84,15 +84,23 @@ final class TimelineModel: ObservableObject {
     /// Bumped on every seek, so paused frame seeks reach the decks once each.
     private(set) var seekCount = 0
 
-    init() {
-        load()
-    }
+    /// Called after every change, for the open project to save.
+    var onChange: (() -> Void)?
+    /// Where audio analysis is cached (the project's internal/analysis).
+    var analysisRoot: URL = TimelineModel.storeDirectory.appendingPathComponent("audio", isDirectory: true)
+    /// Copies a file into the project (song lists); returns the copy, or nil to keep the original.
+    var adoptFile: ((URL, ProjectLayout.Asset) -> URL?)?
+    /// Copies audio into the project in the background, then calls back with the copy's path.
+    var adoptAudio: ((String, @escaping @MainActor @Sendable (String) -> Void) -> Void)?
+
+    init() {}
 
     // MARK: Playlist
 
     func importCSV(from url: URL) {
         do {
             let text = try String(contentsOf: url, encoding: .utf8)
+            _ = adoptFile?(url, .songList)
             let result = try SongListCSV.read(text)
             // Keeps audio and tonight's set (by song name); an alphabetical list goes to the library.
             songs = SongLibrary.merge(result.songs, into: songs, rate: rate)
@@ -129,6 +137,28 @@ final class TimelineModel: ObservableObject {
         songs[i].audioOffset = nil
         message = nil
         layoutChanged()
+        adopt(audio: url.path)
+    }
+
+    /// Plays from the original now; once the copy is in the project, switches every song using
+    /// it over (the analysis carries across, keyed by file name, size and date).
+    private func adopt(audio path: String) {
+        adoptAudio?(path) { [weak self] copy in
+            guard let self, copy != path else { return }
+            var changed = false
+            for i in self.songs.indices where self.songs[i].audioPath == path {
+                self.songs[i].audioPath = copy
+                changed = true
+            }
+            if let a = self.analyses[path] { self.analyses[copy] = a }
+            if changed { self.layoutChanged() }
+        }
+    }
+
+    /// Copies every song's audio that's outside the project into it.
+    func collectAudio() {
+        let outside = Set(songs.compactMap(\.audioPath))
+        for path in outside { adopt(audio: path) }
     }
 
     func chooseAudio(for id: UUID) {
@@ -198,10 +228,11 @@ final class TimelineModel: ObservableObject {
     /// Starts analysing any attached audio not analysed yet: timecode, clean copies, waveform.
     private func analyzeAudio() {
         let rate = self.rate
+        let root = analysisRoot
         for path in Set(songs.compactMap(\.audioPath)) where analyses[path] == nil && !analyzing.contains(path) {
             analyzing.insert(path)
             Task.detached(priority: .utility) {
-                let analysis = AudioAnalyzer.analyze(path: path, rate: rate)
+                let analysis = AudioAnalyzer.analyze(path: path, rate: rate, root: root)
                 await MainActor.run { [weak self] in
                     guard let self, self.rate == rate else { return }
                     self.analyzing.remove(path)
@@ -297,6 +328,7 @@ final class TimelineModel: ObservableObject {
             songs[i].audioLTCChannel = nil
             songs[i].audioOffset = nil
             attached += 1
+            adopt(audio: path)
         }
         let missing = songs.filter { $0.audioPath == nil }
         let missingOnSet = missing.filter(\.inSet).map(\.name)
@@ -661,16 +693,6 @@ final class TimelineModel: ObservableObject {
 
     // MARK: Persistence
 
-    private struct Stored: Codable {
-        var songs: [Song]
-        var gap: Double
-        var setlists: [Setlist]?
-        var currentSetlist: UUID?
-        var autoOrderFromTakes: Bool?
-        var markers: [Marker]?
-        var hiddenMarkerKinds: [MarkerKind]?
-    }
-
     /// Understudy's folder in Application Support.
     /// Where the timeline, audio analysis and take maps are kept. `UNDERSTUDY_STORE` overrides it,
     /// so test harnesses never touch the real store.
@@ -682,11 +704,20 @@ final class TimelineModel: ObservableObject {
         return base.appendingPathComponent("Understudy", isDirectory: true)
     }
 
-    private static var fileURL: URL { storeDirectory.appendingPathComponent("timeline.json") }
+    /// The show as it stands, for the project file.
+    func content() -> ShowContent {
+        ShowContent(songs: songs, gap: gap, setlists: setlists, currentSetlist: currentSetlistID,
+                    autoOrderFromTakes: autoOrderFromTakes, markers: markers,
+                    hiddenMarkerKinds: hiddenMarkerKinds.sorted { $0.number < $1.number })
+    }
 
-    private func load() {
-        guard let data = try? Data(contentsOf: Self.fileURL),
-              let stored = try? JSONDecoder().decode(Stored.self, from: data) else { return }
+    /// Opens a show (paths already resolved to absolute).
+    func load(_ stored: ShowContent) {
+        loading = true
+        defer { loading = false }
+        stop()
+        analyses = [:]
+        analyzing = []
         songs = SongLibrary.arranged(stored.songs, rate: rate)
         gap = stored.gap
         setlists = stored.setlists ?? []
@@ -694,20 +725,26 @@ final class TimelineModel: ObservableObject {
         autoOrderFromTakes = stored.autoOrderFromTakes ?? false
         markers = stored.markers ?? []
         hiddenMarkerKinds = Set(stored.hiddenMarkerKinds ?? [])
+        selectedMarkerID = nil
+        message = nil
         layout = TimelineLayout(ordered: setSongs, rate: rate, gap: gap, library: songs)
         player.update(layout: layout)
+        seek(to: 0)
         analyzeAudio()
     }
 
+    /// The show saved before projects (Application Support/Understudy/timeline.json), to bring into
+    /// a first project.
+    static func legacyContent() -> ShowContent? {
+        guard let data = try? Data(contentsOf: storeDirectory.appendingPathComponent("timeline.json")) else { return nil }
+        return try? JSONDecoder().decode(ShowContent.self, from: data)
+    }
+
+    private var loading = false
+
     private func save() {
-        let url = Self.fileURL
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let stored = Stored(songs: songs, gap: gap, setlists: setlists, currentSetlist: currentSetlistID,
-                            autoOrderFromTakes: autoOrderFromTakes, markers: markers,
-                            hiddenMarkerKinds: hiddenMarkerKinds.sorted { $0.number < $1.number })
-        if let data = try? JSONEncoder().encode(stored) {
-            try? data.write(to: url, options: .atomic)
-        }
+        guard !loading else { return }
+        onChange?()
     }
 }
 

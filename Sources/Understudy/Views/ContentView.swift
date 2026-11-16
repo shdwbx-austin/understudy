@@ -75,6 +75,7 @@ struct ContentView: View {
             .padding(.bottom, 20)
         }
         .frame(minWidth: 1100, minHeight: 760, alignment: .topLeading)
+        .navigationTitle(model.projectName.map { "understudy — \($0)" } ?? "understudy")
         .background(Theme.ink)
         .foregroundStyle(Theme.paper)
         .preferredColorScheme(.dark)
