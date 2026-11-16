@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-11-16
 
 - **Timeline mode (⌘4) and a song timeline (⌘T).** In Timeline mode the main window becomes a workspace: the playlist (set and library) down the left, and on the right the whole set to scrub, the current song up close with a seconds ruler, the transport, the take and a status chip per deck. Two-finger swipes, a mouse's side wheel or Shift + wheel scrub across the set, and step frame by frame over the current song.
   - **Songs:** import a song list (CSV: name, start timecode, optional end or Duration), then drop an audio file on each song. Headers like "LTC Start Point" are recognised, ruled lines are ignored, and songs with no start (blank or n/a) are skipped and listed. An alphabetical list is laid out in timecode order.
