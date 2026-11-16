@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Video viewer** (⌥⌘V, or Video in the Timeline bar): the selected take's recordings for up to three decks, played in Understudy and locked to the timeline's timecode exactly as the decks chase it (take maps included): playing from the right frame, parked on the playhead's frame when paused, re-locked if it drifts. Show one deck (ME 1…) or all side by side. Files come from the backup folder and are pulled into the project (`objects/VideoFile/<deck>/`), playing straight away while they copy. Timeline mode only.
+- **NDI out**: each video as its own NDI stream ("Understudy ME 1", "Understudy ME 2", "Understudy AUX 1"), at 1080p or the files' own size. Needs libndi from the NDI SDK, bundled in the app at build time (see README). Tested on a real 4K ProRes take: lock within 0.06 frames, three streams discovered and received at the file's rate.
+
 ## 0.3.1 — 2026-11-16
 
 - **Switching to Timeline parks the decks at once** on the playhead's frame, ready to roll on Play. Before, a deck whose takes hadn't arrived yet was skipped until the playhead moved.

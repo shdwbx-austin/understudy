@@ -30,6 +30,16 @@ sed -e "s/__VERSION__/$VERSION/g" -e "s/__BUILD__/$BUILD/g" -e "s#__SPARKLE_PUBL
 mkdir -p "$APP/Contents/Frameworks"
 ditto "$BIN_DIR/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$APP/Contents/MacOS/Understudy"
+# NDI (Video viewer outputs): bundle libndi from the NDI SDK when it's installed on this Mac
+# (NDI_LIB overrides the path). Without it the app still runs; NDI out says the library is missing.
+NDI_LIB="${NDI_LIB:-/Library/NDI SDK for Apple/lib/macOS/libndi.dylib}"
+if [[ -f "$NDI_LIB" ]]; then
+    cp "$NDI_LIB" "$APP/Contents/Frameworks/libndi.dylib"
+    install_name_tool -id "@rpath/libndi.dylib" "$APP/Contents/Frameworks/libndi.dylib" 2>/dev/null || true
+    echo "Bundled NDI: $NDI_LIB"
+else
+    echo "NDI SDK not found ($NDI_LIB): building without NDI."
+fi
 # Login agent (Settings › Show machine): starts Understudy at login, relaunches it after a crash.
 mkdir -p "$APP/Contents/Library/LaunchAgents"
 cp Resources/com.shdwbx.understudy.agent.plist "$APP/Contents/Library/LaunchAgents/"
@@ -48,6 +58,7 @@ else
     sign "$S/Autoupdate"
     sign "$S/Updater.app"
     sign "$APP/Contents/Frameworks/Sparkle.framework"
+    [[ -f "$APP/Contents/Frameworks/libndi.dylib" ]] && sign "$APP/Contents/Frameworks/libndi.dylib"
     sign --entitlements Resources/Understudy.entitlements "$APP"
     codesign --verify --strict --deep "$APP"
 fi

@@ -15,9 +15,12 @@ let package = Package(
     targets: [
         // Pure logic: timecode math, LTC decode/encode, HyperDeck protocol, chase engine. Foundation only.
         .target(name: "UnderstudyCore"),
+        // NDI's C structs, for sending video (the library is loaded at run time).
+        .target(name: "CNDI"),
         // macOS app: SwiftUI, Core Audio LTC input, Network.framework deck control.
         .executableTarget(name: "Understudy", dependencies: [
             "UnderstudyCore",
+            "CNDI",
             .product(name: "Sparkle", package: "Sparkle"),
         ]),
         .testTarget(name: "UnderstudyCoreTests", dependencies: ["UnderstudyCore"]),
