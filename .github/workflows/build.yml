@@ -54,6 +54,16 @@ jobs:
           [[ -n "$PKG_ID" ]] && echo "INSTALLER_IDENTITY=$PKG_ID" >> "$GITHUB_ENV"
           echo "Signing as: $APP_ID / ${PKG_ID:-no installer identity}"
 
+      - name: NDI library (optional)
+        # Set the NDI_LIB_URL secret to a URL of libndi.dylib from your NDI SDK (under its license)
+        # to bundle NDI in CI builds; without it they build without NDI out.
+        env:
+          NDI_LIB_URL: ${{ secrets.NDI_LIB_URL }}
+        if: env.NDI_LIB_URL != ''
+        run: |
+          curl -sSL "$NDI_LIB_URL" -o "$RUNNER_TEMP/libndi.dylib"
+          echo "NDI_LIB=$RUNNER_TEMP/libndi.dylib" >> "$GITHUB_ENV"
+
       - name: Build app
         run: ./scripts/build-app.sh
 

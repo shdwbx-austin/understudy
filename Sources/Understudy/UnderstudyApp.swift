@@ -49,6 +49,7 @@ struct UnderstudyApp: App {
                     .keyboardShortcut("r", modifiers: [.command, .option])
                 Divider()
                 OpenTimelineCommand()
+                OpenVideoCommand()
                 Button("Refresh Takes") { model.refreshTakes() }.keyboardShortcut("r", modifiers: .command)
                 Button("Back Up a Take…") {
                     NotificationCenter.default.post(name: .understudyOpenBackup, object: nil)
@@ -60,6 +61,12 @@ struct UnderstudyApp: App {
                 .disabled(model.setupLocked)
             }
         }
+
+        Window("Video", id: "video") {
+            VideoViewerView(viewer: model.viewer)
+                .environmentObject(model)
+        }
+        .defaultSize(width: 1280, height: 520)
 
         Window("Timeline", id: "timeline") {
             TimelineView(timeline: model.timeline)
@@ -181,5 +188,15 @@ private struct UpdateCommand: View {
     var body: some View {
         Button("Check for Updates…") { updater.checkForUpdates() }
             .disabled(!updater.canCheck)
+    }
+}
+
+/// Opens (or brings forward) the Video window.
+private struct OpenVideoCommand: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Video Viewer") { openWindow(id: "video") }
+            .keyboardShortcut("v", modifiers: [.command, .option])
     }
 }

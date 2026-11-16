@@ -58,6 +58,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var linkBusy = false
     let osc = OSCServer()
     let projects = ProjectManager()
+    /// Recordings played in Understudy, locked to the timeline, and sent out over NDI.
+    let viewer = VideoViewer()
+    /// The viewer window is open (it, or NDI, keeps the viewer loading takes).
+    var viewerVisible = false { didSet { if viewerVisible { loadViewerTake() } } }
+    /// Backup files by name, so a take's recordings are found without searching the drive each time.
+    private var backupIndex: [String: String] = [:]
     /// AES67 out (test), when on.
     private var aes67: AES67Sender?
     private var aes67State: TimelineModel.RenderState?
@@ -510,6 +516,7 @@ final class AppModel: ObservableObject {
         }
         // The takes just changed (or arrived after switching modes): park the decks again.
         if mode == .timeline { sentSeek = -1; parkedSeek = [:] }
+        if viewerVisible || viewer.ndiEnabled { loadViewerTake() }
         // A new recording: put the set in the order it played, if asked (once per take).
         if timeline.autoOrderFromTakes, let latest = takes.first, latest.clipID != lastAutoOrderedClip,
            latest.logged == true {
@@ -810,6 +817,14 @@ final class AppModel: ObservableObject {
         }
         if pollDue && (rateKnown || showCodeFromTimeline) { logTakes() }
         if mode == .playback { chase(snapshot, now: now, pollDue: pollDue) }
+        if mode == .timeline, !viewer.slots.isEmpty {
+            // The viewer's videos follow the timeline like the decks: playing, or parked on the frame.
+            viewer.sync(now: now, playing: timeline.isPlaying && !timeline.isScrubbing) { [unowned self] deck, host in
+                self.viewerSeconds(deck: deck, host: host)
+            }
+        } else if !viewer.slots.isEmpty {
+            viewer.stop()
+        }
         if mode == .timeline {
             // Scrubbing a playing timeline: park the decks under the playhead as it moves (like a
             // paused seek); when it settles, fast pickup starts them from there.
@@ -1380,4 +1395,72 @@ extension AppModel {
     }
 
     var aes67Locked: Bool { aes67?.status.ptpLocked ?? false }
+}
+
+// MARK: - Video viewer
+
+extension AppModel {
+    /// Seconds into deck `deck`'s recording for the timeline at host time `host`, or nil where the
+    /// take has no footage (the same mapping the deck chases).
+    func viewerSeconds(deck id: Int, host: Double) -> Double? {
+        guard decks.indices.contains(id), let context = playbackContext(decks[id]),
+              viewer.slots.first(where: { $0.deckID == id })?.clipName == context.clip.name else { return nil }
+        let show: Double?
+        if timeline.isPlaying, !timeline.isScrubbing {
+            show = timeline.showFrames(at: host).map { $0 / ltcRate.exact }
+        } else {
+            show = timeline.layout.showSeconds(at: timeline.playhead)
+        }
+        guard let show, let deckAt = context.map.deckSeconds(atLTC: show) else { return nil }
+        return deckAt - context.clipStart
+    }
+
+    /// Loads the selected take's recordings for the first three decks: from the project if they're
+    /// there, else from the backup folder (copied into the project in the background).
+    func loadViewerTake() {
+        let decksWithTakes = activeDecks.prefix(VideoViewer.maxSlots)
+        var slots: [VideoViewer.Slot] = []
+        for deck in decksWithTakes {
+            let name = settings.decks[deck.id].name.trimmingCharacters(in: .whitespaces)
+            guard let clip = deck.clip(takeOffset: selectedTake) else {
+                slots.append(.init(deckID: deck.id, name: name, clipName: nil, url: nil, status: "No take on this deck"))
+                continue
+            }
+            if let inProject = projects.videoPath(deck: name, file: clip.name) {
+                slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: URL(fileURLWithPath: inProject), status: "In the project"))
+            } else if let backup = findBackup(clip.name) {
+                slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: URL(fileURLWithPath: backup),
+                                   status: projects.current == nil ? "From the backup" : "Copying into the project…"))
+                let deckID = deck.id
+                projects.adoptVideo(backup, deck: name) { [weak self] _ in
+                    // Next load plays the project copy; now just say it's there.
+                    guard let self else { return }
+                    var updated = self.viewer.slots
+                    if let i = updated.firstIndex(where: { $0.deckID == deckID }) { updated[i].status = "In the project" }
+                    self.viewer.load(updated)
+                }
+            } else {
+                slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: nil,
+                                   status: settings.backupFolder == nil ? "Back up this take first (⌘B)" : "\(clip.name) isn't in the backup yet: back it up (⌘B)"))
+            }
+        }
+        viewer.load(slots)
+    }
+
+    /// A backed-up file by name (complete copies only), searching the backup folder's date and
+    /// deck folders once and remembering what it found.
+    private func findBackup(_ file: String) -> String? {
+        if let p = backupIndex[file], FileManager.default.fileExists(atPath: p) { return p }
+        guard let folder = settings.backupFolder else { return nil }
+        let fm = FileManager.default
+        guard let walker = fm.enumerator(at: URL(fileURLWithPath: folder, isDirectory: true), includingPropertiesForKeys: nil,
+                                         options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return nil }
+        for case let url as URL in walker {
+            if walker.level > 3 { walker.skipDescendants(); continue }
+            let name = url.lastPathComponent
+            guard !name.hasSuffix(".part"), ["mov", "mp4", "mxf"].contains(url.pathExtension.lowercased()) else { continue }
+            backupIndex[name] = url.path
+        }
+        return backupIndex[file]
+    }
 }

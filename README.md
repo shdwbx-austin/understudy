@@ -105,6 +105,14 @@ Timeline mode (**⌘4**) makes Understudy the clock instead of incoming LTC. Ope
 
 The footage comes from the selected take, so record a full run-through first.
 
+## Video viewer and NDI
+
+**Video ⌥⌘V** plays the selected take's recordings (up to three decks) inside Understudy, locked to the timeline's timecode the same way the decks chase it. Pick one deck or **All**. The files come from your backup folder (back the take up first, ⌘B) and are copied into the project's `objects/VideoFile/<deck>/`. It runs in Timeline mode.
+
+**NDI out** sends each video as its own NDI stream, *Understudy ME 1*, *Understudy ME 2*, *Understudy AUX 1*, at 1080p (or the files' own size). Understudy bundles NDI's library at build time: install the free [NDI SDK for Apple](https://ndi.video/for-developers/ndi-sdk/) (accepting its license) and `scripts/build-app.sh` copies `libndi.dylib` into the app. For CI builds, put a URL to that `libndi.dylib` in the `NDI_LIB_URL` secret. Without it, everything else works and NDI out says the library is missing.
+
+NDI® is a registered trademark of Vizrt NDI AB.
+
 ## Running on a dedicated Mac
 
 Understudy is meant to live on a Mac that stays at the rehearsal: a Mac mini on the show network is ideal. HyperDecks can't follow timecode in playback on their own, so a computer has to run it. In **Settings › Show machine**:

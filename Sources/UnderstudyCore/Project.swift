@@ -100,13 +100,14 @@ public struct ProjectFile: Codable, Equatable, Sendable {
 ///     <Name>/objects/AudioFile/    song audio copied in
 ///     <Name>/objects/SongList/     imported song lists
 ///     <Name>/objects/Export/       marker exports
+///     <Name>/objects/VideoFile/    recordings pulled in from the backup, one folder per deck
 ///     <Name>/internal/analysis/    waveform and timecode caches
 public struct ProjectLayout: Equatable, Sendable {
     public static let fileExtension = "understudy"
     public static let historyKeep = 50
 
     public enum Asset: String, CaseIterable, Sendable {
-        case audio = "AudioFile", songList = "SongList", export = "Export"
+        case audio = "AudioFile", songList = "SongList", export = "Export", video = "VideoFile"
     }
 
     public let folder: URL

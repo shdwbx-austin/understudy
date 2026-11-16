@@ -525,6 +525,11 @@ struct TimelineTopBar: View {
             .frame(width: ShowGrid.labelWidth, alignment: .leading)
             ModeTabs()
             Spacer(minLength: Theme.gutter)
+            Button { openWindow(id: "video") } label: {
+                Text("Video ⌥⌘V").font(Theme.grotesk(13, .light)).foregroundStyle(Theme.grey)
+            }
+            .buttonStyle(.plain)
+            .help("The take's recordings, locked to the timeline (and NDI out)")
             Button { openWindow(id: "timeline") } label: {
                 Text("Open in window ⌘T").font(Theme.grotesk(13, .light)).foregroundStyle(Theme.grey)
             }

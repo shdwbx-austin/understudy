@@ -160,9 +160,39 @@ final class ProjectManager: ObservableObject {
 
     /// Copies audio into objects/AudioFile/ in the background; `done` gets the copy's path.
     func adoptAudio(_ path: String, done: @escaping @MainActor @Sendable (String) -> Void) {
+        adoptInBackground(path, asset: .audio, subfolder: nil, done: done)
+    }
+
+    /// Copies a recording into objects/VideoFile/<deck>/ in the background (they're large).
+    func adoptVideo(_ path: String, deck: String, done: @escaping @MainActor @Sendable (String) -> Void) {
+        adoptInBackground(path, asset: .video, subfolder: deck, done: done)
+    }
+
+    /// Where a deck's recording lives in the project.
+    func videoPath(deck: String, file: String) -> String? {
+        guard let layout = current else { return nil }
+        let p = layout.objects(.video).appendingPathComponent(Self.folderName(deck)).appendingPathComponent(file).path
+        return FileManager.default.fileExists(atPath: p) ? p : nil
+    }
+
+    static func folderName(_ s: String) -> String {
+        let t = s.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "/", with: "-")
+        return t.isEmpty ? "Deck" : t
+    }
+
+    private func adoptInBackground(_ path: String, asset: ProjectLayout.Asset, subfolder: String?,
+                                   done: @escaping @MainActor @Sendable (String) -> Void) {
         guard let layout = current, !layout.isInside(path), FileManager.default.fileExists(atPath: path) else { return }
         let src = URL(fileURLWithPath: path)
-        let dest = layout.destination(for: src, asset: .audio) { Self.same(src, $0) }
+        let dest: URL
+        if let subfolder {
+            let dir = layout.objects(asset).appendingPathComponent(Self.folderName(subfolder), isDirectory: true)
+            let candidate = dir.appendingPathComponent(src.lastPathComponent)
+            dest = !FileManager.default.fileExists(atPath: candidate.path) || Self.same(src, candidate)
+                ? candidate : dir.appendingPathComponent(src.deletingPathExtension().lastPathComponent + " 2." + src.pathExtension)
+        } else {
+            dest = layout.destination(for: src, asset: asset) { Self.same(src, $0) }
+        }
         copying += 1
         copyQueue.async {
             let fm = FileManager.default
