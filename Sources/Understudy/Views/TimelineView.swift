@@ -45,13 +45,7 @@ private struct TimelineHeader: View {
                 Text(subtitle).font(Theme.mono(10)).tracking(1.2).foregroundStyle(Theme.grey)
             }
             Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(timeline.showTimecode?.display(dropFrame: model.ltcRate.isDropFrame) ?? "--:--:--:--")
-                    .font(Theme.mono(30, bold: false))
-                    .monospacedDigit()
-                    .foregroundStyle(timeline.isPlaying ? Theme.lock : Theme.paper)
-                Text(currentName).font(Theme.grotesk(14, .regular)).foregroundStyle(Theme.grey).lineLimit(1)
-            }
+            HeaderReadout(timeline: timeline, head: timeline.head, dropFrame: model.ltcRate.isDropFrame)
         }
     }
 
@@ -71,11 +65,58 @@ private struct TimelineHeader: View {
         }
     }
 
+}
+
+/// Show timecode and the current song: the only part of the header that moves every frame.
+private struct HeaderReadout: View {
+    let timeline: TimelineModel
+    @ObservedObject var head: PlayheadClock
+    let dropFrame: Bool
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            Text(timeline.showTimecode?.display(dropFrame: dropFrame) ?? "--:--:--:--")
+                .font(Theme.mono(30, bold: false))
+                .monospacedDigit()
+                .foregroundStyle(timeline.isPlaying ? Theme.lock : Theme.paper)
+            Text(currentName).font(Theme.grotesk(14, .regular)).foregroundStyle(Theme.grey).lineLimit(1)
+        }
+    }
+
     private var currentName: String {
-        guard let i = timeline.currentIndex else { return "—" }
+        guard let i = timeline.currentIndex, timeline.layout.items.indices.contains(i) else { return "—" }
         let item = timeline.layout.items[i]
-        let lead = timeline.playhead < item.timelineStart ? "Next: " : ""
+        let lead = head.position < item.timelineStart ? "Next: " : ""
         return "\(lead)\(String(format: "%02d", i + 1))  \(item.song.name)"
+    }
+}
+
+/// A playhead line that watches only the playhead. `x` maps timeline seconds to points (nil: off-screen).
+struct PlayheadLine: View {
+    @ObservedObject var head: PlayheadClock
+    let playing: Bool
+    let height: CGFloat
+    let x: (Double) -> CGFloat?
+
+    var body: some View {
+        if let px = x(head.position) {
+            Rectangle()
+                .fill(playing ? Theme.lock : Theme.signal)
+                .frame(width: 2, height: height)
+                .offset(x: px - 1)
+                .allowsHitTesting(false)
+        }
+    }
+}
+
+/// "1:23 / 8:11", watching only the playhead.
+struct PlayheadTime: View {
+    @ObservedObject var head: PlayheadClock
+    let total: Double
+
+    var body: some View {
+        Text("\(clock(head.position)) / \(clock(total))")
+            .font(Theme.mono(12)).monospacedDigit().foregroundStyle(Theme.grey)
     }
 }
 
@@ -107,7 +148,7 @@ struct TimelineTrack: View {
                         Rectangle().fill(current ? Theme.paper.opacity(0.14) : Theme.ink)
                         if let path = item.song.audioPath, let peaks = timeline.waveforms[path], let audio = item.song.audioDuration {
                             let offset = item.song.audioOffset ?? 0
-                            WaveformView(peaks: peaks, color: Theme.paper.opacity(current ? 0.35 : 0.22))
+                            WaveformView(peaks: peaks, color: Theme.paper.opacity(current ? 0.35 : 0.22)).equatable()
                                 .frame(width: max(1, audio * scale), height: (geo.size.height - 28) * 0.42)
                                 .offset(x: offset * scale, y: (geo.size.height - 28) * 0.56)
                                 .frame(width: w, alignment: .leading)
@@ -144,20 +185,17 @@ struct TimelineTrack: View {
                         .offset(x: x + 4, y: 4)
                 }
                 // Playhead.
-                let px = min(max(0, timeline.playhead * scale), geo.size.width - 1)
-                Rectangle()
-                    .fill(timeline.isPlaying ? Theme.lock : Theme.signal)
-                    .frame(width: 2, height: geo.size.height)
-                    .offset(x: px - 1)
-                    .allowsHitTesting(false)
+                let width = geo.size.width
+                PlayheadLine(head: timeline.head, playing: timeline.isPlaying, height: geo.size.height) { t in
+                    min(max(0, t * scale), width - 1)
+                }
             }
             .contentShape(Rectangle())
+            // Click or drag to a spot; while playing it keeps playing from there.
             .gesture(
                 DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if timeline.isPlaying { timeline.pause() }
-                        timeline.seek(to: value.location.x / scale)
-                    }
+                    .onChanged { value in timeline.scrub(to: value.location.x / scale) }
+                    .onEnded { _ in timeline.endScrub() }
             )
         }
         .clipped()
@@ -205,8 +243,7 @@ struct TransportBar: View {
             Button("") { timeline.step(frames: Int(timeline.rate.exact.rounded())) }
                 .keyboardShortcut(.rightArrow, modifiers: .shift).opacity(0).frame(width: 0)
 
-            Text("\(clock(timeline.playhead)) / \(clock(timeline.layout.totalDuration))")
-                .font(Theme.mono(12)).monospacedDigit().foregroundStyle(Theme.grey)
+            PlayheadTime(head: timeline.head, total: timeline.layout.totalDuration)
             Spacer()
             OutputStatus(showToggle: !compact)
             Stepper(value: $timeline.gap, in: 0...10, step: 0.5) {

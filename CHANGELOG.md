@@ -17,6 +17,9 @@
   - **Timecode source for recording:** Settings › Timecode input › Show code: Song timeline (or the SHOW CODE FOR RECORD box in the timeline window). Stop and Record then take show code from the timeline, so takes log against it with no cable, while LTC out sends the same code to the decks' timecode inputs, disguise or another recorder.
   - **Scrub and step:** drag the playhead, or use frame steps (← →), one-second steps (⇧← →) and song jumps (⌥← →). While paused, the decks seek to the exact frame.
 
+- **Seek while playing.** Click anywhere on the set or the current song, drag the playhead, or swipe/side-scroll, and the timeline keeps playing from the new spot instead of stopping. The decks follow (parked under the playhead while you move, then picked up at once), and song audio and LTC out stay silent while you're seeking and start again in place when you stop. Paused, side-scrolling over the song still steps frame by frame.
+- **Faster timeline.** The playhead, show clock and meters now redraw on their own, so the playlist, waveforms and deck rows aren't redrawn every frame: about 3× less main-thread work per frame with a 20-song set (2.8 ms, was 7–8.5 ms).
+
 - **Decks pick up at once.** When code starts or jumps, each deck now gets goto and play together, aimed just far enough ahead to cover its goto and start delay, instead of being parked a pre-roll ahead and given half a second to settle. Measured on a HyperDeck Studio 4K Pro: in sync 50–85 ms after code starts or jumps (was 820 ms), and with the timeline on Play in Timeline mode. Settings › Chase › Fast pickup (on by default); the old park-ahead behaviour is still there with it off.
   - A deck that stops by itself while chasing is started again within a frame, not after drift checks (about 0.7 s).
   - A deck holding steadily half a frame or more off has its play offset trimmed, without a re-park, so the next start lands closer.

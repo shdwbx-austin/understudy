@@ -278,13 +278,15 @@ private struct LTCInputPicker: View {
                 Text(live ? "Channel — click to choose" : "Channel — click to choose (meters show for the device in use)")
                     .font(.caption).foregroundStyle(.secondary)
                 ForEach(names.indices, id: \.self) { index in
-                    ChannelRow(
-                        index: index,
-                        name: names[index],
-                        db: live && model.inputLevels.indices.contains(index) ? model.inputLevels[index] : -60,
-                        selected: index == channel,
-                        ltc: inUse && index == channel && model.ltcInfo != "NO LTC"
-                    ) { channel = index }
+                    LiveLevel(readout: model.readout, channel: index) { level in
+                        ChannelRow(
+                            index: index,
+                            name: names[index],
+                            db: live ? level : -60,
+                            selected: index == channel,
+                            ltc: inUse && index == channel && model.ltcInfo != "NO LTC"
+                        ) { channel = index }
+                    }
                 }
             }
         }

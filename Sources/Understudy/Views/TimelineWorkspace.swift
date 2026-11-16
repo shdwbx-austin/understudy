@@ -310,7 +310,7 @@ struct SongDetailTrack: View {
                     if let path = item.song.audioPath, let peaks = timeline.waveforms[path], let audio = item.song.audioDuration {
                         // Placed by the audio's own timecode (pre-roll shows in the lead-in).
                         let offset = max(-timeline.gap, item.song.audioOffset ?? 0)
-                        WaveformView(peaks: peaks, color: Theme.paper.opacity(0.32))
+                        WaveformView(peaks: peaks, color: Theme.paper.opacity(0.32)).equatable()
                             .frame(width: max(1, audio * scale), height: (geo.size.height - 22) * 0.62)
                             .offset(x: (timeline.gap + offset) * scale, y: 22 + (geo.size.height - 22) * 0.3)
                     }
@@ -333,22 +333,20 @@ struct SongDetailTrack: View {
                     .padding(.leading, timeline.gap * scale + 8)
                     .padding(.top, 30)
                     // Playhead.
-                    let px = (timeline.playhead - from) * scale
-                    if px >= 0, px <= geo.size.width {
-                        Rectangle()
-                            .fill(timeline.isPlaying ? Theme.lock : Theme.signal)
-                            .frame(width: 2, height: geo.size.height)
-                            .offset(x: px - 1)
-                            .allowsHitTesting(false)
+                    let width = geo.size.width
+                    PlayheadLine(head: timeline.head, playing: timeline.isPlaying, height: geo.size.height) { t in
+                        let px = (t - from) * scale
+                        return px >= 0 && px <= width ? px : nil
                     }
                 }
                 .contentShape(Rectangle())
+                // Click or drag within the song; while playing it keeps playing from there.
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
-                            if timeline.isPlaying { timeline.pause() }
-                            timeline.seek(to: from + min(max(0, value.location.x), geo.size.width) / scale)
+                            timeline.scrub(to: from + min(max(0, value.location.x), geo.size.width) / scale)
                         }
+                        .onEnded { _ in timeline.endScrub() }
                 )
             } else {
                 Rectangle().fill(Theme.fill)
@@ -512,7 +510,7 @@ struct HorizontalScrollReader: NSViewRepresentable {
 // MARK: - Waveform
 
 /// A song's waveform, mirrored about the centre line, one bar per point of width.
-struct WaveformView: View {
+struct WaveformView: View, Equatable {
     let peaks: [Float]
     var color: Color = Theme.paper.opacity(0.35)
 

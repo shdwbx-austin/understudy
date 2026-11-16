@@ -40,7 +40,7 @@ final class TakeMapStore {
 
     init(deckID: Int) {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        let dir = support?.appendingPathComponent("Understudy/takemaps", isDirectory: true)
+        let dir: URL? = TimelineModel.storeDirectory.appendingPathComponent("takemaps", isDirectory: true)
         url = dir?.appendingPathComponent("deck-\(deckID + 1).json")
         // Maps saved before the rename from cam4prog.
         if let url, let old = support?.appendingPathComponent("cam4prog/takemaps/deck-\(deckID + 1).json"),

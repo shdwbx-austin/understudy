@@ -53,7 +53,12 @@ final class AppModel: ObservableObject {
     @Published private(set) var danteStatus: DanteOut.Status = .off
     private var danteSoundcard: DanteOut.Device?
     private var lastDanteCheck = 0.0
-    @Published private(set) var ltcText = "--:--:--:--"
+    /// The show clock text and input meters change every frame; they live in `readout` so only
+    /// the digits and meters redraw, not the whole window.
+    let readout = Readout()
+    var ltcText: String { readout.ltcText }
+    /// Whether the clock has any code to show (it reads dashes otherwise); changes rarely.
+    @Published private(set) var hasShowCode = false
     @Published private(set) var ltcRolling = false
     @Published private(set) var ltcFreewheeling = false
     /// Code is rolling, its rate is known (and matches the set rate when fixed), and it isn't freewheeling.
@@ -63,7 +68,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var audioDevices: [AudioInputDevice] = []
     @Published private(set) var audioError: String?
     /// Peak level per channel of the open input, dBFS (−60…0), with meter-style fall-off.
-    @Published private(set) var inputLevels: [Float] = []
+    var inputLevels: [Float] { readout.inputLevels }
     /// The open input's channels, as the device names them ("" where it doesn't).
     @Published private(set) var inputChannelNames: [String] = []
     @Published private(set) var takes: [Take] = []
@@ -547,7 +552,7 @@ final class AppModel: ObservableObject {
         let deviceID = device?.id ?? AudioDeviceCatalog.defaultInputDeviceID()
         inputChannelNames = deviceID.map { AudioDeviceCatalog.inputChannelNames($0, count: count) }
             ?? Array(repeating: "", count: count)
-        inputLevels = Array(repeating: -60, count: count)
+        readout.inputLevels = Array(repeating: -60, count: count)
         // Record what's really open: if the chosen device is missing, that's the system default.
         openInput = audio.isRunning ? (device?.uid, wanted.channel) : nil
         if audio.isRunning, wanted.uid != nil, device == nil {
@@ -597,7 +602,7 @@ final class AppModel: ObservableObject {
             let db = min(0, max(-60, 20 * log10(max(peak, 1e-6))))
             levels[i] = max(db, levels[i] - fall)
         }
-        if levels != inputLevels { inputLevels = levels }
+        if levels != inputLevels { readout.inputLevels = levels }
     }
 
     private func ingest(_ event: AudioLTCInput.Event) {
@@ -678,8 +683,14 @@ final class AppModel: ObservableObject {
         if pollDue && (rateKnown || showCodeFromTimeline) { logTakes() }
         if mode == .playback { chase(snapshot, now: now, pollDue: pollDue) }
         if mode == .timeline {
-            chase(timelineSnapshot, now: now, pollDue: pollDue)
-            if !timeline.isPlaying { seekDecksToPlayhead(now: now) }
+            // Scrubbing a playing timeline: park the decks under the playhead as it moves (like a
+            // paused seek); when it settles, fast pickup starts them from there.
+            if timeline.isScrubbing {
+                seekDecksToPlayhead(now: now)
+            } else {
+                chase(timelineSnapshot, now: now, pollDue: pollDue)
+                if !timeline.isPlaying { seekDecksToPlayhead(now: now) }
+            }
         }
     }
 
@@ -763,11 +774,17 @@ final class AppModel: ObservableObject {
         return settings.ltcOutputChannel.map { "LTC out ch \($0 + 1)" }
     }
 
+    private func setClockText(_ text: String) {
+        if text != readout.ltcText { readout.ltcText = text }
+        let has = !text.hasPrefix("--")
+        if has != hasShowCode { hasShowCode = has }
+    }
+
     private func updateReadout(now: Double, rolling: Bool) {
         if showCodeFromTimeline {
             // The timeline is the clock: show its code, not whatever arrives on the LTC input.
             let text = timeline.showTimecode?.display(dropFrame: ltcRate.isDropFrame) ?? "--:--:--:--"
-            if text != ltcText { ltcText = text }
+            setClockText(text)
             let playing = timeline.isPlaying
             if playing != ltcRolling { ltcRolling = playing }
             if playing != ltcLocked { ltcLocked = playing }
@@ -777,7 +794,7 @@ final class AppModel: ObservableObject {
             return
         }
         let text = clock.timecode(at: now)?.display(dropFrame: ltcRate.isDropFrame) ?? "--:--:--:--"
-        if text != ltcText { ltcText = text }
+        setClockText(text)
         if rolling != ltcRolling { ltcRolling = rolling }
         let freewheeling = clock.isFreewheeling(at: now)
         if freewheeling != ltcFreewheeling { ltcFreewheeling = freewheeling }
@@ -907,4 +924,12 @@ final class AppModel: ObservableObject {
             }
         }
     }
+}
+
+/// Readouts that change every frame (show clock text, input meters), observed only by the views
+/// that draw them.
+@MainActor
+final class Readout: ObservableObject {
+    @Published var ltcText = "--:--:--:--"
+    @Published var inputLevels: [Float] = []
 }

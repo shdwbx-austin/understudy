@@ -126,11 +126,7 @@ private struct Header: View {
             VStack(alignment: .leading, spacing: 10) {
                 // Hours, minutes, seconds, frames: one labelled block per grid column, numeral set
                 // bottom-right, after the Swiss clock posters.
-                ColumnGrid {
-                    ForEach(Array(zip(["hours", "minutes", "seconds", "frames"], parts).enumerated()), id: \.offset) { _, item in
-                        TimeBlock(label: item.0, value: item.1, size: heroSize, color: numeralColor, alarm: alarm)
-                    }
-                }
+                ClockDigits(readout: model.readout, size: heroSize, color: numeralColor, alarm: alarm)
                 ColumnGrid {
                     Text(state)
                         .font(Theme.grotesk(22, .medium))
@@ -157,14 +153,8 @@ private struct Header: View {
         }
     }
 
-    /// "01:10:44:17" (or ";" before frames when drop-frame) → ["01", "10", "44", "17"]; dashes with no code.
-    private var parts: [String] {
-        let p = model.ltcText.split(whereSeparator: { $0 == ":" || $0 == ";" }).map(String.init)
-        return p.count == 4 && !model.ltcText.hasPrefix("--") ? p : ["––", "––", "––", "––"]
-    }
-
     private var numeralColor: Color {
-        model.ltcText.hasPrefix("--") ? Theme.quiet : color
+        model.hasShowCode ? color : Theme.quiet
     }
 
     /// Code missing while recording or playing is a fault, not a calm state.
@@ -174,7 +164,7 @@ private struct Header: View {
     /// LOCKED green, ACQUIRING off-white, FREEWHEEL amber, NO LTC grey (red in Record/Play).
     private var state: String {
         if model.showCodeFromTimeline { return model.ltcRolling ? "Timeline" : "Timeline paused" }
-        if !model.ltcRolling { return model.ltcText.hasPrefix("--") ? "Waiting for code" : "No LTC" }
+        if !model.ltcRolling { return model.hasShowCode ? "No LTC" : "Waiting for code" }
         if model.ltcFreewheeling { return "Freewheel" }
         return model.ltcLocked ? "Locked" : "Acquiring"
     }
@@ -189,6 +179,41 @@ private struct Header: View {
     private var rateText: String {
         if model.settings.ltcRateAuto, model.rateLabel.hasSuffix("DETECTING") { return "RATE · DETECTING" }
         return "\(model.ltcRate.rawValue) · \(model.settings.ltcRateAuto ? "AUTO" : "SET")"
+    }
+}
+
+/// Hours, minutes, seconds, frames: one labelled block per grid column, numerals set bottom-right
+/// after the Swiss clock posters. Watches only the readout, so the rest of the window doesn't
+/// redraw every frame.
+private struct ClockDigits: View {
+    @ObservedObject var readout: Readout
+    let size: CGFloat
+    let color: Color
+    let alarm: Bool
+
+    var body: some View {
+        ColumnGrid {
+            ForEach(Array(zip(["hours", "minutes", "seconds", "frames"], parts).enumerated()), id: \.offset) { _, item in
+                TimeBlock(label: item.0, value: item.1, size: size, color: color, alarm: alarm)
+            }
+        }
+    }
+
+    /// "01:10:44:17" (or ";" before frames when drop-frame) → ["01", "10", "44", "17"]; dashes with no code.
+    private var parts: [String] {
+        let p = readout.ltcText.split(whereSeparator: { $0 == ":" || $0 == ";" }).map(String.init)
+        return p.count == 4 && !readout.ltcText.hasPrefix("--") ? p : ["––", "––", "––", "––"]
+    }
+}
+
+/// The level of one input channel, watching only the readout.
+struct LiveLevel<Content: View>: View {
+    @ObservedObject var readout: Readout
+    let channel: Int
+    @ViewBuilder let content: (Float) -> Content
+
+    var body: some View {
+        content(readout.inputLevels.indices.contains(channel) ? readout.inputLevels[channel] : -60)
     }
 }
 
@@ -440,11 +465,11 @@ private struct Footer: View {
                     }
                 }
                 .span(2)
-                HStack(spacing: 12) {
-                    let channel = model.activeChannel
-                    let db = model.inputLevels.indices.contains(channel) ? model.inputLevels[channel] : -60
-                    LevelMeter(db: db)
-                    Text(LevelMeter.label(db)).foregroundStyle(Theme.grey).frame(width: 48, alignment: .leading)
+                LiveLevel(readout: model.readout, channel: model.activeChannel) { db in
+                    HStack(spacing: 12) {
+                        LevelMeter(db: db)
+                        Text(LevelMeter.label(db)).foregroundStyle(Theme.grey).frame(width: 48, alignment: .leading)
+                    }
                 }
                 HStack(spacing: 16) {
                     BackupStatus(backup: backup, open: openBackup)

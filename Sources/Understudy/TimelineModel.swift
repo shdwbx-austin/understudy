@@ -37,8 +37,24 @@ final class TimelineModel: ObservableObject {
     var useTrackTimecode = true {
         didSet { if useTrackTimecode != oldValue, isPlaying { restartPlayback() } }
     }
+    /// The playhead, published on its own: it moves every frame while playing, and only the views
+    /// that draw it (playhead lines, the time readout) watch it, so the playlist, waveforms and
+    /// song blocks aren't redrawn 30 times a second.
+    let head = PlayheadClock()
     /// Timeline seconds, refreshed by the app's loop.
-    @Published private(set) var playhead: Double = 0
+    private(set) var playhead: Double {
+        get { head.position }
+        set {
+            head.position = newValue
+            refreshCurrent()
+        }
+    }
+    /// The set song under the playhead (changes only at song boundaries).
+    @Published private(set) var currentIndex: Int?
+    /// True while the playhead is being dragged or swiped during playback: the transport keeps
+    /// running at the new spot, but song audio and LTC out stay silent until it settles.
+    private(set) var isScrubbing = false
+    private var scrubSettle: Task<Void, Never>?
     @Published private(set) var isPlaying = false
     @Published var message: String?
 
@@ -51,7 +67,9 @@ final class TimelineModel: ObservableObject {
             layoutChanged()
         }
     }
-    private(set) var layout = TimelineLayout(ordered: [], rate: .fps30)
+    private(set) var layout = TimelineLayout(ordered: [], rate: .fps30) {
+        didSet { refreshCurrent() }
+    }
     private var transport = TimelineTransport()
     let player = TimelinePlayer()
     /// Bumped on every seek, so paused frame seeks reach the decks once each.
@@ -390,7 +408,10 @@ final class TimelineModel: ObservableObject {
 
     // MARK: Transport
 
-    var currentIndex: Int? { layout.index(at: playhead) }
+    private func refreshCurrent() {
+        let index = layout.index(at: head.position)
+        if index != currentIndex { currentIndex = index }
+    }
     var currentSongID: UUID? { currentIndex.map { layout.items[$0].song.id } }
 
     /// Show timecode under the playhead.
@@ -412,6 +433,9 @@ final class TimelineModel: ObservableObject {
     }
 
     func pause() {
+        scrubSettle?.cancel()
+        scrubSettle = nil
+        isScrubbing = false
         let now = HostClock.now()
         transport.pause(at: now)
         isPlaying = false
@@ -440,10 +464,43 @@ final class TimelineModel: ObservableObject {
         seek(to: playhead + Double(frames) / rate.exact)
     }
 
-    /// Horizontal scroll over the whole set: moves the playhead by `seconds` (pauses first).
+    /// Horizontal scroll over the whole set: moves the playhead by `seconds`. While playing it
+    /// keeps playing from the new spot (audio silent until the swipe settles).
     func scrub(by seconds: Double) {
-        if isPlaying { pause() }
-        seek(to: playhead + seconds)
+        scrub(to: playhead + seconds)
+    }
+
+    /// Drag, swipe or click to a spot. Paused: a plain seek. Playing: the transport jumps there and
+    /// keeps running, so the decks follow, while song audio and LTC out stay silent until the
+    /// gesture has been still for a moment, then start again in place.
+    func scrub(to t: Double) {
+        guard isPlaying else {
+            seek(to: t)
+            return
+        }
+        let clamped = min(max(0, t), max(0, layout.totalDuration - 0.001))
+        if !isScrubbing {
+            isScrubbing = true
+            player.stop()
+        }
+        transport.seek(to: clamped, at: HostClock.now())
+        playhead = clamped
+        seekCount &+= 1
+        scrubSettle?.cancel()
+        scrubSettle = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            self?.endScrub()
+        }
+    }
+
+    /// The scrub settled (or a drag ended): audio and LTC out start again where the transport is.
+    func endScrub() {
+        scrubSettle?.cancel()
+        scrubSettle = nil
+        guard isScrubbing else { return }
+        isScrubbing = false
+        resumeAudioAfterReroute()
     }
 
     private var scrollRemainder = 0.0
@@ -461,7 +518,12 @@ final class TimelineModel: ObservableObject {
             frames = physical > 0 ? max(1, Int(physical.rounded())) : min(-1, Int(physical.rounded()))
         }
         guard frames != 0 else { return }
-        step(frames: frames)
+        // Playing: nudge the running timeline instead of stopping it.
+        if isPlaying {
+            scrub(by: Double(frames) / rate.exact)
+        } else {
+            step(frames: frames)
+        }
     }
 
     func nextSong() {
@@ -523,7 +585,12 @@ final class TimelineModel: ObservableObject {
     }
 
     /// Understudy's folder in Application Support.
+    /// Where the timeline, audio analysis and take maps are kept. `UNDERSTUDY_STORE` overrides it,
+    /// so test harnesses never touch the real store.
     nonisolated static var storeDirectory: URL {
+        if let override = ProcessInfo.processInfo.environment["UNDERSTUDY_STORE"], !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("Understudy", isDirectory: true)
     }
@@ -552,4 +619,10 @@ final class TimelineModel: ObservableObject {
             try? data.write(to: url, options: .atomic)
         }
     }
+}
+
+/// The timeline's playhead on its own, so only views that draw it redraw as it moves.
+@MainActor
+final class PlayheadClock: ObservableObject {
+    @Published var position: Double = 0
 }
