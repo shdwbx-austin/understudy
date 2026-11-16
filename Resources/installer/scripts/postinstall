@@ -1,0 +1,8 @@
+#!/bin/sh
+# The installer writes as root; hand the app to the person who installed it, so Understudy can
+# update itself later without asking for an administrator password.
+USER_NAME=$(stat -f%Su /dev/console)
+if [ -n "$USER_NAME" ] && [ "$USER_NAME" != "root" ] && [ -d "/Applications/Understudy.app" ]; then
+    chown -R "$USER_NAME":staff "/Applications/Understudy.app"
+fi
+exit 0

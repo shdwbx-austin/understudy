@@ -58,6 +58,10 @@ HyperDecks can't chase LTC natively. Understudy reads the show LTC itself and ha
 
 **Fast pickup** is on by default (Settings › Chase). Turn it off to park decks pre-roll ahead and fire `play` once they've settled: slower to pick up, for decks that locate slowly.
 
+## Installing and updates
+
+Install with `Understudy-<version>.pkg` from the [latest release](https://github.com/shdwbx-austin/understudy/releases/latest). After that Understudy updates itself: it checks GitHub once a day (or Understudy › Check for Updates…) and installs new versions on relaunch. Releasing is in [docs/RELEASING.md](docs/RELEASING.md).
+
 ## Projects
 
 Each show is a project folder, laid out like a disguise project:

@@ -58,6 +58,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var linkBusy = false
     let osc = OSCServer()
     let projects = ProjectManager()
+    let updater = Updater()
     private var projectCreated = Date()
     private var projectSave: Task<Void, Never>?
     /// When Record was last pressed: the {date}/{time} in recording names.

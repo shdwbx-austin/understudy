@@ -11,6 +11,14 @@ jobs:
     runs-on: macos-15
     permissions:
       contents: write
+    env:
+      SPARKLE_VERSION: "2.10.1"
+      # Signing, notarization and the update feed switch on when their secrets exist
+      # (docs/RELEASING.md); without them this builds unsigned, as before.
+      HAS_SIGNING: ${{ secrets.MACOS_CERTIFICATES_P12 != '' }}
+      HAS_NOTARY: ${{ secrets.NOTARY_API_KEY != '' }}
+      HAS_SPARKLE: ${{ secrets.SPARKLE_PRIVATE_KEY != '' }}
+      SPARKLE_PUBLIC_KEY: ${{ vars.SPARKLE_PUBLIC_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -19,19 +27,102 @@ jobs:
       - name: Test core
         run: ./scripts/test.sh
 
-      - name: Build app
+      - name: Version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then export VERSION="${GITHUB_REF_NAME#v}"; fi
-          ./scripts/build-app.sh
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"; else echo "VERSION=$(cat VERSION)" >> "$GITHUB_ENV"; fi
+
+      - name: Import signing certificates
+        if: env.HAS_SIGNING == 'true'
+        env:
+          P12: ${{ secrets.MACOS_CERTIFICATES_P12 }}
+          P12_PASSWORD: ${{ secrets.MACOS_CERTIFICATES_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/certs.p12"
+          security import "$RUNNER_TEMP/certs.p12" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          rm "$RUNNER_TEMP/certs.p12"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          APP_ID=$(security find-identity -v -p codesigning "$KEYCHAIN" | grep "Developer ID Application" | head -1 | sed -E 's/.*"(.*)"/\1/')
+          PKG_ID=$(security find-identity -v "$KEYCHAIN" | grep "Developer ID Installer" | head -1 | sed -E 's/.*"(.*)"/\1/')
+          [[ -n "$APP_ID" ]] || { echo "No Developer ID Application identity in the certificate file"; exit 1; }
+          echo "SIGN_IDENTITY=$APP_ID" >> "$GITHUB_ENV"
+          [[ -n "$PKG_ID" ]] && echo "INSTALLER_IDENTITY=$PKG_ID" >> "$GITHUB_ENV"
+          echo "Signing as: $APP_ID / ${PKG_ID:-no installer identity}"
+
+      - name: Build app
+        run: ./scripts/build-app.sh
+
+      - name: Notarize app
+        if: env.HAS_SIGNING == 'true' && env.HAS_NOTARY == 'true'
+        env:
+          NOTARY_API_KEY: ${{ secrets.NOTARY_API_KEY }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER: ${{ secrets.NOTARY_API_ISSUER }}
+        run: |
+          echo "$NOTARY_API_KEY" | base64 --decode > "$RUNNER_TEMP/notary.p8"
+          xcrun notarytool submit "dist/Understudy-$VERSION-macos.zip" --key "$RUNNER_TEMP/notary.p8" \
+            --key-id "$NOTARY_API_KEY_ID" --issuer "$NOTARY_API_ISSUER" --wait
+          xcrun stapler staple dist/Understudy.app
+          # Re-zip with the ticket stapled (this zip is what updates download).
+          rm "dist/Understudy-$VERSION-macos.zip"
+          (cd dist && ditto -c -k --keepParent Understudy.app "Understudy-$VERSION-macos.zip")
+
+      - name: Build installer
+        run: ./scripts/build-installer.sh
+
+      - name: Notarize installer
+        if: env.HAS_SIGNING == 'true' && env.HAS_NOTARY == 'true' && env.INSTALLER_IDENTITY != ''
+        env:
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER: ${{ secrets.NOTARY_API_ISSUER }}
+        run: |
+          xcrun notarytool submit "dist/Understudy-$VERSION.pkg" --key "$RUNNER_TEMP/notary.p8" \
+            --key-id "$NOTARY_API_KEY_ID" --issuer "$NOTARY_API_ISSUER" --wait
+          xcrun stapler staple "dist/Understudy-$VERSION.pkg"
+
+      - name: Update feed (appcast.xml)
+        if: startsWith(github.ref, 'refs/tags/v') && env.HAS_SPARKLE == 'true'
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          curl -sSL "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz" -o "$RUNNER_TEMP/sparkle.tar.xz"
+          mkdir -p "$RUNNER_TEMP/sparkle" "$RUNNER_TEMP/feed"
+          tar -xf "$RUNNER_TEMP/sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle"
+          cp "dist/Understudy-$VERSION-macos.zip" "$RUNNER_TEMP/feed/"
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle.key"
+          "$RUNNER_TEMP/sparkle/bin/generate_appcast" --ed-key-file "$RUNNER_TEMP/sparkle.key" \
+            --download-url-prefix "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/" \
+            --link "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${GITHUB_REF_NAME}" \
+            "$RUNNER_TEMP/feed"
+          rm "$RUNNER_TEMP/sparkle.key"
+          cp "$RUNNER_TEMP/feed/appcast.xml" dist/appcast.xml
 
       - uses: actions/upload-artifact@v4
         with:
           name: understudy-macos
-          path: dist/*.zip
+          path: |
+            dist/*.zip
+            dist/*.pkg
+            dist/appcast.xml
+          if-no-files-found: warn
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.zip
+          # A full release (not a pre-release): the update feed is .../releases/latest/download/appcast.xml.
+          prerelease: false
+          files: |
+            dist/*.zip
+            dist/*.pkg
+            dist/appcast.xml
           generate_release_notes: true
+
+      - name: Clean up keychain
+        if: always() && env.HAS_SIGNING == 'true'
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true

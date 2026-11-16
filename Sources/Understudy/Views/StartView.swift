@@ -18,8 +18,7 @@ struct StartView: View {
                     Text("understudy").font(Theme.grotesk(64, .medium)).tracking(-1.5)
                     Text("Stands in for the cameras between run-throughs.")
                         .font(Theme.grotesk(17, .light)).foregroundStyle(Theme.grey)
-                    Text(AppVersion.label).font(Theme.mono(11)).tracking(1.2).foregroundStyle(Theme.grey)
-                        .padding(.top, 6)
+                    UpdateLine(updater: model.updater).padding(.top, 6)
                 }
                 Spacer()
                 VStack(alignment: .leading, spacing: 10) {
@@ -195,4 +194,21 @@ enum WindowFinder {
     }
 
     static func close(id: String) { window(id: id)?.close() }
+}
+
+/// "V0.3.0 · BUILD 61 · Up to date · Check now", like CuePoints' version line.
+private struct UpdateLine: View {
+    @ObservedObject var updater: Updater
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(AppVersion.label).font(Theme.mono(11)).tracking(1.2)
+            Text("·").foregroundStyle(Theme.quiet)
+            Text(updater.status).font(Theme.grotesk(13)).foregroundStyle(updater.status.hasPrefix("Version") ? Theme.lock : Theme.grey)
+            if updater.canCheck {
+                TextButton(title: "Check now") { updater.checkForUpdates() }
+            }
+        }
+        .foregroundStyle(Theme.grey)
+    }
 }

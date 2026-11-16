@@ -36,6 +36,9 @@ struct UnderstudyApp: App {
             CommandGroup(replacing: .newItem) {
                 ProjectCommands(model: model, projects: model.projects)
             }
+            CommandGroup(after: .appInfo) {
+                UpdateCommand(updater: model.updater)
+            }
             CommandMenu("Mode") {
                 // Toggles show a tick on the current mode; leaving Record asks first.
                 Toggle("Stop", isOn: modeBinding(.stop)).keyboardShortcut("1", modifiers: .command)
@@ -169,5 +172,14 @@ private struct LaunchHandOff: ViewModifier {
             openWindow(id: "main")
             DispatchQueue.main.async { WindowFinder.close(id: "start") }
         }
+    }
+}
+
+private struct UpdateCommand: View {
+    @ObservedObject var updater: Updater
+
+    var body: some View {
+        Button("Check for Updates…") { updater.checkForUpdates() }
+            .disabled(!updater.canCheck)
     }
 }
