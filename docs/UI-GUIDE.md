@@ -110,7 +110,10 @@ monitor, smaller on a laptop, and never pushing a deck below the fold on 1440×9
 
 ### Timeline workspace (`TimelineWorkspace`)
 
-In Timeline mode, the playlist and timeline take the room the take and deck rows had.
+In Timeline mode the show screen's big clock and Mode row give way to one bar
+(`TimelineTopBar`): name and project, `ModeTabs`, and the timecode with its state on one line.
+The playlist and timeline take the rest. The playlist collapses to a slim rail (⌃⌘S); its
+actions live in one ··· menu rather than a row of text buttons.
 
 - **Playlist** on the left. It sits on the grid (label column plus one column) unless a song name
   needs more: then it widens to fit the longest name, up to 45% of the window. It holds the

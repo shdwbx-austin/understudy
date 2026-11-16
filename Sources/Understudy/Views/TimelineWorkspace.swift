@@ -10,29 +10,41 @@ struct TimelineWorkspace: View {
     @ObservedObject var timeline: TimelineModel
     /// Width of one grid column, so the panes sit on the show grid.
     let column: CGFloat
+    /// The playlist folds away to give the timeline the whole width (remembered).
+    @AppStorage("understudy.playlistCollapsed") private var collapsed = false
 
     var body: some View {
         GeometryReader { geo in
-        HStack(alignment: .top, spacing: Theme.gutter) {
-            PlaylistPanel(timeline: timeline)
-                .frame(width: playlistWidth(total: geo.size.width))
-            VStack(alignment: .leading, spacing: 14) {
-                SectionCaption(text: "Set · drag or swipe to scrub · swipe the song below to step frames")
+        HStack(alignment: .top, spacing: collapsed ? 12 : Theme.gutter) {
+            if collapsed {
+                // A slim rail: the button to bring the playlist back, and the set count.
+                VStack(spacing: 10) {
+                    PlaylistToggle(collapsed: $collapsed)
+                    Text("\(timeline.setSongs.count)").font(Theme.mono(10)).foregroundStyle(Theme.grey)
+                        .help("\(timeline.setSongs.count) songs on the set")
+                }
+                .frame(width: 28)
+            } else {
+                PlaylistPanel(timeline: timeline, collapse: $collapsed)
+                    .frame(width: playlistWidth(total: geo.size.width))
+            }
+            VStack(alignment: .leading, spacing: 12) {
                 TimelineTrack(timeline: timeline)
                     .frame(height: 84)
+                    .help("The set: click, drag or swipe to move through it (keeps playing). Double-click a song to go to its start.")
                 MarkerBar(timeline: timeline)
                 // Takes whatever height is spare: taller on a big show monitor, easier to scrub.
                 HStack(alignment: .top, spacing: Theme.gutter) {
                     SongDetailTrack(timeline: timeline)
                     MarkerList(timeline: timeline)
-                        .frame(width: max(240, column * 0.95))
+                        .frame(width: max(300, column * 1.1))
                 }
                 .frame(minHeight: 130, maxHeight: 320)
                 TransportBar(timeline: timeline, compact: true)
                 Rule()
                 HStack(alignment: .firstTextBaseline, spacing: Theme.gutter) {
-                    DevRecordButton()
                     TakePicker()
+                    DevRecordButton()
                 }
                 DeckChips()
                 if let message = model.linkMessage ?? timeline.message {
@@ -71,26 +83,30 @@ private struct SectionCaption: View {
 struct PlaylistPanel: View {
     @ObservedObject var timeline: TimelineModel
     @EnvironmentObject private var model: AppModel
+    var collapse: Binding<Bool>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .center, spacing: 8) {
+                if let collapse { PlaylistToggle(collapsed: collapse) }
                 Text("Playlist").font(Theme.grotesk(18, .medium))
                 Spacer()
-                TextButton(title: "Find audio…") { timeline.chooseAudioFolder() }
-                    .help("Pick a folder: audio files are matched to songs by name")
-                TextButton(title: "Import CSV…") { timeline.chooseCSV() }
+                // Bringing songs in, and tidying the set, in one menu.
+                Menu {
+                    Button("Find Audio in Folder…") { timeline.chooseAudioFolder() }
+                    Button("Import Song List (CSV)…") { timeline.chooseCSV() }
+                    Divider()
+                    Button("Put the Set in Timecode Order") { timeline.sortByShowOrder() }.disabled(timeline.setSongs.isEmpty)
+                    Button("Clear the Set") { timeline.clearSet() }.disabled(timeline.setSongs.isEmpty)
+                } label: {
+                    Text("···").font(Theme.mono(14, bold: true)).foregroundStyle(Theme.grey)
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help("Find audio, import a song list, order or clear the set")
             }
             SetlistMenu(timeline: timeline)
-            HStack(spacing: 14) {
-                Text("\(timeline.setSongs.count) ON THE SET · \(clock(timeline.layout.totalDuration))")
-                    .font(Theme.mono(9)).tracking(1.2).foregroundStyle(Theme.grey)
-                Spacer()
-                if !timeline.setSongs.isEmpty {
-                    TextButton(title: "Show order", color: Theme.grey) { timeline.sortByShowOrder() }
-                    TextButton(title: "Clear", color: Theme.grey) { timeline.clearSet() }
-                }
-            }
+            Text("\(timeline.setSongs.count) ON THE SET · \(clock(timeline.layout.totalDuration))")
+                .font(Theme.mono(9)).tracking(1.2).foregroundStyle(Theme.grey)
             Rule()
             List {
                 Section {
@@ -539,5 +555,20 @@ struct WaveformView: View, Equatable {
             context.fill(path, with: .color(color))
         }
         .allowsHitTesting(false)
+    }
+}
+
+/// Shows or hides the playlist (⌃⌘S, like a sidebar).
+struct PlaylistToggle: View {
+    @Binding var collapsed: Bool
+
+    var body: some View {
+        Button { withAnimation(.easeOut(duration: 0.15)) { collapsed.toggle() } } label: {
+            Image(systemName: "sidebar.left").font(.system(size: 14)).foregroundStyle(Theme.grey)
+                .frame(width: 26, height: 22).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut("s", modifiers: [.command, .control])
+        .help(collapsed ? "Show the playlist (⌃⌘S)" : "Hide the playlist (⌃⌘S)")
     }
 }

@@ -17,16 +17,9 @@ struct ContentView: View {
                     // Timeline mode (or Record from the timeline): the playlist and timeline take the
                     // room the take and decks had.
                     let column = (content - 3 * Theme.gutter) / 4
-                    VStack(alignment: .leading, spacing: 18) {
-                        Header(heroSize: min(120, (content - 3 * Theme.gutter) / 4 / 1.4, max(56, (geo.size.height - 800) / 1.12)))
-                        GridRow {
-                            VStack(alignment: .leading, spacing: 10) {
-                                RowLabel(index: 1, title: "Mode")
-                                ModeDescription()
-                            }
-                        } content: {
-                            ModeBar()
-                        }
+                    VStack(alignment: .leading, spacing: 14) {
+                        TimelineTopBar()
+                        Rule()
                         TimelineWorkspace(timeline: model.timeline, column: column)
                             .frame(maxHeight: .infinity, alignment: .top)
                     }
@@ -158,23 +151,9 @@ private struct Header: View {
         model.hasShowCode ? color : Theme.quiet
     }
 
-    /// Code missing while recording or playing is a fault, not a calm state.
-    /// Missing code is a fault only when the decks depend on incoming LTC.
-    private var alarm: Bool { (model.mode == .record || model.mode == .playback) && !model.ltcRolling }
-
-    /// LOCKED green, ACQUIRING off-white, FREEWHEEL amber, NO LTC grey (red in Record/Play).
-    private var state: String {
-        if model.showCodeFromTimeline { return model.ltcRolling ? "Timeline" : "Timeline paused" }
-        if !model.ltcRolling { return model.hasShowCode ? "No LTC" : "Waiting for code" }
-        if model.ltcFreewheeling { return "Freewheel" }
-        return model.ltcLocked ? "Locked" : "Acquiring"
-    }
-
-    private var color: Color {
-        if !model.ltcRolling { return alarm ? Theme.signal : Theme.quiet }
-        if model.ltcFreewheeling { return Theme.amber }
-        return model.ltcLocked ? Theme.lock : Theme.paper
-    }
+    private var alarm: Bool { model.clockAlarm }
+    private var state: String { model.clockState }
+    private var color: Color { model.clockColor }
 
     /// "30 · AUTO", or "29.97 DF · SET"; "RATE · DETECTING" until auto-detect has measured.
     private var rateText: String {
@@ -504,5 +483,97 @@ private struct BackupStatus: View {
         } else {
             TextButton(title: "Back up ⌘B", color: Theme.grey, action: open)
         }
+    }
+}
+
+// MARK: - Clock state (shared by the big header and the Timeline bar)
+
+extension AppModel {
+    /// Code missing while recording or playing is a fault, not a calm state: only when the decks
+    /// depend on incoming LTC.
+    var clockAlarm: Bool { (mode == .record || mode == .playback) && !ltcRolling }
+
+    /// LOCKED green, ACQUIRING off-white, FREEWHEEL amber, NO LTC grey (red in Record/Play).
+    var clockState: String {
+        if showCodeFromTimeline { return ltcRolling ? "Timeline" : "Timeline paused" }
+        if !ltcRolling { return hasShowCode ? "No LTC" : "Waiting for code" }
+        if ltcFreewheeling { return "Freewheel" }
+        return ltcLocked ? "Locked" : "Acquiring"
+    }
+
+    var clockColor: Color {
+        if !ltcRolling { return clockAlarm ? Theme.signal : Theme.quiet }
+        if ltcFreewheeling { return Theme.amber }
+        return ltcLocked ? Theme.lock : Theme.paper
+    }
+}
+
+// MARK: - Timeline bar
+
+/// Timeline mode's one-line header: name and project, the modes as compact tabs, and the show
+/// timecode with its state. Replaces the big clock and mode row so the timeline gets the room.
+struct TimelineTopBar: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        HStack(alignment: .center, spacing: Theme.gutter) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("understudy").font(Theme.grotesk(22, .medium)).tracking(-0.4)
+                Text(model.projectName ?? "No project").font(Theme.grotesk(12, .light)).foregroundStyle(Theme.grey).lineLimit(1)
+            }
+            .frame(width: ShowGrid.labelWidth, alignment: .leading)
+            ModeTabs()
+            Spacer(minLength: Theme.gutter)
+            TextButton(title: "Window ⌘T", color: Theme.grey) { openWindow(id: "timeline") }
+                .help("Open the timeline in its own window")
+            VStack(alignment: .trailing, spacing: 2) {
+                CompactClock(readout: model.readout, color: model.hasShowCode ? model.clockColor : Theme.quiet)
+                Text(model.clockState.uppercased()).font(Theme.mono(10, bold: true)).tracking(1.2).foregroundStyle(model.clockColor)
+            }
+        }
+        .frame(height: 64)
+    }
+}
+
+/// The four modes as small tabs (⌘1–4). The current one is filled in its colour.
+struct ModeTabs: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        let continuous = model.settings.recordMode == .continuous
+        HStack(spacing: 0) {
+            tab("Stop", "⌘1", .stop, nil)
+            tab(continuous ? "Record" : "Rec arm", "⌘2", .record, Theme.signal)
+            tab("Play to code", "⌘3", .playback, Theme.lock)
+            tab("Timeline", "⌘4", .timeline, Theme.paper)
+        }
+        .overlay(Rectangle().strokeBorder(Theme.rule, lineWidth: 1))
+        .fixedSize()
+    }
+
+    private func tab(_ title: String, _ key: String, _ mode: AppModel.Mode, _ fill: Color?) -> some View {
+        let active = model.mode == mode
+        return Button { model.requestMode(mode) } label: {
+            Text(title.uppercased())
+                .font(Theme.mono(11, bold: active)).tracking(1.2)
+                .padding(.horizontal, 14).padding(.vertical, 9)
+                .foregroundStyle(active && fill != nil ? Theme.ink : (active ? Theme.paper : Theme.grey))
+                .background(active ? (fill ?? Theme.fill) : Color.clear)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("\(title) (\(key))")
+    }
+}
+
+/// The show timecode on one line, in fixed cells, watching only the readout.
+private struct CompactClock: View {
+    @ObservedObject var readout: Readout
+    let color: Color
+
+    var body: some View {
+        TimecodeText(text: readout.ltcText.hasPrefix("--") ? "--:--:--:--" : readout.ltcText, size: 34, weight: .light)
+            .foregroundStyle(color)
     }
 }
