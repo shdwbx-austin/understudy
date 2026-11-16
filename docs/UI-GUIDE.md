@@ -40,8 +40,11 @@ Shdwbx house style, after the Swiss/Swedish brief: simple, clean, elegant, nothi
 | `amber` | amber | warnings only (freewheel, low media, a setting to check) |
 | `signal` | red | recording, alarms (a lost deck, missing code in Record/Play) |
 
-Marker types bring their own colours (CuePoints' palette by default, editable per project). They
-are the only decorative colour, and they still carry meaning: the type.
+Marker types bring their own colours (Understudy's palette by default, editable per project): coral,
+teal, violet, stone, sodium yellow, hot pink and sky, chosen to stay clear of the status colours so a
+marker never reads as a deck state. They are the only decorative colour, and they still carry
+meaning: the type. Markers are square, like everything else: a 13 pt square tag with the type's key
+number, a hairline down the track, and the label beside the tag in small mono capitals.
 
 **Rule:** if something is coloured, it has to be telling you something. Normal levels are not amber,
 and a connected deck is not green unless it's doing its job.
@@ -84,7 +87,8 @@ and a connected deck is not green unless it's doing its job.
 | `TimeBlock` / `ClockDigits` | the four hero blocks: label top-left, digits bottom-right, red outline on alarm |
 | `DeckCard` | one deck row: big slot number, one status word, a small table of input, reference and media |
 | `DeckChip` | a compact deck status for the Timeline workspace (wraps four to a row) |
-| `MarkerChip` | marker type: number disc + name in its colour; click or press its key |
+| `MarkerChip` | marker type: a swatch (colour bar, key number in mono, name in light type); click or press its key |
+| `MarkerKeys` | the timeline's single keys (1–9, M, [ ]), read off the window's key events, skipped while typing |
 | `PlayheadLine` / `PlayheadTime` | the playhead, watching only the playhead (see §8) |
 | `WaveformView` | a Canvas, one bar per point, `Equatable` so it only redraws when the peaks change |
 
@@ -96,7 +100,7 @@ start window. Everything else is a `TextButton`.
 ### Show screen (`ContentView`)
 
 From top to bottom:
-- **Header.** The name and the line "Stands in for the cameras between run-throughs", then the
+- **Header.** The name and the line "A sidecar for programming workflows", then the
   four TimeBlocks across the columns, then one state word (Locked, Acquiring, Freewheel…) with
   the rate.
 - **01 Mode.** Stop · Record · Play to code · Timeline, one column each (⌘1–4). The current mode
@@ -246,8 +250,13 @@ After CuePoints' start window:
   - There's no `dismissWindow`: close by scene id (`WindowFinder`).
 - **Window scenes:** the first `Window` in `body` opens at launch, which is why the start window
   comes first.
-- **Text near markers collides.** Labels are packed into lanes (a label moves up a lane when it
-  would hit the previous one), up to three.
+- **Text near markers collides.** Labels are packed into lanes, up to four. Lane 0 sits in the tag row
+  beside the marker's own tag, so a label only goes there if it clears every other tag as well as
+  the label before it; lower lanes only have labels to clear.
+- **Single-key shortcuts.** SwiftUI's `.keyboardShortcut` with no modifiers is unreliable for
+  this: inside a pull-down `Menu` it only sometimes registers, and in the menu bar it would take the
+  key from text fields. `MarkerKeys` reads key-downs for its own window instead and lets them
+  through while a text field is first responder.
 - **Strict concurrency.** Callbacks that cross threads (file copies, audio render) must be
   `@Sendable`. Audio render blocks are built `nonisolated`, with state behind a lock.
 

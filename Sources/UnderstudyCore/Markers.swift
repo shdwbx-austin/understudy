@@ -32,7 +32,7 @@ public struct MarkerType: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
-/// The project's marker types, in order. Starts as CuePoints' seven; add, rename, recolour,
+/// The project's marker types, in order. Starts with seven common ones; add, rename, recolour,
 /// reorder and remove freely.
 public struct MarkerTypes: Codable, Equatable, Sendable {
     public var types: [MarkerType]
@@ -42,13 +42,15 @@ public struct MarkerTypes: Codable, Equatable, Sendable {
     public static let keyed = 9
 
     public static let defaults = MarkerTypes(types: [
-        MarkerType(id: .choreo, name: "Choreo", color: "#F27354"),
-        MarkerType(id: .audio, name: "Audio", color: "#54ADEB"),
-        MarkerType(id: .video, name: "Video", color: "#9473F2"),
-        MarkerType(id: .notes, name: "Notes", color: "#668FFA"),
-        MarkerType(id: .lighting, name: "Lighting", color: "#F24D5C"),
-        MarkerType(id: .pyro, name: "Pyro", color: "#5CCC73"),
-        MarkerType(id: .automation, name: "Automation", color: "#DB66DB"),
+        // Understudy's own palette: clear of the status colours (lock green, warning amber,
+        // alarm red), so a marker never reads as a deck state.
+        MarkerType(id: .choreo, name: "Choreo", color: "#FF7A59"),      // coral
+        MarkerType(id: .audio, name: "Audio", color: "#3DB8C4"),        // teal
+        MarkerType(id: .video, name: "Video", color: "#8E7CF0"),        // violet
+        MarkerType(id: .notes, name: "Notes", color: "#D9D4C7"),        // stone
+        MarkerType(id: .lighting, name: "Lighting", color: "#F2C14E"),  // sodium yellow
+        MarkerType(id: .pyro, name: "Pyro", color: "#FF4F81"),          // hot pink
+        MarkerType(id: .automation, name: "Automation", color: "#7FB3FF"), // sky
     ])
 
     public init(types: [MarkerType]) { self.types = types }
@@ -93,8 +95,8 @@ public struct MarkerTypes: Codable, Equatable, Sendable {
     }
 
     /// Colours offered for a new type, in turn.
-    public static let palette = ["#F27354", "#54ADEB", "#9473F2", "#668FFA", "#F24D5C", "#5CCC73", "#DB66DB",
-                                 "#F2B544", "#4DD9C9", "#B3B3B3", "#F28CB8", "#8CC63F"]
+    public static let palette = ["#FF7A59", "#3DB8C4", "#8E7CF0", "#D9D4C7", "#F2C14E", "#FF4F81", "#7FB3FF",
+                                 "#C9A27E", "#5FD3B3", "#B58BD9", "#E8E36A", "#9AA7B8"]
 }
 
 /// A point in the show worth finding again, placed on show timecode so it stays with its song

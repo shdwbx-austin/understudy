@@ -69,6 +69,7 @@ struct ContentView: View {
         }
         .frame(minWidth: 1100, minHeight: 760, alignment: .topLeading)
         .navigationTitle(model.projectName.map { "understudy — \($0)" } ?? "understudy")
+        .modifier(MarkerTypesSheet(timeline: model.timeline))
         .background(Theme.ink)
         .foregroundStyle(Theme.paper)
         .preferredColorScheme(.dark)
@@ -110,7 +111,7 @@ private struct Header: View {
                 Text("understudy")
                     .font(Theme.grotesk(24, .medium))
                     .tracking(-0.4)
-                Text("Stands in for the cameras between run-throughs.")
+                Text("A sidecar for programming workflows.")
                     .font(Theme.grotesk(12, .light))
                     .foregroundStyle(Theme.grey)
                     .fixedSize(horizontal: false, vertical: true)
