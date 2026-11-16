@@ -36,6 +36,20 @@ final class TimelineModel: ObservableObject {
     @Published var showGrid: Bool = UserDefaults.standard.object(forKey: "understudy.showGrid") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showGrid, forKey: "understudy.showGrid") }
     }
+    /// After dropping a marker by hand, its label opens for typing (Return names it, Esc skips).
+    @Published var nameNewMarkers: Bool = UserDefaults.standard.object(forKey: "understudy.nameNewMarkers") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(nameNewMarkers, forKey: "understudy.nameNewMarkers") }
+    }
+    /// The marker whose label is open for typing in the list.
+    @Published var namingMarkerID: UUID?
+    /// New and dragged markers land on the grid (in songs with a tempo).
+    @Published var snap: Bool = UserDefaults.standard.bool(forKey: "understudy.snap") {
+        didSet { UserDefaults.standard.set(snap, forKey: "understudy.snap") }
+    }
+    /// The grid value snapping and Q use.
+    @Published var snapNote: NoteValue = NoteValue(rawValue: UserDefaults.standard.string(forKey: "understudy.snapNote") ?? "") ?? .quarter {
+        didSet { UserDefaults.standard.set(snapNote.rawValue, forKey: "understudy.snapNote") }
+    }
     /// The current song's zoom (1 = the whole song across the width).
     @Published var detailZoom: Double = 1
     static let maxZoom = 32.0
@@ -801,13 +815,28 @@ final class TimelineModel: ObservableObject {
             message = "Markers go on a song: move the playhead onto the set first."
             return nil
         }
-        let marker = Marker(frame: Int((show * rate.exact).rounded()), kind: kind, label: label)
+        let marker = Marker(frame: snapped(Int((show * rate.exact).rounded())), kind: kind, label: label)
         markers.append(marker)
         markers.sort { $0.frame < $1.frame }
         hiddenMarkerKinds.remove(kind)
         selectedMarkerID = marker.id
         save()
         return marker
+    }
+
+    /// A marker dropped by hand (a type button, 1–9, M): added, then its label opened for a
+    /// name when Name New Markers is on. OSC and arrays add markers without asking.
+    @discardableResult
+    func dropMarker(_ kind: MarkerKind? = nil) -> Marker? {
+        guard let marker = addMarker(kind) else { return nil }
+        if nameNewMarkers { namingMarkerID = marker.id }
+        return marker
+    }
+
+    /// Return: name (or rename) the selected marker.
+    func nameSelectedMarker() {
+        guard let id = selectedMarkerID, markers.contains(where: { $0.id == id }) else { return }
+        namingMarkerID = id
     }
 
     func updateMarker(_ id: UUID, kind: MarkerKind? = nil, label: String? = nil, frame: Int? = nil) {
@@ -946,6 +975,71 @@ final class TimelineModel: ObservableObject {
         }.map(\.id))
         removeMarkers(ids)
         message = ids.isEmpty ? nil : "Cleared \(ids.count) arrayed markers."
+    }
+
+    // MARK: Snap and quantize
+
+    /// The grid of the set song that show second `show` falls in (nil: not on the set, or no tempo).
+    func grid(atShow show: Double) -> BeatGrid? {
+        guard let t = layout.timelineTime(forShowSeconds: show), let i = layout.index(at: t) else { return nil }
+        let id = layout.items[i].song.id
+        return songs.first { $0.id == id }.flatMap(grid(for:))
+    }
+
+    /// `frame` on the nearest grid line when Snap is on (and its song has a tempo).
+    func snapped(_ frame: Int) -> Int {
+        guard snap else { return frame }
+        return onGrid(frame, note: snapNote) ?? frame
+    }
+
+    /// `frame` moved `strength` of the way to the nearest `note` line of its song's grid.
+    private func onGrid(_ frame: Int, note: NoteValue, strength: Double = 1) -> Int? {
+        let fps = rate.ltcRate.exact
+        let show = Double(frame) / fps
+        guard let grid = grid(atShow: show) else { return nil }
+        return max(0, Int((grid.quantize(show, note: note, strength: strength) * fps).rounded()))
+    }
+
+    /// A dragged marker dropped at `frame` (snapped when Snap is on). Dragging one of a selection
+    /// moves them all by the same amount, so they keep their spacing.
+    func drop(_ id: UUID, at frame: Int) {
+        guard let marker = markers.first(where: { $0.id == id }) else { return }
+        let delta = snapped(frame) - marker.frame
+        guard delta != 0 else { return }
+        if selectedMarkerIDs.count > 1, selectedMarkerIDs.contains(id) {
+            updateMarkers(selectedMarkerIDs, moveFrames: delta)
+        } else {
+            updateMarker(id, frame: marker.frame + delta)
+        }
+    }
+
+    /// Moves markers onto (or `strength` of the way to) their song's grid. Markers in songs
+    /// without a tempo stay put. Returns how many moved.
+    @discardableResult
+    func quantize(_ ids: Set<UUID>, note: NoteValue? = nil, strength: Double = 1) -> Int {
+        let note = note ?? snapNote
+        var moved = 0, noGrid = 0
+        for i in markers.indices where ids.contains(markers[i].id) {
+            guard let target = onGrid(markers[i].frame, note: note, strength: strength) else { noGrid += 1; continue }
+            if target != markers[i].frame { markers[i].frame = target; moved += 1 }
+        }
+        markers.sort { $0.frame < $1.frame }
+        save()
+        var text = "Quantized \(moved) marker\(moved == 1 ? "" : "s") to \(note.short)\(strength < 1 ? " (\(Int(strength * 100))%)" : "")."
+        if moved == 0 && noGrid == 0 { text = "Already on the \(note.short) grid." }
+        if noGrid > 0 { text += " \(noGrid) in songs without a tempo stayed put (right-click the song › Tempo…)." }
+        message = text
+        return moved
+    }
+
+    /// Q: the selection, or the selected marker.
+    func quantizeSelection() {
+        let ids = selectedMarkerIDs.isEmpty ? Set(selectedMarkerID.map { [$0] } ?? []) : selectedMarkerIDs
+        guard !ids.isEmpty else {
+            message = "Select markers to quantize (⌘-click, or Select all), then press Q."
+            return
+        }
+        quantize(ids)
     }
 
     // MARK: Several markers

@@ -590,6 +590,34 @@ private struct BeatGridLines: View {
     }
 }
 
+/// SNAP 1/4: on/off and the grid value, which Q (quantize) uses too.
+private struct SnapMenu: View {
+    @ObservedObject var timeline: TimelineModel
+    let hasGrid: Bool
+
+    var body: some View {
+        let on = timeline.snap && hasGrid
+        Menu {
+            Toggle("Snap to Grid", isOn: $timeline.snap)
+            Divider()
+            ForEach(NoteValue.allCases, id: \.self) { note in
+                Button((timeline.snapNote == note ? "✓ " : "   ") + note.title) { timeline.snapNote = note; timeline.snap = true }
+            }
+            Divider()
+            Button("Quantize Selected Markers   Q") { timeline.quantizeSelection() }
+        } label: {
+            Text("SNAP \(timeline.snapNote.short)")
+                .font(Theme.mono(9, bold: on))
+                .foregroundStyle(on ? Theme.paper : Theme.grey)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help(hasGrid ? "New and dragged markers land on the grid, and Q quantizes to it. Choose the value here."
+                      : "Snapping needs a tempo for this song: click GRID")
+    }
+}
+
 /// − 4× + FIT, by the ruler, and the beat grid's switch and tempo.
 private struct ZoomControls: View {
     @ObservedObject var timeline: TimelineModel
@@ -614,6 +642,7 @@ private struct ZoomControls: View {
                 Button("Tempo…") { TempoPrompt.ask(timeline: timeline, song: song) }
                 Button("Set Downbeat at Playhead") { timeline.setDownbeatAtPlayhead() }
             }
+            SnapMenu(timeline: timeline, hasGrid: song.bpm != nil)
             Rectangle().fill(Theme.rule).frame(width: 1, height: 10)
             button("−", "Zoom out (⌘−)", enabled: zoom > 1) { timeline.setZoom(zoom / 2) }
             Text(zoom <= 1.0001 ? "SONG" : String(format: zoom < 10 ? "%.1f×" : "%.0f×", zoom))
