@@ -977,6 +977,92 @@ final class TimelineModel: ObservableObject {
         message = ids.isEmpty ? nil : "Cleared \(ids.count) arrayed markers."
     }
 
+    // MARK: Copy and paste
+
+    /// Copied markers, their frames relative to the first (so paste puts the first at the playhead).
+    private(set) var clipboard: [Marker] = []
+
+    /// ⌘C: the selected markers (arrays included, as arrays). Also puts a readable list on the
+    /// pasteboard (timecode, type, label) for notes or a spreadsheet.
+    @discardableResult
+    func copyMarkers(_ ids: Set<UUID>? = nil) -> Int {
+        let chosen = markers.filter { (ids ?? currentSelection).contains($0.id) }.sorted { $0.frame < $1.frame }
+        guard let first = chosen.first?.frame else {
+            message = "Select markers to copy (click, ⌘-click, or ⌘A for this song)."
+            return 0
+        }
+        clipboard = chosen.map { m in var c = m; c.frame -= first; return c }
+        let text = chosen.map { "\($0.timecode(rate: rate).description)\t\(markerTypes.name($0.kind))\t\($0.label)" }.joined(separator: "\n")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        message = "Copied \(chosen.count) marker\(chosen.count == 1 ? "" : "s"). Move the playhead and ⌘V to paste them there."
+        return chosen.count
+    }
+
+    /// ⌘X: copy, then delete.
+    func cutMarkers() {
+        let ids = currentSelection
+        guard copyMarkers(ids) > 0 else { return }
+        removeMarkers(ids)
+        message = "Cut \(clipboard.count) marker\(clipboard.count == 1 ? "" : "s"). ⌘V pastes them at the playhead."
+    }
+
+    /// ⌘V: the copied markers with the first at the playhead (snapped when Snap is on), keeping
+    /// their spacing; arrays stay arrays (new ones, so the copies clear separately). Any song.
+    @discardableResult
+    func pasteMarkers() -> Int {
+        guard !clipboard.isEmpty else {
+            message = "Nothing copied yet: select markers and ⌘C."
+            return 0
+        }
+        let t = isPlaying ? transport.position(at: HostClock.now()) : playhead
+        guard let show = layout.showSeconds(at: t) else {
+            message = "Paste goes on a song: move the playhead onto the set first."
+            return 0
+        }
+        let at = snapped(Int((show * rate.ltcRate.exact).rounded()))
+        var arrays: [UUID: UUID] = [:]
+        let pasted = clipboard.map { c -> Marker in
+            let array = c.arrayID.map { old in arrays[old] ?? { let new = UUID(); arrays[old] = new; return new }() }
+            return Marker(frame: max(0, at + c.frame), kind: c.kind, label: c.label, arrayID: array, arrayStep: c.arrayStep)
+        }
+        markers += pasted
+        markers.sort { $0.frame < $1.frame }
+        for m in pasted { hiddenMarkerKinds.remove(m.kind) }
+        selectedMarkerIDs = Set(pasted.map(\.id))
+        selectedMarkerID = pasted.first?.id
+        save()
+        message = "Pasted \(pasted.count) marker\(pasted.count == 1 ? "" : "s") at \(Timecode(frameIndex: at, rate: rate.ltcRate).description) (selected: drag one to move them all)."
+        return pasted.count
+    }
+
+    /// ⌘A: every visible marker in the song under the playhead.
+    func selectSongMarkers() {
+        guard let i = currentIndex, layout.items.indices.contains(i) else { return }
+        let item = layout.items[i]
+        let ids = placedMarkers.filter { $0.time >= item.timelineStart - gap && $0.time < item.timelineEnd }.map(\.marker.id)
+        selectMarkers(ids)
+        message = ids.isEmpty ? "No markers in this song." : "Selected \(ids.count) markers in \(item.song.name)."
+    }
+
+    /// The selection, or the one selected marker.
+    private var currentSelection: Set<UUID> {
+        selectedMarkerIDs.isEmpty ? Set(selectedMarkerID.map { [$0] } ?? []) : selectedMarkerIDs
+    }
+
+    // MARK: Moving by the grid
+
+    /// Frames in one beat (or bar) of the grid of the song the first of `ids` is in; nil without a tempo.
+    func gridStepFrames(for ids: Set<UUID>, bars: Bool = false) -> Int? {
+        guard let first = markers.first(where: { ids.contains($0.id) }),
+              let grid = grid(atShow: Double(first.frame) / rate.ltcRate.exact) else { return nil }
+        let seconds = grid.beatSeconds * (bars ? Double(grid.beatsPerBar) : 1)
+        return Int((seconds * rate.ltcRate.exact).rounded())
+    }
+
+    /// Every marker of an array.
+    func arrayMembers(_ id: UUID) -> Set<UUID> { Set(markers.filter { $0.arrayID == id }.map(\.id)) }
+
     // MARK: Snap and quantize
 
     /// The grid of the set song that show second `show` falls in (nil: not on the set, or no tempo).
@@ -1006,11 +1092,14 @@ final class TimelineModel: ObservableObject {
         guard let marker = markers.first(where: { $0.id == id }) else { return }
         let delta = snapped(frame) - marker.frame
         guard delta != 0 else { return }
-        if selectedMarkerIDs.count > 1, selectedMarkerIDs.contains(id) {
-            updateMarkers(selectedMarkerIDs, moveFrames: delta)
-        } else {
-            updateMarker(id, frame: marker.frame + delta)
-        }
+        updateMarkers(dragGroup(for: id), moveFrames: delta)
+    }
+
+    /// What moves when `id` is dragged: the selection it's part of, else its whole array, else it.
+    func dragGroup(for id: UUID) -> Set<UUID> {
+        if selectedMarkerIDs.count > 1, selectedMarkerIDs.contains(id) { return selectedMarkerIDs }
+        if let array = markers.first(where: { $0.id == id })?.arrayID { return arrayMembers(array) }
+        return [id]
     }
 
     /// Moves markers onto (or `strength` of the way to) their song's grid. Markers in songs

@@ -132,6 +132,8 @@ struct MarkerOverlay: View {
     let width: CGFloat
     let height: CGFloat
     @State private var dragging: (id: UUID, dx: CGFloat)?
+    /// Everything moving with the dragged marker (its selection, or its whole array).
+    @State private var dragGroup: Set<UUID>?
 
     /// Label lanes. Lane 0 sits beside the marker's own tag, in the tag row, so it must clear
     /// the other tags as well as the label before it; lower lanes only have labels to clear.
@@ -179,8 +181,7 @@ struct MarkerOverlay: View {
                 let dx: CGFloat = {
                     guard let d = dragging else { return 0 }
                     if d.id == m.id { return d.dx }
-                    let group = timeline.selectedMarkerIDs
-                    return group.count > 1 && group.contains(d.id) && group.contains(m.id) ? d.dx : 0
+                    return dragGroup?.contains(m.id) == true ? d.dx : 0
                 }()
                 let x = CGFloat((item.time - from) * scale) + dx
                 if x >= -2, x <= width + 2 {
@@ -219,9 +220,13 @@ struct MarkerOverlay: View {
                         .offset(x: x - (arrayed ? 3.5 : 6.5), y: arrayed ? 25 : 22)
                         .highPriorityGesture(
                             DragGesture(minimumDistance: 2)
-                                .onChanged { v in dragging = (m.id, v.translation.width) }
+                                .onChanged { v in
+                                    if dragging?.id != m.id { dragGroup = timeline.dragGroup(for: m.id) }
+                                    dragging = (m.id, v.translation.width)
+                                }
                                 .onEnded { v in
                                     dragging = nil
+                                    dragGroup = nil
                                     let frames = Int((Double(v.translation.width) / scale * timeline.rate.exact).rounded())
                                     guard frames != 0 else { return }
                                     // Snapped to the grid when Snap is on; a selection moves together.
@@ -288,6 +293,8 @@ struct MarkerContextMenu: View {
 
     @ViewBuilder private var single: some View {
         Button("Go To Marker") { timeline.go(to: marker) }
+        Button("Copy   ⌘C") { timeline.copyMarkers([marker.id]) }
+        Button("Paste at Playhead   ⌘V") { timeline.pasteMarkers() }.disabled(timeline.clipboard.isEmpty)
         Button("Rename…") {
             if let name = promptForText("Marker label", value: marker.label) { timeline.updateMarker(marker.id, label: name) }
         }
@@ -302,6 +309,7 @@ struct MarkerContextMenu: View {
         if let array = marker.arrayID {
             let n = timeline.markers.filter { $0.arrayID == array }.count
             Button("Select This Array (\(n))") { timeline.selectMarkers(timeline.markers.filter { $0.arrayID == array }.map(\.id)) }
+            MoveMenu(timeline: timeline, ids: timeline.arrayMembers(array))
             Button("Clear This Array (\(n))") { timeline.clearArray(array) }
         }
         Divider()
@@ -325,20 +333,9 @@ struct MarkerGroupActions: View {
             if let name = promptForText("Label for \(ids.count) markers", value: commonLabel) { timeline.updateMarkers(ids, label: name) }
         }
         Button("Clear Labels") { timeline.updateMarkers(ids, label: "") }
-        Menu("Move") {
-            let fps = Int(timeline.rate.exact.rounded())
-            Button("Back 1 Second") { timeline.updateMarkers(ids, moveFrames: -fps) }
-            Button("Back 1 Frame") { timeline.updateMarkers(ids, moveFrames: -1) }
-            Button("Forward 1 Frame") { timeline.updateMarkers(ids, moveFrames: 1) }
-            Button("Forward 1 Second") { timeline.updateMarkers(ids, moveFrames: fps) }
-            Divider()
-            Button("By…") {
-                if let text = promptForText("Move \(ids.count) markers by frames (negative = earlier), or seconds with s (e.g. -1.5s)", value: "0"),
-                   let frames = Self.frames(text, fps: timeline.rate.exact), frames != 0 {
-                    timeline.updateMarkers(ids, moveFrames: frames)
-                }
-            }
-        }
+        Button("Copy   ⌘C") { timeline.copyMarkers(ids) }
+        Button("Cut   ⌘X") { timeline.selectMarkers(Array(ids)); timeline.cutMarkers() }
+        MoveMenu(timeline: timeline, ids: ids)
         QuantizeMenu(timeline: timeline, ids: ids)
         Button("Loop Between Them") {
             timeline.loopSelectedMarkers()
@@ -512,6 +509,36 @@ enum ArrayPrompt {
         alert.informativeText = detail
         alert.alertStyle = .warning
         alert.runModal()
+    }
+}
+
+/// Move ▸ by a beat or bar of the song's grid (when it has a tempo), a frame, a second, or any amount.
+struct MoveMenu: View {
+    @ObservedObject var timeline: TimelineModel
+    let ids: Set<UUID>
+
+    var body: some View {
+        Menu("Move") {
+            if let beat = timeline.gridStepFrames(for: ids), let bar = timeline.gridStepFrames(for: ids, bars: true) {
+                Button("Back 1 Bar") { timeline.updateMarkers(ids, moveFrames: -bar) }
+                Button("Back 1 Beat") { timeline.updateMarkers(ids, moveFrames: -beat) }
+                Button("Forward 1 Beat") { timeline.updateMarkers(ids, moveFrames: beat) }
+                Button("Forward 1 Bar") { timeline.updateMarkers(ids, moveFrames: bar) }
+                Divider()
+            }
+            let fps = Int(timeline.rate.exact.rounded())
+            Button("Back 1 Second") { timeline.updateMarkers(ids, moveFrames: -fps) }
+            Button("Back 1 Frame") { timeline.updateMarkers(ids, moveFrames: -1) }
+            Button("Forward 1 Frame") { timeline.updateMarkers(ids, moveFrames: 1) }
+            Button("Forward 1 Second") { timeline.updateMarkers(ids, moveFrames: fps) }
+            Divider()
+            Button("By…") {
+                if let text = promptForText("Move \(ids.count) marker\(ids.count == 1 ? "" : "s") by frames (negative = earlier), or seconds with s (e.g. -1.5s)", value: "0"),
+                   let frames = MarkerGroupActions.frames(text, fps: timeline.rate.exact), frames != 0 {
+                    timeline.updateMarkers(ids, moveFrames: frames)
+                }
+            }
+        }
     }
 }
 
@@ -733,6 +760,9 @@ struct MarkerList: View {
         .contextMenu {
             Button("Go To First") { timeline.go(to: first) }
             Button("Select All \(hits.count)") { timeline.selectMarkers(hits.map(\.id)) }
+            MoveMenu(timeline: timeline, ids: Set(hits.map(\.id)))
+            QuantizeMenu(timeline: timeline, ids: Set(hits.map(\.id)))
+            Button("Copy Array") { timeline.copyMarkers(Set(hits.map(\.id))) }
             Divider()
             Button("Clear This Array (\(hits.count))") { timeline.clearArray(id) }
         }
@@ -975,11 +1005,22 @@ struct MarkerKeys: NSViewRepresentable {
 
     func updateNSView(_ view: Catcher, context: Context) { view.timeline = timeline }
 
-    enum Key: Equatable { case next, previous, again, type(Int), loopIn, loopOut, loop, clearLoop, clear, quantize, name }
+    enum Key: Equatable { case next, previous, again, type(Int), loopIn, loopOut, loop, clearLoop, clear, quantize, name,
+                          copy, cut, paste, selectAll }
 
     /// What a key press means, or nil to let it through. Layout-independent for [ and ]: their
     /// key positions (ANSI 33 and 30) count even where the layout puts other characters there.
     static func key(characters: String?, keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Key? {
+        // ⌘C / ⌘X / ⌘V / ⌘A act on markers (text fields keep their own: they're skipped above).
+        if modifiers.contains(.command), modifiers.intersection([.control, .option, .shift]).isEmpty {
+            switch characters?.lowercased() ?? "" {
+            case "c": return .copy
+            case "x": return .cut
+            case "v": return .paste
+            case "a": return .selectAll
+            default: return nil
+            }
+        }
         guard modifiers.intersection([.command, .control, .option, .function]).isEmpty else { return nil }
         switch characters?.lowercased() ?? "" {
         case "]": return .next
@@ -1028,6 +1069,10 @@ struct MarkerKeys: NSViewRepresentable {
                 case .loop: if !event.isARepeat { timeline.toggleLoop() }
                 case .clearLoop: if !event.isARepeat { timeline.clearLoop() }
                 case .quantize: if !event.isARepeat { timeline.quantizeSelection() }
+                case .copy: timeline.copyMarkers()
+                case .cut: timeline.cutMarkers()
+                case .paste: timeline.pasteMarkers()
+                case .selectAll: timeline.selectSongMarkers()
                 case .clear:
                     guard timeline.selectedMarkerIDs.count > 1 else { return event }
                     timeline.clearMarkerSelection()

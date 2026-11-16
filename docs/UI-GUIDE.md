@@ -208,6 +208,7 @@ After CuePoints' start window:
   | [ ] | previous/next marker |
   | I / O / L / ⇧L | loop in / loop out / loop on-off / clear the loop |
   | Q | quantize the selected markers to the snap value |
+  | ⌘C / ⌘X / ⌘V / ⌘A | copy / cut / paste at the playhead / select the song's markers (not in text fields) |
   | Return | name the selected marker (and, after a drop, the new one opens by itself) |
   | ⌘-click, ⇧-click | select several markers; Esc back to one |
   | ⌘= / ⌘− / ⌘0 | zoom the current song in / out / whole song |
