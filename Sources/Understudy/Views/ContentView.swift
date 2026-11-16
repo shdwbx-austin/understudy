@@ -1,8 +1,9 @@
 import SwiftUI
 import UnderstudyCore
 
-/// The show screen: mode, timecode and lock, the take, and deck health. Readable from across the
-/// room. Setup lives in sheets (Assign decks, Backup, per-deck Setup) and Settings.
+/// The main window: one bar across the top (name, the three screens, what the decks are doing,
+/// show timecode), then Program (the timeline), View (its pictures) or Decks (recording, chasing
+/// and setting up the decks), and the input footer.
 struct ContentView: View {
     @EnvironmentObject private var model: AppModel
     @State private var showAssign = false
@@ -10,59 +11,27 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { geo in
-            // Width of the four content columns, for sizing the hero timecode to fill them.
+            // Width of the four content columns.
             let content = geo.size.width - Theme.marginLeading - Theme.marginTrailing - ShowGrid.labelWidth - Theme.gutter
-            VStack(alignment: .leading, spacing: 0) {
-                if model.showsTimelineWorkspace {
-                    // Timeline mode (or Record from the timeline): the playlist and timeline take the
-                    // room the take and decks had.
-                    let column = (content - 3 * Theme.gutter) / 4
-                    VStack(alignment: .leading, spacing: 14) {
-                        TimelineTopBar()
-                        Rule()
+            let column = (content - 3 * Theme.gutter) / 4
+            VStack(alignment: .leading, spacing: 14) {
+                TopBar()
+                Rule()
+                Group {
+                    switch model.screen {
+                    case .program:
                         TimelineWorkspace(timeline: model.timeline, column: column)
-                            .frame(maxHeight: .infinity, alignment: .top)
+                    case .view:
+                        ViewScreen(viewer: model.viewer, timeline: model.timeline)
+                    case .decks:
+                        DecksScreen(content: content, height: geo.size.height,
+                                    assign: { showAssign = true }, backup: { showBackup = true })
                     }
-                    .padding(.trailing, Theme.marginTrailing)
-                } else {
-                ScrollView(.vertical) {
-                    VStack(alignment: .leading, spacing: 22) {
-                        // The timecode blocks take the room that's left once all four decks fit: huge on a
-                        // 1080p show monitor, smaller on a laptop, never pushing a deck below the fold.
-                        let byWidth = (content - 3 * Theme.gutter) / 4 / 1.4
-                        let byHeight = (geo.size.height - 860) / 1.12
-                        Header(heroSize: min(150, byWidth, max(56, byHeight)))
-                        GridRow {
-                            VStack(alignment: .leading, spacing: 10) {
-                                RowLabel(index: 1, title: "Mode")
-                                ModeDescription()
-                            }
-                        } content: {
-                            ModeBar()
-                        }
-                        GridRow {
-                            RowLabel(index: 2, title: "Take")
-                        } content: {
-                            TakeBar()
-                        }
-                        GridRow {
-                            VStack(alignment: .leading, spacing: 14) {
-                                RowLabel(index: 3, title: "Decks")
-                                DeckSummary(assign: { showAssign = true })
-                            }
-                        } content: {
-                            DeckRow(assign: { showAssign = true })
-                        }
-                    }
-                    .padding(.trailing, Theme.marginTrailing)
-                    .padding(.bottom, 12)
                 }
-                .scrollIndicators(.automatic)
-                }
+                .frame(maxHeight: .infinity, alignment: .top)
                 Footer(backup: model.backup, openBackup: { showBackup = true })
-                    .padding(.trailing, Theme.marginTrailing)
-                    .padding(.top, 12)
             }
+            .padding(.trailing, Theme.marginTrailing)
             .padding(.leading, Theme.marginLeading)
             .padding(.top, 30)
             .padding(.bottom, 20)
@@ -89,6 +58,50 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .understudyOpenBackup)) { _ in showBackup = true }
         .onReceive(NotificationCenter.default.publisher(for: .understudyOpenAssign)) { _ in showAssign = true }
+        .onAppear { model.mainWindowOpened() }
+    }
+}
+
+/// The Decks screen's Control section: the show code large, the deck state, the take and every
+/// deck. Readable from across the room.
+struct DeckControl: View {
+    @EnvironmentObject private var model: AppModel
+    let content: CGFloat
+    let height: CGFloat
+    let assign: () -> Void
+
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 22) {
+                // The timecode blocks take the room that's left once all four decks fit.
+                let byWidth = (content - 3 * Theme.gutter) / 4 / 1.4
+                let byHeight = (height - 960) / 1.12
+                Header(heroSize: min(130, byWidth, max(48, byHeight)))
+                GridRow {
+                    VStack(alignment: .leading, spacing: 10) {
+                        RowLabel(index: 1, title: "Decks do")
+                        ModeDescription()
+                    }
+                } content: {
+                    ModeBar()
+                }
+                GridRow {
+                    RowLabel(index: 2, title: "Take")
+                } content: {
+                    TakeBar()
+                }
+                GridRow {
+                    VStack(alignment: .leading, spacing: 14) {
+                        RowLabel(index: 3, title: "Decks")
+                        DeckSummary(assign: assign)
+                    }
+                } content: {
+                    DeckRow(assign: assign)
+                }
+            }
+            .padding(.bottom, 12)
+        }
+        .scrollIndicators(.automatic)
     }
 }
 
@@ -108,13 +121,7 @@ private struct Header: View {
     var body: some View {
         HStack(alignment: .top, spacing: Theme.gutter) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("understudy")
-                    .font(Theme.grotesk(24, .medium))
-                    .tracking(-0.4)
-                Text("A sidecar for programming workflows.")
-                    .font(Theme.grotesk(12, .light))
-                    .foregroundStyle(Theme.grey)
-                    .fixedSize(horizontal: false, vertical: true)
+                RowLabel(index: 0, title: model.showCodeFromTimeline ? "Show code (timeline)" : "Show code")
             }
             .frame(width: ShowGrid.labelWidth, alignment: .topLeading)
 
@@ -236,14 +243,14 @@ private struct ModeBar: View {
     var body: some View {
         let continuous = model.settings.recordMode == .continuous
         ColumnGrid {
-            ModeBlock(title: "Stop", key: "⌘1", active: model.mode == .stop, fill: nil) { model.requestMode(.stop) }
-            ModeBlock(title: continuous ? "Record" : "Record arm", key: "⌘2", active: model.mode == .record, fill: Theme.signal) {
+            ModeBlock(title: "Stop", key: "⇧⌘.", active: model.mode == .stop, fill: nil) { model.requestMode(.stop) }
+            ModeBlock(title: continuous ? "Record" : "Record arm", key: "⇧⌘R", active: model.mode == .record, fill: Theme.signal) {
                 model.requestMode(.record)
             }
-            ModeBlock(title: "Play to code", key: "⌘3", active: model.mode == .playback, fill: Theme.lock) {
+            ModeBlock(title: "Play to code", key: "⇧⌘P", active: model.mode == .playback, fill: Theme.lock) {
                 model.requestMode(.playback)
             }
-            ModeBlock(title: "Timeline", key: "⌘4", active: model.mode == .timeline, fill: Theme.paper) {
+            ModeBlock(title: "Follow Program", key: "⇧⌘F", active: model.mode == .timeline, fill: Theme.paper) {
                 model.requestMode(.timeline)
             }
         }
@@ -254,17 +261,12 @@ private struct ModeBar: View {
 /// One line on what the current mode does, under the Mode label.
 private struct ModeDescription: View {
     @EnvironmentObject private var model: AppModel
-    @Environment(\.openWindow) private var openWindow
-
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(text)
                 .font(Theme.grotesk(12, .light))
                 .foregroundStyle(Theme.grey)
                 .fixedSize(horizontal: false, vertical: true)
-            if model.mode == .timeline {
-                TextButton(title: "Open in window ⌘T") { openWindow(id: "timeline") }
-            }
         }
     }
 
@@ -275,7 +277,7 @@ private struct ModeDescription: View {
             return model.settings.recordMode == .continuous
                 ? "Decks record until Stop. Show code is logged against the take." : "Decks record while show code runs."
         case .playback: return "Decks chase show timecode from the selected take."
-        case .timeline: return "The song timeline is the clock: audio plays and the decks follow."
+        case .timeline: return "The decks follow Program: parked on the playhead, rolling with the timeline."
         }
     }
 }
@@ -509,11 +511,11 @@ extension AppModel {
     }
 }
 
-// MARK: - Timeline bar
+// MARK: - Top bar
 
-/// Timeline mode's one-line header: name and project, the modes as compact tabs, and the show
-/// timecode with its state. Replaces the big clock and mode row so the timeline gets the room.
-struct TimelineTopBar: View {
+/// One line on every screen: the name and project, the three screens, what the decks are doing,
+/// and the show timecode with its state.
+struct TopBar: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openWindow) private var openWindow
 
@@ -524,18 +526,16 @@ struct TimelineTopBar: View {
                 Text(model.projectName ?? "No project").font(Theme.grotesk(12, .light)).foregroundStyle(Theme.grey).lineLimit(1)
             }
             .frame(width: ShowGrid.labelWidth, alignment: .leading)
-            ModeTabs()
+            ScreenTabs()
             Spacer(minLength: Theme.gutter)
-            Button { openWindow(id: "video") } label: {
-                Text("Video ⌥⌘V").font(Theme.grotesk(13, .light)).foregroundStyle(Theme.grey)
+            if model.screen == .program {
+                Button { openWindow(id: "timeline") } label: {
+                    Text("Open in window ⌘T").font(Theme.grotesk(13, .light)).foregroundStyle(Theme.grey)
+                }
+                .buttonStyle(.plain)
+                .help("Open the timeline in its own window")
             }
-            .buttonStyle(.plain)
-            .help("The take's recordings, locked to the timeline (and NDI out)")
-            Button { openWindow(id: "timeline") } label: {
-                Text("Open in window ⌘T").font(Theme.grotesk(13, .light)).foregroundStyle(Theme.grey)
-            }
-            .buttonStyle(.plain)
-            .help("Open the timeline in its own window")
+            DeckState()
             VStack(alignment: .trailing, spacing: 3) {
                 CompactClock(readout: model.readout, color: model.hasShowCode ? model.clockColor : Theme.quiet)
                 Text(model.clockState).font(Theme.grotesk(13, .light)).foregroundStyle(model.clockColor.opacity(0.85))
@@ -545,38 +545,67 @@ struct TimelineTopBar: View {
     }
 }
 
-/// The four modes as small tabs (⌘1–4). The current one is filled in its colour.
-struct ModeTabs: View {
+/// Program · View · Decks (⌘1–3): light Haas words, the current one in white with a fine underline.
+struct ScreenTabs: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        let continuous = model.settings.recordMode == .continuous
-        HStack(spacing: 26) {
-            tab("Stop", "⌘1", .stop, Theme.paper)
-            tab(continuous ? "Record" : "Record arm", "⌘2", .record, Theme.signal)
-            tab("Play to code", "⌘3", .playback, Theme.lock)
-            tab("Timeline", "⌘4", .timeline, Theme.paper)
+        HStack(spacing: 30) {
+            tab("Program", "⌘1", .program, "The timeline: songs, markers, transport. The decks follow it.")
+            tab("View", "⌘2", .view, "The take's pictures, locked to the timeline, and NDI out")
+            tab("Decks", "⌘3", .decks, "Record, play to code, and set up the decks, timecode and backup")
         }
         .fixedSize()
     }
 
-    /// Light Haas words, like the big mode names: the current one in full white with a fine
-    /// underline in its colour, the rest grey. No boxes.
-    private func tab(_ title: String, _ key: String, _ mode: AppModel.Mode, _ accent: Color) -> some View {
-        let active = model.mode == mode
-        return Button { model.requestMode(mode) } label: {
+    private func tab(_ title: String, _ key: String, _ screen: AppModel.Screen, _ help: String) -> some View {
+        let active = model.screen == screen
+        return Button { model.show(screen) } label: {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
                     .font(Theme.grotesk(19, active ? .regular : .light))
                     .tracking(-0.2)
                     .foregroundStyle(active ? Theme.paper : Theme.grey)
-                Rectangle().fill(active ? accent : Color.clear).frame(height: 2)
+                Rectangle().fill(active ? Theme.paper : Color.clear).frame(height: 2)
             }
             .fixedSize()
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("\(title) (\(key))")
+        .help("\(help) (\(key))")
+    }
+}
+
+/// What the decks are doing, on every screen: a coloured square and a few words. Recording is
+/// red, chasing LTC green, following Program white, stopped grey. Click to go to Decks.
+struct DeckState: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        let (text, color) = state
+        Button { model.show(.decks) } label: {
+            HStack(spacing: 8) {
+                Rectangle().fill(color).frame(width: 9, height: 9)
+                Text(text).font(Theme.grotesk(14, model.mode == .record ? .medium : .light)).foregroundStyle(color)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(Rectangle().fill(model.mode == .record ? Theme.signal.opacity(0.14) : Theme.fill))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("What the decks are doing. Click for the Decks screen (⌘3).")
+    }
+
+    private var state: (String, Color) {
+        let n = model.activeDecks.count
+        let decks = n == 0 ? "no decks connected" : n == 1 ? "1 deck" : "\(n) decks"
+        switch model.mode {
+        case .record: return ("Recording · \(decks)", Theme.signal)
+        case .playback: return ("Playing to code · \(decks)", Theme.lock)
+        case .timeline: return ("Following Program · \(decks)", Theme.paper)
+        case .stop: return ("Decks stopped", Theme.grey)
+        }
     }
 }
 

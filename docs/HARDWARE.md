@@ -60,7 +60,7 @@ Use one deck per camera. The HyperDeck Extreme 8K HDR has four SDI inputs, but i
 
 **Show LTC into the Mac.** The Mac needs show timecode. The decks don't, because they record with their own clock and Understudy maps show code onto each take.
 - **One LTC source:** Focusrite Scarlett Solo 4th Gen. It is class compliant, so it needs no driver; use its line input.
-- **Separate show and playback LTC** (Settings › Timecode input): use an interface with two line inputs, such as a Scarlett 2i2, or two interfaces.
+- **Separate show and playback LTC** (Decks › Timecode in): use an interface with two line inputs, such as a Scarlett 2i2, or two interfaces.
 - Feed it from an LTC distribution output, not a split cable off another device's input.
 
 **Optional regenerator.** If the show's LTC comes from far away or is flaky, put a jam-sync box in line, for example the **Tentacle Sync E mkII**: under one frame of drift in 24 hours. Understudy already freewheels through short dropouts (2 s by default), so this is a nice-to-have.

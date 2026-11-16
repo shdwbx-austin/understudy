@@ -17,7 +17,7 @@ struct VideoViewerView: View {
                 DeckPicker(viewer: viewer)
             }
             if model.mode != .timeline {
-                Text("Plays in Timeline mode (⌘4), locked to the timeline's timecode.")
+                Text("Plays while the decks follow Program (⌘1), locked to the timeline's timecode.")
                     .font(Theme.grotesk(13, .light)).foregroundStyle(Theme.amber)
             }
             panes
@@ -39,8 +39,8 @@ struct VideoViewerView: View {
         .background(Theme.ink)
         .foregroundStyle(Theme.paper)
         .preferredColorScheme(.dark)
-        .onAppear { model.viewerVisible = true }
-        .onDisappear { model.viewerVisible = false }
+        .onAppear { model.viewerAppeared() }
+        .onDisappear { model.viewerDisappeared() }
     }
 
     private var takeLabel: String {
@@ -89,7 +89,7 @@ private struct DeckPicker: View {
     }
 }
 
-private struct VideoPane: View {
+struct VideoPane: View {
     let slot: VideoViewer.Slot
     let player: AVPlayer?
 

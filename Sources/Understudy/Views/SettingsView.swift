@@ -4,28 +4,13 @@ import UnderstudyCore
 struct SettingsView: View {
     @EnvironmentObject private var model: AppModel
 
-    /// "auto" or a FrameRate raw value.
-    private var rateChoice: Binding<String> {
-        Binding(
-            get: { model.settings.ltcRateAuto ? "auto" : model.settings.ltcRate.rawValue },
-            set: { choice in
-                if choice == "auto" {
-                    model.settings.ltcRateAuto = true
-                } else if let rate = FrameRate(rawValue: choice) {
-                    model.settings.ltcRateAuto = false
-                    model.settings.ltcRate = rate
-                }
-            }
-        )
-    }
-
-    @State private var showMonitor = false
     /// The tab last used, so Settings opens where you were.
     @AppStorage("understudy.settingsTab") private var tab = "general"
 
     var body: some View {
-        // Tabs, the show-critical settings first in each. Machine things only: the show's own
-        // settings (decks, marker types, MA3/disguise targets, recording names) travel with the project.
+        // This Mac's things only. The decks' own settings (timecode, recording, playback, backup)
+        // are on the Decks screen; the show's (marker types, MA3/disguise targets, recording
+        // names) travel with the project.
         TabView(selection: $tab) {
             Form {
             Section("Show machine") {
@@ -35,16 +20,8 @@ struct SettingsView: View {
                 Text("For a dedicated Mac running rehearsals. Also set System Settings › Energy › “Start up automatically after a power failure”, automatic login, and Screen Sharing to watch it from your laptop.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-
-            Section("Backup") {
-                HStack {
-                    Text(model.settings.backupFolder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "No folder chosen")
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                    Spacer()
-                    Button("Choose…") { model.chooseBackupFolder() }
-                }
-                Text("Takes are copied off the decks by FTP into dated folders here, one per deck. Choose a folder inside Dropbox and Dropbox syncs them.")
+            Section {
+                Text("Timecode inputs, recording, playback and backup are on the Decks screen (⌘3).")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -62,113 +39,6 @@ struct SettingsView: View {
             .tabItem { Label("General", systemImage: "gearshape") }
             .tag("general")
 
-            Form {
-            Section("Timecode input") {
-                Picker("Show code", selection: $model.settings.showCodeSource) {
-                    Text("LTC input").tag(ShowCodeSource.input)
-                    Text("Song timeline").tag(ShowCodeSource.timeline)
-                }
-                .pickerStyle(.segmented)
-                Text(model.settings.showCodeSource == .timeline
-                     ? "Stop and Record take show code from the song timeline (⌘T), so takes log against it with no cable. Play to code still chases the LTC input."
-                     : "Show code arrives on an audio input as LTC (e.g. from CuePoints or a timecode DA).")
-                    .font(.caption).foregroundStyle(.secondary)
-                LTCInputPicker(
-                    title: "Show timecode",
-                    detail: model.settings.separatePlaybackInput ? "Used in Stop and Record." : "Used in every mode.",
-                    deviceUID: $model.settings.audioDeviceUID,
-                    channel: $model.settings.audioChannel,
-                    inUse: model.inputRole == .show
-                )
-                Toggle("Use a separate input for Play to code", isOn: $model.settings.separatePlaybackInput)
-                if model.settings.separatePlaybackInput {
-                    LTCInputPicker(
-                        title: "Playback timecode",
-                        detail: "Used in Play to code, e.g. a local review source. It must carry the same timecode as the show, so takes line up.",
-                        deviceUID: $model.settings.playbackAudioDeviceUID,
-                        channel: $model.settings.playbackAudioChannel,
-                        inUse: model.inputRole == .playback
-                    )
-                }
-                Picker("Show timecode rate", selection: rateChoice) {
-                    Text("Auto-detect").tag("auto")
-                    Divider()
-                    ForEach(FrameRate.allCases.filter { $0.nominal <= 30 }) { rate in
-                        Text(rate.rawValue).tag(rate.rawValue)
-                    }
-                }
-                Text(model.settings.ltcRateAuto
-                     ? "Understudy measures the incoming LTC (\(model.rateLabel.hasSuffix("DETECTING") ? "waiting for code" : "now " + model.ltcRate.rawValue)) and follows it, including drop-frame. Recording logs and playback wait the first couple of seconds of code until the rate is known. Each input is measured afresh when it's switched in."
-                     : "Fixed rate. The header warns if incoming LTC doesn't match.")
-                    .font(.caption).foregroundStyle(.secondary)
-                Stepper(model.settings.freewheelSeconds > 0
-                            ? String(format: "Coast through LTC dropouts for %.1f s", model.settings.freewheelSeconds)
-                            : "Don't coast through LTC dropouts",
-                        value: $model.settings.freewheelSeconds, in: 0...10, step: 0.5)
-                Button("Rescan devices") { model.refreshAudioDevices() }
-            }
-
-        }
-        .formStyle(.grouped)
-            .tabItem { Label("Timecode", systemImage: "waveform") }
-            .tag("timecode")
-
-            Form {
-            Section("Recording") {
-                Picker("Record", selection: $model.settings.recordMode) {
-                    Text("Continuously, REC to STOP (recommended)").tag(RecordMode.continuous)
-                    Text("Only while show timecode runs").tag(RecordMode.timecodeRun)
-                }
-                Text(model.settings.recordMode == .continuous
-                     ? "Decks record from REC until STOP, stamped with their own clock. Understudy logs show code against each take, so LTC dropouts and jumps don't stop or break a recording."
-                     : "Each deck records only while its LTC input runs and stamps clips with show code. If LTC drops, the deck stops recording.")
-                    .font(.caption).foregroundStyle(.secondary)
-                RecordNamingSettings()
-            }
-
-        }
-        .formStyle(.grouped)
-            .tabItem { Label("Recording", systemImage: "record.circle") }
-            .tag("recording")
-
-            Form {
-            Section("Chase") {
-                Toggle("Fast pickup", isOn: $model.settings.chase.fastStart)
-                    .help("Decks go to the frame and play in one step, rolling about 0.1 s after code starts")
-                Text(model.settings.chase.fastStart
-                     ? "When code starts or jumps, each deck goes to the matching frame and plays at once (about 0.1 s). Each deck's start delay is its play offset in deck Setup, learned automatically or set by Calibrate."
-                     : "Decks are parked pre-roll ahead of code, given time to settle, then played: slower to pick up, for decks that locate slowly.")
-                    .font(.caption).foregroundStyle(.secondary)
-                DisclosureGroup("Advanced") {
-                    if model.settings.chase.fastStart {
-                        Stepper(String(format: "Deck goto time %.0f ms", model.settings.chase.gotoSeconds * 1000),
-                                value: $model.settings.chase.gotoSeconds, in: 0...0.3, step: 0.005)
-                    } else {
-                        Stepper(String(format: "Pre-roll %.1f s", model.settings.chase.prerollSeconds),
-                                value: $model.settings.chase.prerollSeconds, in: 1...5, step: 0.25)
-                        Stepper(String(format: "Cue settle %.2f s", model.settings.chase.cueSettleSeconds),
-                                value: $model.settings.chase.cueSettleSeconds, in: 0.1...2, step: 0.05)
-                    }
-                    Stepper(String(format: "Tolerance ±%.1f frames", model.settings.chase.toleranceFrames),
-                            value: $model.settings.chase.toleranceFrames, in: 0.5...10, step: 0.5)
-                    Stepper("Re-lock after \(model.settings.chase.driftStrikes) bad readings",
-                            value: $model.settings.chase.driftStrikes, in: 1...20)
-                    Toggle("Deck timecode counts at video rate (e.g. 0–59 at 59.94)", isOn: $model.settings.deckTimecodeAtVideoRate)
-                }
-            }
-            Section {
-                DisclosureGroup("Confidence monitor (deck pictures from a capture device)", isExpanded: $showMonitor) {
-                    Text("Turn on below; its settings appear underneath.").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            if showMonitor || model.settings.confidenceEnabled {
-                ConfidenceSettings(monitor: model.confidence)
-            }
-        }
-        .formStyle(.grouped)
-            .tabItem { Label("Playback", systemImage: "play.rectangle") }
-            .tag("playback")
-
             Form { TimelineOutputSettings() }
                 .formStyle(.grouped)
                 .tabItem { Label("Audio out", systemImage: "speaker.wave.2") }
@@ -181,7 +51,8 @@ struct SettingsView: View {
         }
         .font(Theme.grotesk(13))
         .tint(Theme.paper)
-        .frame(width: 580, height: 640)
+        .frame(width: 580, height: 600)
+        .onAppear { if !["general", "audio", "control"].contains(tab) { tab = "general" } }
     }
 }
 
@@ -532,5 +403,153 @@ private struct AES67Settings: View {
             }
         }
         .onAppear { networks = DeckDiscovery.localNetworks() }
+    }
+}
+
+// MARK: - Deck settings (shown on the Decks screen)
+
+/// Where show code comes from: LTC inputs, rate, coasting through dropouts.
+struct TimecodeSettings: View {
+    @EnvironmentObject private var model: AppModel
+
+    /// "auto" or a FrameRate raw value.
+    private var rateChoice: Binding<String> {
+        Binding(
+            get: { model.settings.ltcRateAuto ? "auto" : model.settings.ltcRate.rawValue },
+            set: { choice in
+                if choice == "auto" {
+                    model.settings.ltcRateAuto = true
+                } else if let rate = FrameRate(rawValue: choice) {
+                    model.settings.ltcRateAuto = false
+                    model.settings.ltcRate = rate
+                }
+            }
+        )
+    }
+
+    var body: some View {
+        Section("Timecode input") {
+            Picker("Show code", selection: $model.settings.showCodeSource) {
+                Text("LTC input").tag(ShowCodeSource.input)
+                Text("Song timeline").tag(ShowCodeSource.timeline)
+            }
+            .pickerStyle(.segmented)
+            Text(model.settings.showCodeSource == .timeline
+                 ? "Stop and Record take show code from the song timeline (⌘T), so takes log against it with no cable. Play to code still chases the LTC input."
+                 : "Show code arrives on an audio input as LTC (e.g. from CuePoints or a timecode DA).")
+                .font(.caption).foregroundStyle(.secondary)
+            LTCInputPicker(
+                title: "Show timecode",
+                detail: model.settings.separatePlaybackInput ? "Used in Stop and Record." : "Used in every mode.",
+                deviceUID: $model.settings.audioDeviceUID,
+                channel: $model.settings.audioChannel,
+                inUse: model.inputRole == .show
+            )
+            Toggle("Use a separate input for Play to code", isOn: $model.settings.separatePlaybackInput)
+            if model.settings.separatePlaybackInput {
+                LTCInputPicker(
+                    title: "Playback timecode",
+                    detail: "Used in Play to code, e.g. a local review source. It must carry the same timecode as the show, so takes line up.",
+                    deviceUID: $model.settings.playbackAudioDeviceUID,
+                    channel: $model.settings.playbackAudioChannel,
+                    inUse: model.inputRole == .playback
+                )
+            }
+            Picker("Show timecode rate", selection: rateChoice) {
+                Text("Auto-detect").tag("auto")
+                Divider()
+                ForEach(FrameRate.allCases.filter { $0.nominal <= 30 }) { rate in
+                    Text(rate.rawValue).tag(rate.rawValue)
+                }
+            }
+            Text(model.settings.ltcRateAuto
+                 ? "Understudy measures the incoming LTC (\(model.rateLabel.hasSuffix("DETECTING") ? "waiting for code" : "now " + model.ltcRate.rawValue)) and follows it, including drop-frame. Recording logs and playback wait the first couple of seconds of code until the rate is known. Each input is measured afresh when it's switched in."
+                 : "Fixed rate. The header warns if incoming LTC doesn't match.")
+                .font(.caption).foregroundStyle(.secondary)
+            Stepper(model.settings.freewheelSeconds > 0
+                        ? String(format: "Coast through LTC dropouts for %.1f s", model.settings.freewheelSeconds)
+                        : "Don't coast through LTC dropouts",
+                    value: $model.settings.freewheelSeconds, in: 0...10, step: 0.5)
+            Button("Rescan devices") { model.refreshAudioDevices() }
+        }
+    }
+}
+
+/// How the decks record and name their files.
+struct RecordingSettings: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        Section("Recording") {
+            Picker("Record", selection: $model.settings.recordMode) {
+                Text("Continuously, REC to STOP (recommended)").tag(RecordMode.continuous)
+                Text("Only while show timecode runs").tag(RecordMode.timecodeRun)
+            }
+            Text(model.settings.recordMode == .continuous
+                 ? "Decks record from REC until STOP, stamped with their own clock. Understudy logs show code against each take, so LTC dropouts and jumps don't stop or break a recording."
+                 : "Each deck records only while its LTC input runs and stamps clips with show code. If LTC drops, the deck stops recording.")
+                .font(.caption).foregroundStyle(.secondary)
+            RecordNamingSettings()
+        }
+    }
+}
+
+/// How the decks chase code, and the confidence monitor.
+struct PlaybackSettings: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var showMonitor = false
+
+    var body: some View {
+        Section("Chase") {
+            Toggle("Fast pickup", isOn: $model.settings.chase.fastStart)
+                .help("Decks go to the frame and play in one step, rolling about 0.1 s after code starts")
+            Text(model.settings.chase.fastStart
+                 ? "When code starts or jumps, each deck goes to the matching frame and plays at once (about 0.1 s). Each deck's start delay is its play offset in deck Setup, learned automatically or set by Calibrate."
+                 : "Decks are parked pre-roll ahead of code, given time to settle, then played: slower to pick up, for decks that locate slowly.")
+                .font(.caption).foregroundStyle(.secondary)
+            DisclosureGroup("Advanced") {
+                if model.settings.chase.fastStart {
+                    Stepper(String(format: "Deck goto time %.0f ms", model.settings.chase.gotoSeconds * 1000),
+                            value: $model.settings.chase.gotoSeconds, in: 0...0.3, step: 0.005)
+                } else {
+                    Stepper(String(format: "Pre-roll %.1f s", model.settings.chase.prerollSeconds),
+                            value: $model.settings.chase.prerollSeconds, in: 1...5, step: 0.25)
+                    Stepper(String(format: "Cue settle %.2f s", model.settings.chase.cueSettleSeconds),
+                            value: $model.settings.chase.cueSettleSeconds, in: 0.1...2, step: 0.05)
+                }
+                Stepper(String(format: "Tolerance ±%.1f frames", model.settings.chase.toleranceFrames),
+                        value: $model.settings.chase.toleranceFrames, in: 0.5...10, step: 0.5)
+                Stepper("Re-lock after \(model.settings.chase.driftStrikes) bad readings",
+                        value: $model.settings.chase.driftStrikes, in: 1...20)
+                Toggle("Deck timecode counts at video rate (e.g. 0–59 at 59.94)", isOn: $model.settings.deckTimecodeAtVideoRate)
+            }
+        }
+        Section {
+            DisclosureGroup("Confidence monitor (deck pictures from a capture device)", isExpanded: $showMonitor) {
+                Text("Turn on below; its settings appear underneath.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        if showMonitor || model.settings.confidenceEnabled {
+            ConfidenceSettings(monitor: model.confidence)
+        }
+    }
+}
+
+/// Where takes are backed up to.
+struct BackupFolderSettings: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        Section("Backup") {
+            HStack {
+                Text(model.settings.backupFolder.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "No folder chosen")
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                Spacer()
+                Button("Choose…") { model.chooseBackupFolder() }
+            }
+            Text("Takes are copied off the decks by FTP into dated folders here, one per deck. Choose a folder inside Dropbox and Dropbox syncs them.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
     }
 }

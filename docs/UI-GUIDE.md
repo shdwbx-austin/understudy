@@ -97,31 +97,30 @@ start window. Everything else is a `TextButton`.
 
 ## 5. The screens
 
-### Show screen (`ContentView`)
+### The main window (`ContentView`): Program · View · Decks
 
-From top to bottom:
-- **Header.** The name and the line "A sidecar for programming workflows", then the
-  four TimeBlocks across the columns, then one state word (Locked, Acquiring, Freewheel…) with
-  the rate.
-- **01 Mode.** Stop · Record · Play to code · Timeline, one column each (⌘1–4). The current mode
-  is filled paper on ink.
-- **02 Take.** Which recording plays back.
-- **03 Decks.** Full-width rows. A lost deck turns its whole row red.
-- **Footer.** The LTC input on the grid: device, level, backup, AWAKE, and the shdwbx mark.
+Understudy is built for lighting and screens programmers and producers, so the timeline is the
+main tool and the recorders are a supporting act. One `TopBar` runs across every screen: the
+name and project, `ScreenTabs` (Program ⌘1 · View ⌘2 · Decks ⌘3, light Haas words, the current
+one white with a fine underline, no boxes), `DeckState`, and the show timecode with its state.
+The input `Footer` runs along the bottom of every screen.
 
-The hero size is worked out from the space left once the decks fit: huge on a 1080p show
-monitor, smaller on a laptop, and never pushing a deck below the fold on 1440×900.
+- **`DeckState`** says what the decks are doing on every screen, as a coloured square and a few
+  words: Recording (red, on a red tint), Playing to code (green), Following Program (white),
+  Decks stopped (grey). It's the one place deck state always shows; click it for Decks.
+- **Screens and deck modes.** Program and View take the decks: `AppModel.show(_:)` puts them in
+  Timeline mode (shown as Follow Program), and leaving Record asks first (the screen changes only
+  once that's confirmed). Decks leaves them as they are. When the decks leave Timeline mode from
+  anywhere (Decks menu, OSC, a restart), `followMode()` brings Decks up, so a recording is never
+  happening off-screen. Recording from the timeline (show code from the timeline) stays on
+  Program. Opening the main window takes the decks unless they came back recording or playing.
+  (A first cut also followed settings changes; at launch that flipped the screen to Decks before
+  the window opened. Only real mode changes move the screen.)
 
-### Timeline workspace (`TimelineWorkspace`)
+### Program (`TimelineWorkspace`)
 
-In Timeline mode the show screen's big clock and Mode row give way to one bar
-(`TimelineTopBar`): name and project, `ModeTabs`, and the timecode with its state on one line.
-The tabs keep the softness of the big mode names: light Haas words, the current one white with
-a fine underline in its colour, no boxes. (A first version used outlined uppercase mono tabs
-with a solid white block; it read as harsh. Keep compact controls in the same light type as the
-screens they replace.)
-The playlist and timeline take the rest. The playlist collapses to a slim rail (⌃⌘S); its
-actions live in one ··· menu rather than a row of text buttons.
+The playlist and timeline. The playlist collapses to a slim rail (⌃⌘S); its actions live in one
+··· menu rather than a row of text buttons.
 
 - **Playlist** on the left. It sits on the grid (label column plus one column) unless a song name
   needs more: then it widens to fit the longest name, up to 45% of the window. It holds the
@@ -133,6 +132,22 @@ actions live in one ··· menu rather than a row of text buttons.
   with the **marker list** beside it.
 - **Transport, then take and deck chips,** then a one-line status message.
 
+### View (`ViewScreen`)
+
+The take's pictures, locked to the timeline (`VideoViewer`, shared with the ⌥⌘V window: the
+viewer loads while either is showing). ME 1 large with the others in a 280 pt strip beside it
+(click one to swap), or side by side. Underneath: the set (96 pt, for scrubbing) and the
+transport without outputs, then NDI out. The empty state says how to get pictures (record on
+Decks, back up).
+
+### Decks (`DecksScreen`)
+
+Everything about the recorders, under small sub-tabs: **Control** (the old show screen: the show
+code large, Decks do (Stop · Record · Play to code · Follow Program, ⇧⌘. R P F, the current one a
+solid field), Take, every deck with Assign and Setup), then **Timecode in**, **Recording**,
+**Playback**, **Backup**: grouped forms (`SettingsPage`) with what they're for in the label
+column, no wider than 720 pt. The timecode blocks size to the room left once the decks fit.
+
 ### Start window (`StartView`)
 
 After CuePoints' start window:
@@ -143,12 +158,13 @@ After CuePoints' start window:
 
 ### Settings and sheets
 
-- **Settings** holds the Mac's things only, in tabs: General · Timecode · Recording · Playback ·
-  Audio out · Show control. Each tab is a grouped `Form` that leads with its show-critical
-  setting; tuning that's normally automatic (chase) and features not in daily use (the
-  confidence monitor) are folded under disclosures.
+- **Settings** holds the Mac's things only, in tabs: General · Audio out · Show control. The
+  decks' settings (timecode in, recording, playback, backup folder) moved to the Decks screen,
+  next to the decks. Each is a grouped `Form` that leads with its show-critical setting; tuning
+  that's normally automatic (chase) and features not in daily use (the confidence monitor) are
+  folded under disclosures.
 - **Show things live in the project** and are edited where they're used: Assign decks and marker
-  types. Recording names are the exception: saved with the project, but edited in Settings ›
+  types. Recording names are the exception: saved with the project, but edited in Decks ›
   Recording.
 - **Sheets** are for setup: Assign decks, Backup, deck Setup, Marker types. They use the same
   ink background and hairlines.
@@ -166,7 +182,8 @@ After CuePoints' start window:
 
   | Keys | Does |
   |---|---|
-  | ⌘1–4 | modes |
+  | ⌘1 / ⌘2 / ⌘3 | Program / View / Decks |
+  | ⇧⌘. ⇧⌘R ⇧⌘P ⇧⌘F | decks: Stop / Record / Play to code / Follow Program |
   | space | play/pause |
   | ← → | step a frame |
   | ⇧← → | step a second |
@@ -177,7 +194,9 @@ After CuePoints' start window:
   | ⌘T | timeline window |
   | ⌘N / ⌘O / ⇧⌘W | new / open / close project |
 
-  Unmodified keys are button key equivalents, so they never fire while typing in a text field.
+  Space and the arrows are button key equivalents; 1–9, M and [ ] are read by `MarkerKeys`.
+  Neither fires while typing in a text field. The screens took ⌘1–3 and the deck modes moved to
+  ⇧⌘, so a stray ⌘2 can no longer start a recording.
 - **Scrolling:**
   - A two-finger swipe, a mouse side wheel or Shift + wheel scrubs across the whole set.
   - The same gesture over the current song steps frame by frame.

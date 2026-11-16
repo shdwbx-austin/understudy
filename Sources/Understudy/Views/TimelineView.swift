@@ -61,7 +61,7 @@ private struct TimelineHeader: View {
         case .timeline: return "DRIVING THE DECKS"
         case .record where model.showCodeFromTimeline: return "SHOW CODE FOR THE RECORDING"
         case .stop where model.showCodeFromTimeline: return "SHOW CODE"
-        default: return "⌘4 DRIVES THE DECKS"
+        default: return "PROGRAM (⌘1) DRIVES THE DECKS"
         }
     }
 
@@ -225,6 +225,8 @@ struct TransportBar: View {
     @ObservedObject var timeline: TimelineModel
     /// In the main window: no import (the playlist has it) and no show-code box (Timeline mode is the timeline).
     var compact = false
+    /// LTC out status and lead-in (Program); off on View, where only the transport matters.
+    var outputs = true
 
     var body: some View {
         HStack(spacing: 18) {
@@ -248,11 +250,13 @@ struct TransportBar: View {
 
             PlayheadTime(head: timeline.head, total: timeline.layout.totalDuration)
             Spacer()
-            OutputStatus(showToggle: !compact)
-            Stepper(value: $timeline.gap, in: 0...10, step: 0.5) {
-                Text(String(format: "LEAD-IN %.1f S", timeline.gap)).font(Theme.mono(10)).tracking(1.2)
+            if outputs {
+                OutputStatus(showToggle: !compact)
+                Stepper(value: $timeline.gap, in: 0...10, step: 0.5) {
+                    Text(String(format: "LEAD-IN %.1f S", timeline.gap)).font(Theme.mono(10)).tracking(1.2)
+                }
+                .help("Gap before each song, so the decks can park on its footage and be rolling on its first frame")
             }
-            .help("Gap before each song, so the decks can park on its footage and be rolling on its first frame")
             if !compact {
                 TextButton(title: "Find audio…") { timeline.chooseAudioFolder() }
                     .help("Pick a folder: audio files are matched to songs by name")
@@ -273,7 +277,7 @@ private struct OutputStatus: View {
                 .foregroundStyle(model.danteStatus.isProblem ? Theme.amber
                                  : model.timecodeOutLabel == nil ? Theme.quiet : Theme.paper)
                 .help(model.settings.danteOut ? model.danteStatus.message
-                      : "Generated LTC follows the timeline. Set the device and channel in Settings › Timeline output.")
+                      : "Generated LTC follows the timeline. Set the device and channel in Settings › Audio out.")
             if showToggle { Toggle(isOn: Binding(
                 get: { model.settings.showCodeSource == .timeline },
                 set: { model.settings.showCodeSource = $0 ? .timeline : .input }
