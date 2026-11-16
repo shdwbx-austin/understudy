@@ -101,6 +101,8 @@ final class AppModel: ObservableObject {
     let timeline = TimelineModel()
     /// Last paused timeline seek sent to the decks.
     private var sentSeek = -1
+    /// The seek each deck was last parked for (Timeline mode, paused).
+    private var parkedSeek: [Int: Int] = [:]
     private var lastSeekSent = 0.0
     let showMachine = ShowMachine()
     let backup = TakeBackup()
@@ -238,6 +240,7 @@ final class AppModel: ObservableObject {
             active.forEach { arm($0) }
         case .playback, .timeline:
             sentSeek = -1
+            parkedSeek = [:]
             guard !active.isEmpty else {
                 rebuildTakes()
                 return
@@ -278,6 +281,7 @@ final class AppModel: ObservableObject {
         case .playback, .timeline:
             deck.owesStop = false
             sentSeek = -1
+            parkedSeek[deck.id] = nil
             deck.enterPlayback { [weak self] in self?.rebuildTakes() }
         }
     }
@@ -504,6 +508,8 @@ final class AppModel: ObservableObject {
         if settings.followLatestTake || selectedTake >= takes.count {
             selectedTake = 0
         }
+        // The takes just changed (or arrived after switching modes): park the decks again.
+        if mode == .timeline { sentSeek = -1; parkedSeek = [:] }
         // A new recording: put the set in the order it played, if asked (once per take).
         if timeline.autoOrderFromTakes, let latest = takes.first, latest.clipID != lastAutoOrderedClip,
            latest.logged == true {
@@ -835,14 +841,18 @@ final class AppModel: ObservableObject {
     private func seekDecksToPlayhead(now: Double) {
         guard timeline.seekCount != sentSeek, now - lastSeekSent >= 0.06,
               let show = timeline.layout.showSeconds(at: timeline.playhead) else { return }
-        sentSeek = timeline.seekCount
         lastSeekSent = now
         let ltcFrames = show * ltcRate.exact
-        for deck in activeDecks {
+        let active = activeDecks
+        for deck in active where parkedSeek[deck.id] != timeline.seekCount {
             guard let target = playbackTarget(deck, ltcFrames: ltcFrames) else { continue }
             deck.resetChase()
             deck.cue(clipID: target.clipID, frame: target.frame)
+            parkedSeek[deck.id] = timeline.seekCount
         }
+        // Done once every deck has been sent this position. Right after switching to Timeline a
+        // deck's takes may not have arrived yet: it's parked when they do (each deck once per seek).
+        if active.allSatisfy({ parkedSeek[$0.id] == timeline.seekCount }) { sentSeek = timeline.seekCount }
     }
 
     func applyTimelineOutputs() {

@@ -525,11 +525,14 @@ struct TimelineTopBar: View {
             .frame(width: ShowGrid.labelWidth, alignment: .leading)
             ModeTabs()
             Spacer(minLength: Theme.gutter)
-            TextButton(title: "Window ⌘T", color: Theme.grey) { openWindow(id: "timeline") }
-                .help("Open the timeline in its own window")
-            VStack(alignment: .trailing, spacing: 2) {
+            Button { openWindow(id: "timeline") } label: {
+                Text("Open in window ⌘T").font(Theme.grotesk(13, .light)).foregroundStyle(Theme.grey)
+            }
+            .buttonStyle(.plain)
+            .help("Open the timeline in its own window")
+            VStack(alignment: .trailing, spacing: 3) {
                 CompactClock(readout: model.readout, color: model.hasShowCode ? model.clockColor : Theme.quiet)
-                Text(model.clockState.uppercased()).font(Theme.mono(10, bold: true)).tracking(1.2).foregroundStyle(model.clockColor)
+                Text(model.clockState).font(Theme.grotesk(13, .light)).foregroundStyle(model.clockColor.opacity(0.85))
             }
         }
         .frame(height: 64)
@@ -542,25 +545,29 @@ struct ModeTabs: View {
 
     var body: some View {
         let continuous = model.settings.recordMode == .continuous
-        HStack(spacing: 0) {
-            tab("Stop", "⌘1", .stop, nil)
-            tab(continuous ? "Record" : "Rec arm", "⌘2", .record, Theme.signal)
+        HStack(spacing: 26) {
+            tab("Stop", "⌘1", .stop, Theme.paper)
+            tab(continuous ? "Record" : "Record arm", "⌘2", .record, Theme.signal)
             tab("Play to code", "⌘3", .playback, Theme.lock)
             tab("Timeline", "⌘4", .timeline, Theme.paper)
         }
-        .overlay(Rectangle().strokeBorder(Theme.rule, lineWidth: 1))
         .fixedSize()
     }
 
-    private func tab(_ title: String, _ key: String, _ mode: AppModel.Mode, _ fill: Color?) -> some View {
+    /// Light Haas words, like the big mode names: the current one in full white with a fine
+    /// underline in its colour, the rest grey. No boxes.
+    private func tab(_ title: String, _ key: String, _ mode: AppModel.Mode, _ accent: Color) -> some View {
         let active = model.mode == mode
         return Button { model.requestMode(mode) } label: {
-            Text(title.uppercased())
-                .font(Theme.mono(11, bold: active)).tracking(1.2)
-                .padding(.horizontal, 14).padding(.vertical, 9)
-                .foregroundStyle(active && fill != nil ? Theme.ink : (active ? Theme.paper : Theme.grey))
-                .background(active ? (fill ?? Theme.fill) : Color.clear)
-                .contentShape(Rectangle())
+            VStack(alignment: .leading, spacing: 6) {
+                Text(title)
+                    .font(Theme.grotesk(19, active ? .regular : .light))
+                    .tracking(-0.2)
+                    .foregroundStyle(active ? Theme.paper : Theme.grey)
+                Rectangle().fill(active ? accent : Color.clear).frame(height: 2)
+            }
+            .fixedSize()
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help("\(title) (\(key))")

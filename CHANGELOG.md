@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Switching to Timeline parks the decks at once** on the playhead's frame, ready to roll on Play. Before, a deck whose takes hadn't arrived yet was skipped until the playhead moved.
+- **Softer Timeline top bar**: the modes are light Haas words with a fine underline for the current one (no outlined mono tabs), the clock's state and Open in window are in light type, Send / Export matches, and marker chips use gentler tints.
+
 ## 0.3.0 — 2026-11-16
 
 - **Timeline mode (⌘4) and a song timeline (⌘T).** In Timeline mode the main window becomes a workspace: the playlist (set and library) down the left, and on the right the whole set to scrub, the current song up close with a seconds ruler, the transport, the take and a status chip per deck. Two-finger swipes, a mouse's side wheel or Shift + wheel scrub across the set, and step frame by frame over the current song.
