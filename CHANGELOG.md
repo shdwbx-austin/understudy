@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 — 2026-11-16
 
 - **Switching to Timeline parks the decks at once** on the playhead's frame, ready to roll on Play. Before, a deck whose takes hadn't arrived yet was skipped until the playhead moved.
 - **Softer Timeline top bar**: the modes are light Haas words with a fine underline for the current one (no outlined mono tabs), the clock's state and Open in window are in light type, Send / Export matches, and marker chips use gentler tints.
