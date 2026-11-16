@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 — 2026-11-16
 
 - **Snap to the grid.** SNAP by GRID turns it on and picks the value (bar, 1/2, 1/4, 1/8, 1/16, 1/8 triplet). New markers and dragged markers land on the nearest line; dragging one of a selection moves them all by the same snapped amount.
 - **Quantize.** Q moves the selected markers onto the grid at the snap value; right-click › Quantize has every value and Halfway (50%). Markers in songs without a tempo stay put (and it says so).
