@@ -196,10 +196,15 @@ struct TimelineTrack: View {
                 // Along the bottom of the song blocks, clear of the names.
                 MarkerTicks(timeline: timeline, scale: scale, height: 10)
                     .offset(y: geo.size.height - 11)
-                // The loop, as a bar along the top of the song blocks.
+                // The loop: a band over the song blocks with a bar along the top.
                 if let r = timeline.loopRange {
+                    let w = max(2, (r.upperBound - r.lowerBound) * scale)
+                    Rectangle().fill(Theme.paper.opacity(0.16))
+                        .frame(width: w, height: geo.size.height - 28)
+                        .offset(x: r.lowerBound * scale, y: 28)
+                        .allowsHitTesting(false)
                     Rectangle().fill(Theme.paper)
-                        .frame(width: max(2, (r.upperBound - r.lowerBound) * scale), height: 3)
+                        .frame(width: w, height: 3)
                         .offset(x: r.lowerBound * scale, y: 25)
                         .allowsHitTesting(false)
                 }
@@ -506,6 +511,9 @@ struct LoopMenu: View {
             Button("Set Loop Out at Playhead   O") { timeline.setLoopOut() }
             Button("Loop Between Selected Markers") { timeline.loopSelectedMarkers() }
                 .disabled(timeline.selectedMarkerIDs.count < 2)
+            Divider()
+            Button("Clear Loop   ⇧L") { timeline.clearLoop() }
+                .disabled(timeline.loop == LoopSetting())
         } label: {
             HStack(spacing: 6) {
                 Rectangle().fill(mode == .off ? Color.clear : Theme.paper).frame(width: 7, height: 7)
@@ -518,7 +526,14 @@ struct LoopMenu: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
-        .help("Loop the song or a section (L on and off; I and O set a section)")
+        .help("Loop the song or a section (L on and off; I and O set a section; ⇧L clears)")
+        if timeline.loop.mode != .off {
+            Button { timeline.clearLoop() } label: {
+                Text("×").font(Theme.grotesk(15, .regular)).foregroundStyle(Theme.paper).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Clear the loop (⇧L)")
+        }
     }
 
     private func mark(_ m: LoopSetting.Mode) -> String { timeline.loop.mode == m ? "✓ " : "   " }

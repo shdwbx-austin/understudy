@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **A clearer loop.** Outside the loop is dimmed, with solid edges, a bar along the top and a label with its times and length. Clear it with the label's ×, the × by LOOP, Clear Loop in its menu, or ⇧L.
+- **Drag along the ruler to draw a loop** above the current song (the song itself still scrubs).
+- **Beat grid.** Each song can have a tempo and beats per bar (right-click › Tempo…, or GRID by the ruler; a BPM in the audio file's name is offered) and a downbeat (Set Downbeat at Playhead). Bar and beat lines with bar numbers appear as you zoom in.
+- **Array markers on the grid.** Right-click a marker › Array From Here…: hits of its type every bar, 1/2, 1/4, 1/8, 1/16 or 1/8 triplet, until the next marker, the song's end, the loop's end, or a count. Each hit is placed from the first marker's exact time, so there's no drift. An array is one row in the list and small ticks on the track, and clears in one go (its ×, Clear This Array, or Clear arrays above the list); hand-placed markers stay.
+- **Move a selection on the timeline:** select markers in the list, then drag any one of them left or right on the track; they all move.
+
 ## 0.6.0 — 2026-11-16
 
 - **Loop a song or a section.** LOOP under the timeline loops the song under the playhead (from its lead-in) or a section: I and O at the playhead, or two selected markers › Loop Between Them. L turns it on and off. Sections are held on show code, so they follow their song when the set is reordered. Shown as a bar on the set and a band on the current song.

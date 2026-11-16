@@ -137,6 +137,12 @@ The playlist and timeline. The playlist collapses to a slim rail (⌃⌘S); its 
 - **Zoom** draws only what's on screen (the waveform is sliced, the ruler only ticks the visible
   span), so 32× stays light. `ZoomFollower` watches the playhead on its own and moves the window
   only when the playhead leaves it.
+- **The loop** must be unmissable: outside it is dimmed (ink 70%), inside lifted, solid 2 pt
+  edges, a bar along the top, and a white label at the bottom with its times, length and ×.
+  Drawing one is a drag along the ruler (the top 22 pt); the song below still scrubs.
+- **Beat grid and arrays:** bar lines from 12 pt apart, beats from 10 pt, so it only shows when
+  zoomed in far enough to read. Arrayed hits are small 7 pt squares without key or label, and
+  only where there's 12 pt of room; the rest are hairlines. In the list an array is one row.
 - **Several markers:** selected tags get the white outline, selected rows a white edge, and a
   SELECTED bar above the list (Edit menu, Delete, Done). Downtime on the set is an ink gap with a
   hairline; the loop is a white bar along the top of the set and a band on the current song.
@@ -200,7 +206,7 @@ After CuePoints' start window:
   | 1–9 | drop a marker of that type |
   | M | drop another marker of the last type |
   | [ ] | previous/next marker |
-  | I / O / L | loop in / loop out / loop on-off |
+  | I / O / L / ⇧L | loop in / loop out / loop on-off / clear the loop |
   | ⌘-click, ⇧-click | select several markers; Esc back to one |
   | ⌘= / ⌘− / ⌘0 | zoom the current song in / out / whole song |
   | ⌘T | timeline window |

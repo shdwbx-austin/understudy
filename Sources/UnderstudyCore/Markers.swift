@@ -107,12 +107,19 @@ public struct Marker: Codable, Identifiable, Equatable, Sendable {
     public var frame: Int
     public var kind: MarkerKind
     public var label: String
+    /// Laid out on a beat grid with others ("every 1/4 from a marker"): they share this, so the
+    /// whole run can be cleared at once. nil = placed by hand.
+    public var arrayID: UUID?
+    /// The run's step, for showing it ("1/4").
+    public var arrayStep: String?
 
-    public init(id: UUID = UUID(), frame: Int, kind: MarkerKind, label: String = "") {
+    public init(id: UUID = UUID(), frame: Int, kind: MarkerKind, label: String = "", arrayID: UUID? = nil, arrayStep: String? = nil) {
         self.id = id
         self.frame = frame
         self.kind = kind
         self.label = label
+        self.arrayID = arrayID
+        self.arrayStep = arrayStep
     }
 
     public func timecode(rate: FrameRate) -> Timecode { Timecode(frameIndex: frame, rate: rate.ltcRate) }

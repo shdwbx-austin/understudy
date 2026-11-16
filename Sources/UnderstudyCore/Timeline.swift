@@ -25,6 +25,13 @@ public struct Song: Codable, Equatable, Identifiable, Sendable {
     public var audioOffset: Double?
     /// Play the timecode channel to the music output anyway (normally it's muted).
     public var keepLTCChannel: Bool
+    /// Tempo in quarter notes per minute, for the beat grid. nil = no grid.
+    public var bpm: Double?
+    /// Beats in a bar (4 for 4/4). nil = 4.
+    public var beatsPerBar: Int?
+    /// Where a bar's first beat falls, seconds after the song start (negative = in the lead-in).
+    /// nil = on the song start.
+    public var downbeat: Double?
 
     public init(id: UUID = UUID(), name: String, start: Timecode, end: Timecode? = nil, duration: Double? = nil,
                 audioPath: String? = nil, audioDuration: Double? = nil, inSet: Bool = true) {
@@ -43,6 +50,7 @@ public struct Song: Codable, Equatable, Identifiable, Sendable {
 extension Song {
     private enum CodingKeys: String, CodingKey {
         case id, name, start, end, duration, audioPath, audioDuration, inSet, audioLTCChannel, audioOffset, keepLTCChannel
+        case bpm, beatsPerBar, downbeat
     }
 
     /// Timelines saved before the set list existed load with every song in the set.
@@ -59,6 +67,9 @@ extension Song {
         audioLTCChannel = try c.decodeIfPresent(Int.self, forKey: .audioLTCChannel)
         audioOffset = try c.decodeIfPresent(Double.self, forKey: .audioOffset)
         keepLTCChannel = try c.decodeIfPresent(Bool.self, forKey: .keepLTCChannel) ?? false
+        bpm = try c.decodeIfPresent(Double.self, forKey: .bpm)
+        beatsPerBar = try c.decodeIfPresent(Int.self, forKey: .beatsPerBar)
+        downbeat = try c.decodeIfPresent(Double.self, forKey: .downbeat)
     }
 }
 

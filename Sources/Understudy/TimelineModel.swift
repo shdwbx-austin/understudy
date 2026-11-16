@@ -32,6 +32,10 @@ final class TimelineModel: ObservableObject {
     @Published var loop = LoopSetting() {
         didSet { if loop != oldValue { save() } }
     }
+    /// Beat lines on the current song (for songs with a tempo).
+    @Published var showGrid: Bool = UserDefaults.standard.object(forKey: "understudy.showGrid") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(showGrid, forKey: "understudy.showGrid") }
+    }
     /// The current song's zoom (1 = the whole song across the width).
     @Published var detailZoom: Double = 1
     static let maxZoom = 32.0
@@ -709,6 +713,12 @@ final class TimelineModel: ObservableObject {
         loop.mode = mode
     }
 
+    /// Loop off and its section forgotten (the × on the loop, ⇧L).
+    func clearLoop() {
+        loop = LoopSetting()
+        message = nil
+    }
+
     /// L: loop off, or back to the last kind of loop (the song if none).
     func toggleLoop() {
         if loop.mode != .off { lastLoopMode = loop.mode; loop.mode = .off } else { loop.mode = lastLoopMode == .section && loop.hasSection ? .section : .song }
@@ -734,6 +744,13 @@ final class TimelineModel: ObservableObject {
         if next.hasSection { next.mode = .section }
         loop = next
         message = next.hasSection ? nil : (start ? "Loop in set. Press O at the end of the section." : "Loop out set. Press I at the start of the section.")
+    }
+
+    /// A section loop between two timeline times (dragged along the ruler).
+    func setLoopSection(from a: Double, to b: Double) {
+        guard let s = layout.showSeconds(at: min(a, b)), let e = layout.showSeconds(at: max(a, b)), e - s >= 0.1 else { return }
+        loop = LoopSetting(mode: .section, sectionStart: s, sectionEnd: e)
+        message = nil
     }
 
     /// Loop from the first selected marker to the last.
@@ -787,6 +804,105 @@ final class TimelineModel: ObservableObject {
         selectedMarkerIDs.remove(id)
         if selectedMarkerID == id { selectedMarkerID = nil }
         save()
+    }
+
+    // MARK: Tempo and beat grid
+
+    /// The song's grid, if it has a tempo.
+    func grid(for song: Song) -> BeatGrid? { BeatGrid(song: song, rate: rate) }
+
+    /// A tempo to offer for a song: its own, else one in its audio file's name.
+    func suggestedBPM(_ song: Song) -> Double? {
+        song.bpm ?? song.audioPath.flatMap { SongTempo.bpm(fromFileName: ($0 as NSString).lastPathComponent) }
+    }
+
+    func setTempo(_ id: UUID, bpm: Double?, beatsPerBar: Int? = nil) {
+        guard let i = songs.firstIndex(where: { $0.id == id }) else { return }
+        songs[i].bpm = bpm.flatMap { $0 > 0 ? $0 : nil }
+        if let beatsPerBar { songs[i].beatsPerBar = beatsPerBar == 4 ? nil : max(1, beatsPerBar) }
+        save()
+    }
+
+    /// The bar starts on the playhead (lines the grid up with the music).
+    func setDownbeatAtPlayhead() {
+        guard let index = currentIndex, layout.items.indices.contains(index) else { return }
+        let item = layout.items[index]
+        guard let i = songs.firstIndex(where: { $0.id == item.song.id }) else { return }
+        let t = isPlaying ? transport.position(at: HostClock.now()) : playhead
+        songs[i].downbeat = t - item.timelineStart
+        save()
+    }
+
+    /// The set song a marker sits in.
+    func song(of marker: Marker) -> TimelineLayout.Item? {
+        guard let t = time(of: marker), let i = layout.index(at: t) else { return nil }
+        return layout.items[i]
+    }
+
+    enum ArrayExtent: Equatable {
+        case count(Int), nextMarker, songEnd, loopEnd
+    }
+
+    /// Hits every `note` after `anchor`, of the anchor's type and label, as one array that can be
+    /// cleared at once. Never past the anchor's song. Returns how many were added.
+    @discardableResult
+    func arrayMarkers(from anchor: Marker, bpm: Double, note: NoteValue, extent: ArrayExtent) -> Int {
+        guard let item = song(of: anchor) else {
+            message = "That marker isn't on a song in the set."
+            return 0
+        }
+        let fps = rate.ltcRate.exact
+        let songEnd = Int(((item.showStart + item.duration) * fps).rounded(.down))
+        var end = songEnd
+        var count: Int?
+        switch extent {
+        case .count(let n): count = max(1, n)
+        case .songEnd: break
+        case .nextMarker:
+            if let next = markers.filter({ $0.arrayID == nil && $0.frame > anchor.frame }).map(\.frame).min() { end = min(end, next) }
+        case .loopEnd:
+            if let r = loopRange, let show = layout.showSeconds(at: r.upperBound - 0.0001) { end = min(end, Int((show * fps).rounded())) }
+        }
+        if let song = songs.first(where: { $0.id == item.song.id }), song.bpm == nil { setTempo(song.id, bpm: bpm) }
+        let perBar = songs.first(where: { $0.id == item.song.id })?.beatsPerBar ?? 4
+        let frames = MarkerArray.frames(after: anchor.frame, bpm: bpm, stepBeats: note.beats(perBar: perBar), rate: rate,
+                                        count: count, before: end)
+        guard !frames.isEmpty else {
+            message = "No room for hits there before the \(extent == .nextMarker ? "next marker" : "end")."
+            return 0
+        }
+        let id = UUID()
+        markers += frames.map { Marker(frame: $0, kind: anchor.kind, label: anchor.label, arrayID: id, arrayStep: note.short) }
+        markers.sort { $0.frame < $1.frame }
+        message = "Added \(frames.count) \(timeline_typeName(anchor.kind)) hits, every \(note.short) at \(Self.bpmText(bpm)) BPM. Clear them from any of them (right-click › Clear Array)."
+        save()
+        return frames.count
+    }
+
+    private func timeline_typeName(_ kind: MarkerKind) -> String { markerTypes.name(kind) }
+
+    static func bpmText(_ bpm: Double) -> String {
+        bpm == bpm.rounded() ? String(Int(bpm)) : String(format: "%.1f", bpm)
+    }
+
+    /// Every array's markers, by array.
+    var markerArrays: [UUID: [Marker]] {
+        Dictionary(grouping: markers.filter { $0.arrayID != nil }, by: { $0.arrayID! })
+    }
+
+    func clearArray(_ id: UUID) {
+        let ids = Set(markers.filter { $0.arrayID == id }.map(\.id))
+        removeMarkers(ids)
+        message = "Cleared \(ids.count) arrayed markers."
+    }
+
+    /// Every arrayed marker (in `song`, or everywhere); hand-placed ones stay.
+    func clearArrays(inSong song: UUID? = nil) {
+        let ids = Set(markers.filter { m in
+            m.arrayID != nil && (song == nil || self.song(of: m)?.song.id == song)
+        }.map(\.id))
+        removeMarkers(ids)
+        message = ids.isEmpty ? nil : "Cleared \(ids.count) arrayed markers."
     }
 
     // MARK: Several markers

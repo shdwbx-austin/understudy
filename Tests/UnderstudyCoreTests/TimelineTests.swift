@@ -336,3 +336,58 @@ struct TimelineRehearsalTests {
         #expect(layout.transition(from: 53.99, to: 54.01, loop: off, stopAfterSong: true) == .none)
     }
 }
+
+/// The beat grid, arraying markers on it, and tempo from file names.
+struct BeatGridTests {
+    @Test func beatsAndBarsFromTheDownbeat() {
+        // 120 BPM: a beat every 0.5 s; bar 1 starts at 10 s.
+        let grid = BeatGrid(bpm: 120, beatsPerBar: 4, origin: 10)
+        let beats = grid.beats(from: 9.4, to: 12.1)
+        #expect(beats.map(\.seconds) == [9.5, 10, 10.5, 11, 11.5, 12])
+        #expect(beats.first?.bar == 0 && beats.first?.beat == 4)
+        #expect(beats[1].isBarStart && beats[1].bar == 1)
+        #expect(beats.last?.bar == 2 && beats.last?.beat == 1)
+        #expect(grid.nearestBeat(to: 10.74) == 10.5)
+    }
+
+    @Test func songGridSitsOnItsStartPlusDownbeat() {
+        var song = Song(name: "Heart", start: Timecode("01:00:00:00")!)
+        #expect(BeatGrid(song: song, rate: .fps30) == nil)
+        song.bpm = 96
+        song.downbeat = -0.5
+        let grid = BeatGrid(song: song, rate: .fps30)
+        #expect(grid?.origin == 3599.5)
+        #expect(grid?.beatsPerBar == 4)
+    }
+
+    @Test func quarterNotesAfterAMarkerDontDrift() {
+        // 30 fps, 100 BPM: a quarter is 0.6 s = 18 frames exactly; eighths 9.
+        let quarters = MarkerArray.frames(after: 300, bpm: 100, stepBeats: 1, rate: .fps30, count: 4)
+        #expect(quarters == [318, 336, 354, 372])
+        // 128 BPM quarters (14.0625 frames): each hit rounds from the anchor, so no drift.
+        let fast = MarkerArray.frames(after: 0, bpm: 128, stepBeats: 1, rate: .fps30, count: 64)
+        #expect(fast.last == Int((64 * 60.0 / 128 * 30).rounded()))
+        // Until an end frame (exclusive).
+        let until = MarkerArray.frames(after: 300, bpm: 100, stepBeats: 0.5, rate: .fps30, before: 336)
+        #expect(until == [309, 318, 327])
+        // Triplets and bars.
+        #expect(MarkerArray.frames(after: 0, bpm: 120, stepBeats: NoteValue.eighthTriplet.beats(perBar: 4), rate: .fps30, count: 3) == [5, 10, 15])
+        #expect(MarkerArray.frames(after: 0, bpm: 120, stepBeats: NoteValue.bar.beats(perBar: 4), rate: .fps30, count: 2) == [60, 120])
+    }
+
+    @Test func tempoFromFileNames() {
+        #expect(SongTempo.bpm(fromFileName: "TP - Heart - 120 BPM - SMPTE 03.wav") == 120)
+        #expect(SongTempo.bpm(fromFileName: "cold_love_92.5bpm.aif") == 92.5)
+        #expect(SongTempo.bpm(fromFileName: "Run 140-BPM.wav") == 140)
+        #expect(SongTempo.bpm(fromFileName: "01 Hell Nah.wav") == nil)
+        #expect(SongTempo.bpm(fromFileName: "Track 5 bpm.wav") == nil)
+    }
+
+    @Test func oldMarkersAndSongsStillDecode() throws {
+        let marker = try JSONDecoder().decode(Marker.self, from: Data(#"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","frame":10,"kind":"pyro","label":""}"#.utf8))
+        #expect(marker.arrayID == nil)
+        let song = Song(name: "A", start: Timecode("01:00:00:00")!)
+        let back = try JSONDecoder().decode(Song.self, from: JSONEncoder().encode(song))
+        #expect(back.bpm == nil && back.downbeat == nil)
+    }
+}
