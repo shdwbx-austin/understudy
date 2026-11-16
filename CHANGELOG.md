@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Understudy is a sidecar for programming workflows**: the start window, show header, installer and README now say so, in place of "stands in for the cameras between run-throughs".
+- **Markers in Understudy's own style**: square tags with the type's key number, a hairline down the track and labels in small mono capitals beside the tag; type chips are swatches (colour bar, key, name). New default palette: coral, teal, violet, stone, sodium yellow, hot pink and sky, kept clear of the status colours. Crowded labels drop to lanes below instead of covering the next tag. Existing projects keep their colours.
+- **Marker types are easy to find**: **Edit types…** beside the chips, Markers › Edit Marker Types… (⌥⌘M) in the menu bar, and on every chip's right-click menu.
+- **[ and ] always work**: next/previous marker, the number keys and M are read straight from the timeline window's keys. Before, [ and ] lived in the Send / Export pull-down and only sometimes registered. Typing in a text field is left alone, and ] now steps past a marker it just landed on even while playing.
+- **More room for the timeline**: a narrower playlist, a taller current-song track, and one-line deck chips in the Timeline view.
+
 ## 0.4.0 — 2026-11-16
 
 - **Video viewer** (⌥⌘V, or Video in the Timeline bar): the selected take's recordings for up to three decks, played in Understudy and locked to the timeline's timecode exactly as the decks chase it (take maps included): playing from the right frame, parked on the playhead's frame when paused, re-locked if it drifts. Show one deck (ME 1…) or all side by side. Files come from the backup folder and are pulled into the project (`objects/VideoFile/<deck>/`), playing straight away while they copy. Timeline mode only.

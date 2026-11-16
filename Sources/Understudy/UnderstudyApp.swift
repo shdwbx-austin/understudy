@@ -36,6 +36,9 @@ struct UnderstudyApp: App {
             CommandGroup(replacing: .newItem) {
                 ProjectCommands(model: model, projects: model.projects)
             }
+            CommandMenu("Markers") {
+                MarkerCommands(timeline: model.timeline)
+            }
             CommandGroup(after: .appInfo) {
                 UpdateCommand(updater: model.updater)
             }
@@ -198,5 +201,20 @@ private struct OpenVideoCommand: View {
     var body: some View {
         Button("Video Viewer") { openWindow(id: "video") }
             .keyboardShortcut("v", modifiers: [.command, .option])
+    }
+}
+
+/// Markers menu: the type editor, and moving between markers.
+private struct MarkerCommands: View {
+    @ObservedObject var timeline: TimelineModel
+
+    var body: some View {
+        Button("Edit Marker Types…") { timeline.editingMarkerTypes = true }
+            .keyboardShortcut("m", modifiers: [.command, .option])
+        Divider()
+        // ] and [ in the timeline (MarkerKeys); not menu shortcuts, which would take the keys
+        // from text fields too.
+        Button("Next Marker   ]") { timeline.nextMarker() }
+        Button("Previous Marker   [") { timeline.previousMarker() }
     }
 }

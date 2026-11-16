@@ -1,8 +1,13 @@
 # understudy
 
-**Stands in for the cameras between run-throughs.**
+**A sidecar for programming workflows.**
 
-Record four broadcast MEs on HyperDecks, then play them back into the disguise capture inputs locked to show timecode — so you can program against real SDI between run-throughs, with no files to copy and no transcoding.
+Understudy sits beside the lighting console and media servers while a show is programmed:
+
+- **Record and play back the cameras.** Record up to 16 broadcast MEs on HyperDecks, then play them into the disguise capture inputs locked to show timecode, so you can program against real SDI between run-throughs with no files to copy and no transcoding.
+- **Run the show without the band.** A song timeline with each track's own timecode, setlists, timecode out and a video viewer with NDI feeds, for rehearsing songs in any order.
+- **Mark it up and hand it on.** Markers with your own types, sent to grandMA3 (sequence and timecode show) and disguise (track notes, sections and tags), or exported as CSV.
+- **Drive it from the desk.** OSC from a Stream Deck, grandMA3 or anything else: transport, modes, songs and markers.
 
 Shdwbx · Design and Creative Support
 
@@ -93,7 +98,7 @@ Timeline mode (**⌘4**) makes Understudy the clock instead of incoming LTC. Ope
 
 **Recording names.** Settings › Recording › File name sets how decks name their recordings. The default is `{deck}_{artist}_{date}_{time}` (e.g. `ME_1_RKS_2026-11-15_2015_0001.mov`). Tokens: `{deck}`, `{n}` (deck number), `{artist}`, `{show}` (setlist), `{date}`, `{day}` (Sun), `{time}` (2015), `{seconds}` (201530). The time is when Record is pressed.
 
-**Markers.** Press 1–9 to drop a marker at the playhead (by default Choreo, Audio, Video, Notes, Lighting, Pyro, Automation; M repeats the last type). Make your own types in Send / Export › Edit Marker Types…: name, colour and order, saved with the project. Drag a marker to move it, click it to go there, right-click to rename or change its type. **Send / Export** sends them to a grandMA3 (a sequence with a cue per marker plus a timecode show that fires them from LTC) or onto a disguise track (notes, sections or CUE tags, placed through the track's TC tags), or exports a CSV or a grandMA3 plugin. Set the addresses in **Settings › Show control**. On the MA3, add an OSC line (Menu › In & Out › OSC) with this Mac as destination, Mode UDP, the port and prefix from Settings, and Enable Input, Receive and Receive Command on.
+**Markers.** Press 1–9 to drop a marker at the playhead (by default Choreo, Audio, Video, Notes, Lighting, Pyro, Automation; M repeats the last type). Make your own types with **Edit types…** beside the marker buttons (or Markers › Edit Marker Types…, ⌥⌘M): name, colour and order, saved with the project. Each marker shows as a square tag in its type's colour with its key number, and its label beside it. Drag a marker to move it, click it to go there, right-click to rename or change its type. **Send / Export** sends them to a grandMA3 (a sequence with a cue per marker plus a timecode show that fires them from LTC) or onto a disguise track (notes, sections or CUE tags, placed through the track's TC tags), or exports a CSV or a grandMA3 plugin. Set the addresses in **Settings › Show control**. On the MA3, add an OSC line (Menu › In & Out › OSC) with this Mac as destination, Mode UDP, the port and prefix from Settings, and Enable Input, Receive and Receive Command on.
 
 **OSC control.** Understudy listens for OSC on UDP 9000 (Settings › Show control): `/understudy/play`, `/pause`, `/toggle`, `/stop`, `/song/next`, `/song/prev`, `/song <n>`, `/marker` (last type), `/marker/<1–7 or type> ["label"]`, `/marker/next`, `/marker/prev`. Point a Stream Deck (through Companion's OSC module) or an MA3 macro (`SendOSC`) at it.
 

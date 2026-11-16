@@ -33,11 +33,22 @@ struct MarkerBar: View {
     var body: some View {
         HStack(spacing: 8) {
             Text("MARKERS").font(Theme.mono(9)).tracking(1.2).foregroundStyle(Theme.grey)
-            ForEach(Array(timeline.markerTypes.types.enumerated()), id: \.element.id) { index, type in
-                MarkerChip(timeline: timeline, type: type, number: index < MarkerTypes.keyed ? index + 1 : nil)
+                .background(MarkerKeys(timeline: timeline))
+            // Chips keep their full names; if there are more than fit, the row scrolls sideways.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Array(timeline.markerTypes.types.enumerated()), id: \.element.id) { index, type in
+                        MarkerChip(timeline: timeline, type: type, number: index < MarkerTypes.keyed ? index + 1 : nil)
+                            .fixedSize()
+                    }
+                    Button { timeline.editingMarkerTypes = true } label: {
+                        Text("Edit types…").font(Theme.grotesk(13, .light)).foregroundStyle(Theme.grey)
+                    }
+                    .buttonStyle(.plain)
+                    .fixedSize()
+                    .help("Add, rename, recolour or reorder marker types (⌥⌘M)")
+                }
             }
-            // M: another marker of the last type.
-            Button("") { timeline.addMarker() }.keyboardShortcut("m", modifiers: []).opacity(0).frame(width: 0)
             Spacer()
             if model.linkBusy { ProgressView().controlSize(.small) }
             MarkerMenu(timeline: timeline)
@@ -54,17 +65,16 @@ private struct MarkerChip: View {
     var body: some View {
         let hidden = timeline.hiddenMarkerKinds.contains(type.id)
         let color = Color(hex: type.color)
+        // A swatch, not a pill: a colour bar, the key in mono, the name in light type.
         let chip = Button { timeline.addMarker(type.id) } label: {
-            HStack(spacing: 5) {
-                Text(number.map(String.init) ?? "·").font(Theme.mono(9, bold: true))
-                    .frame(width: 14, height: 14)
-                    .background(Circle().fill(color.opacity(hidden ? 0.3 : 0.85)))
-                    .foregroundStyle(Theme.ink)
+            HStack(spacing: 7) {
+                Rectangle().fill(color.opacity(hidden ? 0.3 : 1)).frame(width: 3, height: 16)
+                Text(number.map(String.init) ?? "·").font(Theme.mono(10)).foregroundStyle(Theme.grey)
                 Text(type.name).font(Theme.grotesk(13, .light)).lineLimit(1)
-                    .foregroundStyle(hidden ? Theme.quiet : color.opacity(0.92))
+                    .foregroundStyle(hidden ? Theme.quiet : color)
             }
-            .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(Capsule().fill(color.opacity(hidden ? 0.03 : 0.08)))
+            .padding(.trailing, 9).padding(.vertical, 4)
+            .background(Rectangle().fill(hidden ? Color.clear : Theme.fill))
         }
         .buttonStyle(.plain)
         .help("Add a \(type.name) marker at the playhead\(number.map { " (\($0))" } ?? ""). Right-click to hide or show \(type.name) markers.")
@@ -72,12 +82,10 @@ private struct MarkerChip: View {
             Button(hidden ? "Show \(type.name) Markers" : "Hide \(type.name) Markers") {
                 if hidden { timeline.hiddenMarkerKinds.remove(type.id) } else { timeline.hiddenMarkerKinds.insert(type.id) }
             }
+            Divider()
+            Button("Edit Marker Types…") { timeline.editingMarkerTypes = true }
         }
-        if let number {
-            chip.keyboardShortcut(KeyEquivalent(Character("\(number)")), modifiers: [])
-        } else {
-            chip
-        }
+        chip
     }
 }
 
@@ -85,7 +93,6 @@ private struct MarkerChip: View {
 struct MarkerMenu: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var timeline: TimelineModel
-    @State private var editTypes = false
 
     var body: some View {
         Menu {
@@ -97,11 +104,12 @@ struct MarkerMenu: View {
             Button("Export CSV…") { model.exportMarkersCSV() }.disabled(timeline.markers.isEmpty)
             Button("Export grandMA3 Plugin…") { model.exportMA3Plugin() }.disabled(timeline.markers.isEmpty)
             Divider()
-            Button("Next Marker") { timeline.nextMarker() }.keyboardShortcut("]", modifiers: [])
-            Button("Previous Marker") { timeline.previousMarker() }.keyboardShortcut("[", modifiers: [])
+            // ] and [ are handled by MarkerKeys; a pull-down only sometimes registers its shortcuts.
+            Button("Next Marker   ]") { timeline.nextMarker() }
+            Button("Previous Marker   [") { timeline.previousMarker() }
             Divider()
             Button("Show All Types") { timeline.hiddenMarkerKinds = [] }.disabled(timeline.hiddenMarkerKinds.isEmpty)
-            Button("Edit Marker Types…") { editTypes = true }
+            Button("Edit Marker Types…") { timeline.editingMarkerTypes = true }
             Button("Show Control Settings…") { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) }
         } label: {
             Text("Send / Export").font(Theme.grotesk(14, .light)).foregroundStyle(Theme.paper)
@@ -109,7 +117,7 @@ struct MarkerMenu: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Send markers to grandMA3 or disguise, export them, or edit the marker types")
-        .sheet(isPresented: $editTypes) { MarkerTypesEditor(timeline: timeline) }
+
     }
 }
 
@@ -125,16 +133,21 @@ struct MarkerOverlay: View {
     let height: CGFloat
     @State private var dragging: (id: UUID, dx: CGFloat)?
 
-    /// Label lanes: a label drops to the next lane up when it would run into the one before.
+    /// Label lanes. Lane 0 sits beside the marker's own tag, in the tag row, so it must clear
+    /// the other tags as well as the label before it; lower lanes only have labels to clear.
     private func lanes(_ items: [(marker: Marker, time: Double)]) -> [UUID: Int] {
+        let tags = items.map { CGFloat(($0.time - from) * scale) }
         var ends: [CGFloat] = []
         var out: [UUID: Int] = [:]
-        for item in items {
-            let x = CGFloat((item.time - from) * scale) + 6
-            let w = CGFloat(item.marker.displayName(in: timeline.markerTypes).count) * 6.6 + 10
-            let lane = ends.firstIndex { $0 <= x } ?? ends.count
-            if lane == ends.count { ends.append(x + w) } else { ends[lane] = x + w }
-            out[item.marker.id] = min(lane, 2)
+        for (i, item) in items.enumerated() {
+            let start = tags[i] + 10
+            let end = start + CGFloat(item.marker.displayName(in: timeline.markerTypes).count) * 6.4 + 8
+            let clearsTags = !tags.indices.contains { j in j != i && tags[j] + 7 > start && tags[j] - 7 < end }
+            var lane = ends.firstIndex { $0 <= start } ?? ends.count
+            if lane == 0 && !clearsTags { lane = ends.dropFirst().firstIndex { $0 <= start } ?? max(ends.count, 1) }
+            while ends.count <= lane { ends.append(-.infinity) }
+            ends[lane] = end + 6
+            out[item.marker.id] = min(lane, 3)
         }
         return out
     }
@@ -149,25 +162,32 @@ struct MarkerOverlay: View {
                 let x = CGFloat((item.time - from) * scale) + dx
                 if x >= -2, x <= width + 2 {
                     let selected = timeline.selectedMarkerID == m.id
-                    Rectangle().fill(timeline.markerTypes.color(m.kind).opacity(selected ? 1 : 0.8))
-                        .frame(width: selected ? 2 : 1, height: height - 22)
-                        .offset(x: x - (selected ? 1 : 0.5), y: 22)
+                    let color = timeline.markerTypes.color(m.kind)
+                    let key = timeline.markerTypes.number(m.kind).map(String.init) ?? ""
+                    Rectangle().fill(color.opacity(selected ? 1 : 0.7))
+                        .frame(width: 1, height: height - 22)
+                        .offset(x: x - 0.5, y: 22)
                         .allowsHitTesting(false)
-                    Text(m.displayName(in: timeline.markerTypes))
-                        .font(Theme.grotesk(11, .medium))
-                        .foregroundStyle(timeline.markerTypes.color(m.kind))
+                    // Label beside the tag, in small mono capitals; crowded ones stack downward.
+                    Text(m.displayName(in: timeline.markerTypes).uppercased())
+                        .font(Theme.mono(9, bold: selected))
+                        .tracking(0.8)
+                        .foregroundStyle(color)
                         .lineLimit(1)
                         .fixedSize()
                         .padding(.horizontal, 3)
-                        .background(Theme.ink.opacity(0.7))
-                        .offset(x: x + 6, y: height - 18 - CGFloat(lane[m.id] ?? 0) * 17)
+                        .background(Theme.ink.opacity(0.75))
+                        .offset(x: x + 10, y: 24 + CGFloat(lane[m.id] ?? 0) * 15)
                         .allowsHitTesting(false)
-                    // Handle: drag to move (snaps to frames), click to go, right-click for more.
-                    Circle().fill(timeline.markerTypes.color(m.kind))
-                        .overlay(Circle().strokeBorder(Theme.paper, lineWidth: selected ? 1.5 : 0))
-                        .frame(width: 11, height: 11)
+                    // Tag: a square in the type's colour with its key. Drag to move, click to go.
+                    Text(key)
+                        .font(Theme.mono(8, bold: true))
+                        .foregroundStyle(Theme.ink)
+                        .frame(width: 13, height: 13)
+                        .background(Rectangle().fill(color))
+                        .overlay(Rectangle().strokeBorder(Theme.paper, lineWidth: selected ? 1.5 : 0))
                         .contentShape(Rectangle().inset(by: -4))
-                        .offset(x: x - 5.5, y: 22)
+                        .offset(x: x - 6.5, y: 22)
                         .highPriorityGesture(
                             DragGesture(minimumDistance: 2)
                                 .onChanged { v in dragging = (m.id, v.translation.width) }
@@ -302,8 +322,12 @@ struct MarkerList: View {
         HStack(spacing: 8) {
             Text(m.timecode(rate: timeline.rate).display(dropFrame: timeline.rate.isDropFrame))
                 .font(Theme.mono(11)).monospacedDigit().frame(width: 82, alignment: .leading)
-            Text(timeline.markerTypes.name(m.kind)).font(Theme.grotesk(12, .medium)).foregroundStyle(timeline.markerTypes.color(m.kind))
-                .lineLimit(1).minimumScaleFactor(0.8).frame(width: 92, alignment: .leading)
+            HStack(spacing: 6) {
+                Rectangle().fill(timeline.markerTypes.color(m.kind)).frame(width: 7, height: 7)
+                Text(timeline.markerTypes.name(m.kind)).font(Theme.grotesk(12, .light)).foregroundStyle(timeline.markerTypes.color(m.kind))
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .frame(width: 92, alignment: .leading)
             if editing == m.id {
                 TextField("Label", text: $draft)
                     .textFieldStyle(.plain).font(Theme.grotesk(12))
@@ -441,5 +465,84 @@ private struct TypeRow: View {
         case .alertSecondButtonReturn: timeline.removeMarkerType(type.id, moveTo: nil)
         default: break
         }
+    }
+}
+
+/// Presents the marker type editor wherever the main window is (any mode).
+struct MarkerTypesSheet: ViewModifier {
+    @ObservedObject var timeline: TimelineModel
+
+    func body(content: Content) -> some View {
+        content.sheet(isPresented: $timeline.editingMarkerTypes) { MarkerTypesEditor(timeline: timeline) }
+    }
+}
+
+// MARK: - Keys
+
+/// The timeline's single-key commands: 1–9 drop a marker of that type, M another of the last
+/// type, ] and [ step to the next and previous marker. Read straight off the window's key events
+/// rather than as SwiftUI shortcuts, which only sometimes register (never reliably inside a
+/// pull-down menu), and left alone while a text field is being typed in, so a label or an
+/// address can still contain digits and brackets.
+struct MarkerKeys: NSViewRepresentable {
+    let timeline: TimelineModel
+
+    func makeNSView(context: Context) -> Catcher {
+        let view = Catcher()
+        view.timeline = timeline
+        return view
+    }
+
+    func updateNSView(_ view: Catcher, context: Context) { view.timeline = timeline }
+
+    enum Key: Equatable { case next, previous, again, type(Int) }
+
+    /// What a key press means, or nil to let it through. Layout-independent for [ and ]: their
+    /// key positions (ANSI 33 and 30) count even where the layout puts other characters there.
+    static func key(characters: String?, keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Key? {
+        guard modifiers.intersection([.command, .control, .option, .function]).isEmpty else { return nil }
+        switch characters?.lowercased() ?? "" {
+        case "]": return .next
+        case "[": return .previous
+        case "m": return .again
+        case let c where c.count == 1 && ("1"..."9").contains(c): return .type(Int(c)!)
+        default:
+            if keyCode == 30 { return .next }
+            if keyCode == 33 { return .previous }
+            return nil
+        }
+    }
+
+    final class Catcher: NSView {
+        weak var timeline: TimelineModel?
+        private var monitor: Any?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, let window = self.window, event.window === window,
+                      !(window.firstResponder is NSText),
+                      let timeline = self.timeline,
+                      let key = MarkerKeys.key(characters: event.charactersIgnoringModifiers, keyCode: event.keyCode,
+                                               modifiers: event.modifierFlags)
+                else { return event }
+                switch key {
+                case .next: timeline.nextMarker()
+                case .previous: timeline.previousMarker()
+                case .again: if !event.isARepeat { timeline.addMarker() }
+                case .type(let n):
+                    let types = timeline.markerTypes.types
+                    guard n - 1 < min(types.count, MarkerTypes.keyed) else { return event }
+                    if !event.isARepeat { timeline.addMarker(types[n - 1].id) }
+                }
+                return nil
+            }
+        }
+
+        /// Never takes clicks; the monitor is removed when the view leaves its window.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }

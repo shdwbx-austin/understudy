@@ -16,7 +16,7 @@ struct StartView: View {
                 Spacer()
                 VStack(alignment: .leading, spacing: 10) {
                     Text("understudy").font(Theme.grotesk(64, .medium)).tracking(-1.5)
-                    Text("Stands in for the cameras between run-throughs.")
+                    Text("A sidecar for programming workflows.")
                         .font(Theme.grotesk(17, .light)).foregroundStyle(Theme.grey)
                     UpdateLine(updater: model.updater).padding(.top, 6)
                 }

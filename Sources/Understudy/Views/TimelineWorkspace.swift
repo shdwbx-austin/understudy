@@ -30,7 +30,7 @@ struct TimelineWorkspace: View {
             }
             VStack(alignment: .leading, spacing: 12) {
                 TimelineTrack(timeline: timeline)
-                    .frame(height: 84)
+                    .frame(height: 118)
                     .help("The set: click, drag or swipe to move through it (keeps playing). Double-click a song to go to its start.")
                 MarkerBar(timeline: timeline)
                 // Takes whatever height is spare: taller on a big show monitor, easier to scrub.
@@ -39,7 +39,8 @@ struct TimelineWorkspace: View {
                     MarkerList(timeline: timeline)
                         .frame(width: max(300, column * 1.1))
                 }
-                .frame(minHeight: 130, maxHeight: 320)
+                // The current song takes all the height that's spare.
+                .frame(minHeight: 180, maxHeight: .infinity)
                 TransportBar(timeline: timeline, compact: true)
                 Rule()
                 TakePicker()
@@ -53,16 +54,16 @@ struct TimelineWorkspace: View {
         }
     }
 
-    /// The playlist sits on the grid (label column plus one column) unless a song name needs more,
-    /// then widens to fit the longest name, up to 45% of the workspace.
+    /// The playlist is a narrow column: the timeline gets the room. Long song names truncate
+    /// (the full name is in the row's tooltip); a short set list can be narrower still.
     private func playlistWidth(total: CGFloat) -> CGFloat {
-        let grid = ShowGrid.labelWidth + Theme.gutter + column
         let font = NSFont(name: "NHaasGroteskTXPro-55Rg", size: 14) ?? NSFont(name: "HelveticaNeue", size: 14) ?? .systemFont(ofSize: 14)
         let longest = timeline.songs.map { ($0.name as NSString).size(withAttributes: [.font: font]).width }.max() ?? 0
         // Number, badges, duration and spacing around the name.
         let needed = longest + 22 + 20 + 22 + 40 + 4 * 10 + 24
-        return min(max(grid, needed), total * 0.45)
+        return min(max(250, needed), max(250, total * 0.24))
     }
+
 }
 
 private struct SectionCaption: View {
@@ -444,7 +445,7 @@ struct DeckChips: View {
     var body: some View {
         let assigned = model.decks.filter { model.settings.decks.indices.contains($0.id) && !model.settings.decks[$0.id].host.trimmingCharacters(in: .whitespaces).isEmpty }
         // Up to four across, then wrap: 16 decks make four rows of four.
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: max(1, min(4, assigned.count))), spacing: 8) {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 8)], spacing: 6) {
             ForEach(assigned, id: \.id) { deck in
                 DeckChip(deck: deck, config: model.settings.decks[deck.id])
             }
@@ -460,24 +461,25 @@ private struct DeckChip: View {
     @ObservedObject var deck: DeckController
     let config: DeckConfig
 
+    /// One slim line per deck: number, name, status word, drift. Red outline when lost.
     var body: some View {
         let status = DeckStatus.word(deck, model: model)
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(String(format: "%02d", deck.id + 1))
-                .font(Theme.grotesk(26, .light))
-                .foregroundStyle(status.color == Theme.lock ? Theme.lock : Theme.paper)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(config.name.trimmingCharacters(in: .whitespaces)).font(Theme.grotesk(12, .medium)).lineLimit(1)
-                Text(status.text).font(Theme.grotesk(13, .medium)).foregroundStyle(status.color).lineLimit(1)
-                Text(deck.smoothedError.map { String(format: "Δ %+.1f F", $0) } ?? "Δ —")
-                    .font(Theme.mono(9)).foregroundStyle(Theme.grey)
-            }
-            Spacer(minLength: 0)
+                .font(Theme.mono(10))
+                .foregroundStyle(Theme.grey)
+            Text(config.name.trimmingCharacters(in: .whitespaces)).font(Theme.grotesk(12, .regular)).lineLimit(1)
+            Text(status.text).font(Theme.grotesk(12, .light)).foregroundStyle(status.color).lineLimit(1)
+            Spacer(minLength: 4)
+            Text(deck.smoothedError.map { String(format: "Δ %+.1f", $0) } ?? "")
+                .font(Theme.mono(9)).foregroundStyle(Theme.quiet)
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.vertical, 5)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(Rectangle().strokeBorder(deck.isLost ? Theme.signal : Theme.rule, lineWidth: 1))
+        .background(deck.isLost ? Theme.signal.opacity(0.12) : Theme.fill)
+        .overlay(Rectangle().strokeBorder(deck.isLost ? Theme.signal : Color.clear, lineWidth: 1))
+        .help("\(config.name) · \(status.text)")
     }
 }
 

@@ -63,6 +63,8 @@ final class TimelineModel: ObservableObject {
         didSet { if hiddenMarkerKinds != oldValue { save() } }
     }
     @Published var selectedMarkerID: UUID?
+    /// The marker type editor is open (from the marker bar, a chip, or Markers › Edit Marker Types…).
+    @Published var editingMarkerTypes = false
     /// The project's marker types: names, colours, order (keys 1–9).
     @Published var markerTypes: MarkerTypes = .defaults {
         didSet { if markerTypes != oldValue { save() } }
@@ -712,7 +714,11 @@ final class TimelineModel: ObservableObject {
     }
 
     func nextMarker() {
-        let now = isPlaying ? transport.position(at: HostClock.now()) : playhead
+        var now = isPlaying ? transport.position(at: HostClock.now()) : playhead
+        // Just jumped to the selected marker: step past it even if the playhead has landed (or,
+        // while audio restarts, still reads) a hair before it.
+        if let selected = placedMarkers.first(where: { $0.marker.id == selectedMarkerID }),
+           abs(selected.time - now) < 0.25 { now = max(now, selected.time) }
         if let next = placedMarkers.first(where: { $0.time > now + 0.02 }) { go(to: next.marker) }
     }
 
