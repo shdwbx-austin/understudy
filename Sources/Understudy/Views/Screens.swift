@@ -55,7 +55,7 @@ struct ViewScreen: View {
     @ViewBuilder private var pictures: some View {
         let slots = viewer.slots
         if slots.isEmpty {
-            Text("No decks with takes yet. Record a take on Decks (⌘3), back it up (⌘B), and it plays here, locked to the timeline.")
+            Text("No decks with takes yet. Record a take (⌘3), back it up (⌘B), and it plays here, locked to the timeline.")
                 .font(Theme.grotesk(15, .light)).foregroundStyle(Theme.grey)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Rectangle().fill(Theme.fill))
@@ -99,7 +99,7 @@ struct ViewScreen: View {
 
 // MARK: - Decks
 
-/// The Decks screen: everything about the recorders. Control (what they're doing, the take, each
+/// The Record screen: everything about the recorders. Control (what they're doing, the take, each
 /// deck, Assign and Setup), then the settings that belong to them: timecode in, recording,
 /// playback, backup.
 struct DecksScreen: View {
