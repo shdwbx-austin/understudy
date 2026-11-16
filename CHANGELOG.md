@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 — 2026-11-16
 
 - **Tempo from the audio.** Each song's audio is listened to for its tempo and beat positions (in the background, with the waveform; songs analysed before get a quick tempo-only pass once). Each music channel is checked as well as the mix, so a click channel wins when there is one. Songs without a tempo of yours get it, marked ≈ (GRID ≈96, Tempo (≈96 BPM)…); a BPM in the file name is trusted for the tempo and the audio places the beats. Tempo… shows what was heard, how sure it is, and ÷2, ×2 and the runner-up tempos as one-click buttons. Typed-in tempos and downbeats you set are never replaced.
   - Accuracy on Apple Loops layered into 120 songs: right first time in 84 (70%), the right tempo among the buttons in 96 (80%); most misses are half, double or ¾ speed. Click tracks and drum grooves are found to within 0.05 BPM, with the beats within 15 ms.
