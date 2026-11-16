@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 — 2026-11-16
 
 - **A clearer loop.** Outside the loop is dimmed, with solid edges, a bar along the top and a label with its times and length. Clear it with the label's ×, the × by LOOP, Clear Loop in its menu, or ⇧L.
 - **Drag along the ruler to draw a loop** above the current song (the song itself still scrubs).
