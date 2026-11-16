@@ -138,14 +138,22 @@ struct OSCTests {
     /// Bytes as MA3 / Companion send them: "/cmd" ",s" "Go+ Exec 201".
     @Test func knownBytes() {
         let data = OSCMessage("/gma3/cmd", [.string("Go+ Exec 201")]).encoded()
-        let expected: [UInt8] = Array("/gma3/cmd".utf8) + [0, 0, 0] + Array(",s".utf8) + [0, 0] + Array("Go+ Exec 201".utf8) + [0, 0, 0, 0]
+        // Built step by step: one long `+` chain of literals is too slow for older compilers to type-check.
+        var expected = [UInt8]("/gma3/cmd".utf8)
+        expected += [0, 0, 0]
+        expected += [UInt8](",s".utf8)
+        expected += [0, 0]
+        expected += [UInt8]("Go+ Exec 201".utf8)
+        expected += [0, 0, 0, 0]
         #expect([UInt8](data) == expected)
     }
 
     @Test func bundles() {
         let a = OSCMessage("/understudy/play").encoded()
         let b = OSCMessage("/understudy/marker/3").encoded()
-        var bundle = Data("#bundle".utf8) + [0] + Data(count: 8)
+        var bundle = Data("#bundle".utf8)
+        bundle.append(0)
+        bundle.append(Data(count: 8))
         for part in [a, b] {
             withUnsafeBytes(of: UInt32(part.count).bigEndian) { bundle.append(contentsOf: $0) }
             bundle.append(part)
