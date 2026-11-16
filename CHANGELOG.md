@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.1 — 2026-11-16
 
 - **Fixed: the beat grid didn't appear after setting a tempo** (and GRID kept asking for one). The tempo was saved, but the timeline drew from a copy of the song that only refreshed when the set changed. Tempo and downbeat changes now show at once, without interrupting playback.
 - **The grid shows without zooming**: every bar, or every 2nd, 4th or 8th bar when they'd be too close; beats appear as you zoom in.
