@@ -95,6 +95,7 @@ struct SettingsView: View {
                      ? "Decks record from REC until STOP, stamped with their own clock. Understudy logs show code against each take, so LTC dropouts and jumps don't stop or break a recording."
                      : "Each deck records only while its LTC input runs and stamps clips with show code. If LTC drops, the deck stops recording.")
                     .font(.caption).foregroundStyle(.secondary)
+                RecordNamingSettings()
             }
 
             Section("Chase") {
@@ -415,5 +416,41 @@ private struct ShowControlSettings: View {
             do { d3Tracks = try await D3Client.tracks(host: host); if d3Tracks.isEmpty { d3Problem = "No tracks" } }
             catch { d3Tracks = []; d3Problem = error.localizedDescription }
         }
+    }
+}
+
+/// The file-name template for recordings, with tokens to insert and a live preview per deck.
+private struct RecordNamingSettings: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        TextField("Artist", text: $model.settings.recordNaming.artist, prompt: Text("e.g. RKS"))
+        TextField("File name", text: $model.settings.recordNaming.template, prompt: Text(RecordNaming.defaultTemplate))
+            .font(Theme.mono(12))
+        HStack(spacing: 6) {
+            ForEach(RecordNaming.tokens, id: \.self) { token in
+                Button(token) {
+                    var t = model.settings.recordNaming.template
+                    if !t.isEmpty, !t.hasSuffix("_"), !t.hasSuffix("-") { t += "_" }
+                    model.settings.recordNaming.template = t + token
+                }
+                .font(Theme.mono(10))
+                .controlSize(.small)
+            }
+            Spacer()
+            Button("Default") {
+                model.settings.recordNaming.template = RecordNaming.defaultTemplate
+            }
+            .controlSize(.small)
+            .disabled(model.settings.recordNaming.template == RecordNaming.defaultTemplate)
+        }
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(model.settings.decks.filter { $0.enabled && !$0.host.isEmpty }, id: \.id) { deck in
+                Text(model.recordName(for: deck.id, at: Date()) + "_0001.mov")
+                    .font(Theme.mono(11)).textSelection(.enabled)
+            }
+        }
+        Text("{deck} deck name · {n} deck number · {artist} · {show} setlist · {date} 2026-11-15 · {day} Sun · {time} 2015 · {seconds} 201530. The time is when Record is pressed; the deck adds its take number. Spaces and symbols become _, and an empty token drops out.")
+            .font(.caption).foregroundStyle(.secondary)
     }
 }

@@ -57,6 +57,8 @@ final class AppModel: ObservableObject {
     @Published var linkMessage: String?
     @Published private(set) var linkBusy = false
     let osc = OSCServer()
+    /// When Record was last pressed: the {date}/{time} in recording names.
+    private(set) var recordStartedAt: Date?
     /// Dante out through Dante Virtual Soundcard: off, sending, or what's stopping it.
     @Published private(set) var danteStatus: DanteOut.Status = .off
     private var danteSoundcard: DanteOut.Device?
@@ -219,6 +221,8 @@ final class AppModel: ObservableObject {
         if mode == .timeline, newMode != .timeline { timeline.stop() }
         // Never copy files off the decks while they record.
         if newMode == .record, backup.isRunning { backup.cancel() }
+        // One time for the whole take, so every deck's file (and a deck that rejoins) shares it.
+        if newMode == .record { recordStartedAt = Date() }
         mode = newMode
         syncInput()
         UserDefaults.standard.set(newMode.rawValue, forKey: Self.lastModeKey)
@@ -249,7 +253,14 @@ final class AppModel: ObservableObject {
     }
 
     private func arm(_ deck: DeckController) {
-        deck.arm(prefix: settings.decks[deck.id].name, mode: settings.recordMode, dropFrame: ltcRate.isDropFrame)
+        deck.arm(prefix: recordName(for: deck.id), mode: settings.recordMode, dropFrame: ltcRate.isDropFrame)
+    }
+
+    /// The file name a deck records under for the take started at `recordStartedAt` (the deck adds _0001…).
+    func recordName(for id: Int, at date: Date? = nil) -> String {
+        settings.recordNaming.name(deck: settings.decks[id].name, number: id + 1,
+                                   show: timeline.currentSetlist?.name ?? "",
+                                   at: date ?? recordStartedAt ?? Date())
     }
 
     /// A deck (re)connected: bring it into the current mode. A deck that's already recording is

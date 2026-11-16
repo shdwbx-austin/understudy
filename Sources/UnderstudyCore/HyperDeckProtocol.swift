@@ -101,9 +101,7 @@ public enum HyperDeckCommand {
     }
 
     public static func recordPrefix(_ name: String) -> String {
-        let safe = name.unicodeScalars
-            .map { CharacterSet.alphanumerics.contains($0) || $0 == "-" || $0 == "_" ? Character($0) : "_" }
-        return "configuration: record prefix: \(String(safe).isEmpty ? "understudy" : String(safe))"
+        "configuration: record prefix: \(RecordNaming.sanitized(name))"
     }
 
     /// Go to clip `id`, `frame` frames from its start (0 = first frame). The deck counts a clip's

@@ -93,6 +93,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var danteOut = false
     /// Network port (BSD name, e.g. "en8") Dante should be on, watched for a link; nil = any.
     public var danteInterface: String?
+    /// How recordings are named on the decks.
+    public var recordNaming = RecordNaming()
     /// OSC control in (Stream Deck via Companion, grandMA3, …): play, pause, markers.
     public var oscEnabled = true
     public var oscPort = 9000
@@ -153,6 +155,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         ltcOutUseTrackTimecode = (try? c.decodeIfPresent(Bool.self, forKey: .ltcOutUseTrackTimecode)) ?? d.ltcOutUseTrackTimecode
         danteOut = (try? c.decodeIfPresent(Bool.self, forKey: .danteOut)) ?? d.danteOut
         danteInterface = (try? c.decodeIfPresent(String.self, forKey: .danteInterface)) ?? d.danteInterface
+        recordNaming = (try? c.decodeIfPresent(RecordNaming.self, forKey: .recordNaming)) ?? d.recordNaming
         oscEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .oscEnabled)) ?? d.oscEnabled
         oscPort = (try? c.decodeIfPresent(Int.self, forKey: .oscPort)) ?? d.oscPort
         ma3Host = (try? c.decodeIfPresent(String.self, forKey: .ma3Host)) ?? d.ma3Host
