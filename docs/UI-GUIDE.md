@@ -112,6 +112,10 @@ monitor, smaller on a laptop, and never pushing a deck below the fold on 1440×9
 
 In Timeline mode the show screen's big clock and Mode row give way to one bar
 (`TimelineTopBar`): name and project, `ModeTabs`, and the timecode with its state on one line.
+The tabs keep the softness of the big mode names: light Haas words, the current one white with
+a fine underline in its colour, no boxes. (A first version used outlined uppercase mono tabs
+with a solid white block; it read as harsh. Keep compact controls in the same light type as the
+screens they replace.)
 The playlist and timeline take the rest. The playlist collapses to a slim rail (⌃⌘S); its
 actions live in one ··· menu rather than a row of text buttons.
 

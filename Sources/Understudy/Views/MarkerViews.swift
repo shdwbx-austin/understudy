@@ -58,13 +58,13 @@ private struct MarkerChip: View {
             HStack(spacing: 5) {
                 Text(number.map(String.init) ?? "·").font(Theme.mono(9, bold: true))
                     .frame(width: 14, height: 14)
-                    .background(Circle().fill(color.opacity(hidden ? 0.3 : 1)))
+                    .background(Circle().fill(color.opacity(hidden ? 0.3 : 0.85)))
                     .foregroundStyle(Theme.ink)
-                Text(type.name).font(Theme.grotesk(12, .medium)).lineLimit(1)
-                    .foregroundStyle(hidden ? Theme.quiet : color)
+                Text(type.name).font(Theme.grotesk(13, .light)).lineLimit(1)
+                    .foregroundStyle(hidden ? Theme.quiet : color.opacity(0.92))
             }
             .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(Capsule().fill(color.opacity(hidden ? 0.05 : 0.14)))
+            .background(Capsule().fill(color.opacity(hidden ? 0.03 : 0.08)))
         }
         .buttonStyle(.plain)
         .help("Add a \(type.name) marker at the playhead\(number.map { " (\($0))" } ?? ""). Right-click to hide or show \(type.name) markers.")
@@ -104,7 +104,7 @@ struct MarkerMenu: View {
             Button("Edit Marker Types…") { editTypes = true }
             Button("Show Control Settings…") { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) }
         } label: {
-            Text("SEND / EXPORT").font(Theme.mono(10, bold: true)).tracking(1.2)
+            Text("Send / Export").font(Theme.grotesk(14, .light)).foregroundStyle(Theme.paper)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
