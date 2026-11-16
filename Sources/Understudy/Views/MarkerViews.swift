@@ -367,39 +367,98 @@ struct MarkerGroupActions: View {
     }
 }
 
-/// A song's tempo: BPM and beats per bar (or none). Offers the BPM in its audio file's name.
+/// A song's tempo: BPM and beats per bar (or none). Offers what was heard in its audio (with
+/// half, double and the runner-up tempos one click away) and the BPM in its file name.
 @MainActor
 enum TempoPrompt {
+    static let choices = [2, 3, 4, 5, 6, 7]
+
     static func ask(timeline: TimelineModel, song: Song) {
-        let alert = NSAlert()
-        alert.messageText = "Tempo for “\(song.name)”"
-        alert.informativeText = "For the beat grid and arraying markers. Quarter notes per minute. Line the grid up with Set Downbeat at Playhead (right-click GRID, or the song)."
-        let bpm = NSTextField(frame: NSRect(x: 0, y: 30, width: 90, height: 24))
-        bpm.placeholderString = "BPM"
-        bpm.stringValue = timeline.suggestedBPM(song).map(TimelineModel.bpmText) ?? ""
-        let meter = NSPopUpButton(frame: NSRect(x: 100, y: 29, width: 140, height: 26))
-        let choices = [2, 3, 4, 5, 6, 7]
-        meter.addItems(withTitles: choices.map { "\($0) beats a bar" })
-        meter.selectItem(at: choices.firstIndex(of: song.beatsPerBar ?? 4) ?? 2)
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 58))
-        view.addSubview(bpm)
-        view.addSubview(meter)
-        alert.accessoryView = view
-        alert.addButton(withTitle: "Set")
-        alert.addButton(withTitle: "Cancel")
-        if song.bpm != nil { alert.addButton(withTitle: "No Tempo") }
-        alert.window.initialFirstResponder = bpm
-        switch alert.runModal() {
+        let (alert, bpm, meter, setter) = make(timeline: timeline, song: song)
+        let answer = alert.runModal()
+        withExtendedLifetime(setter) {}
+        switch answer {
         case .alertFirstButtonReturn:
             guard let value = SongTempo.parse(bpm.stringValue) else {
                 ArrayPrompt.complain("“\(bpm.stringValue)” isn't a tempo.", "Type the BPM as a number between 20 and 400, e.g. 120.")
                 return ask(timeline: timeline, song: song)
             }
+            // Confirming the heard tempo (or half/double of it) keeps its beat positions.
             timeline.setTempo(song.id, bpm: value, beatsPerBar: choices[max(0, meter.indexOfSelectedItem)])
             timeline.showGrid = true
         case .alertThirdButtonReturn:
             timeline.setTempo(song.id, bpm: nil)
         default: break
+        }
+    }
+
+    /// The dialog, built but not shown.
+    static func make(timeline: TimelineModel, song: Song) -> (NSAlert, NSTextField, NSPopUpButton, FieldSetter) {
+        let alert = NSAlert()
+        alert.messageText = "Tempo for “\(song.name)”"
+        let heard = timeline.heardTempo(song)
+        var info = "For the beat grid and arraying markers. Quarter notes per minute."
+        if let heard {
+            info += "\n\nHeard in the audio: ≈ \(TimelineModel.bpmText(heard.bpm)) BPM"
+                + (heard.isConfident ? "." : " (not sure: the beat isn't clear).")
+                + (heard.channel.map { " From channel \($0 + 1)." } ?? "")
+            info += " Beat one is a guess: Set Downbeat at Playhead moves it."
+        } else if song.audioPath != nil {
+            info += "\n\nNo clear beat heard in the audio yet."
+        }
+        alert.informativeText = info
+        let bpm = NSTextField(frame: NSRect(x: 0, y: 34, width: 90, height: 24))
+        bpm.placeholderString = "BPM"
+        bpm.stringValue = timeline.suggestedBPM(song).map(TimelineModel.bpmText) ?? ""
+        let meter = NSPopUpButton(frame: NSRect(x: 100, y: 33, width: 150, height: 26))
+        meter.addItems(withTitles: choices.map { "\($0) beats a bar" })
+        meter.selectItem(at: choices.firstIndex(of: song.beatsPerBar ?? 4) ?? 2)
+        // One-click changes to the field: half, double, and the other tempos it might be.
+        let setter = FieldSetter(field: bpm)
+        var quick: [(String, (Double) -> Double?)] = [("÷2", { $0 / 2 }), ("×2", { $0 * 2 })]
+        for alt in heard?.alternatives ?? [] { quick.append((TimelineModel.bpmText(alt), { _ in alt })) }
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 64))
+        view.addSubview(bpm)
+        view.addSubview(meter)
+        var x: CGFloat = 0
+        for (title, change) in quick {
+            let button = NSButton(title: title, target: setter, action: #selector(FieldSetter.apply(_:)))
+            button.bezelStyle = .rounded
+            button.controlSize = .small
+            button.sizeToFit()
+            button.frame.origin = NSPoint(x: x, y: 2)
+            button.tag = setter.add(change)
+            button.toolTip = title.hasPrefix("÷") || title.hasPrefix("×") ? "\(title) the tempo in the box" : "Use \(title) BPM (another tempo it could be)"
+            view.addSubview(button)
+            x += button.frame.width + 6
+        }
+        alert.accessoryView = view
+        alert.addButton(withTitle: "Set")
+        alert.addButton(withTitle: "Cancel")
+        if song.bpm != nil { alert.addButton(withTitle: "No Tempo") }
+        alert.window.initialFirstResponder = bpm
+        return (alert, bpm, meter, setter)
+    }
+}
+
+/// Target for the Tempo dialog's quick buttons: each changes the BPM field.
+@MainActor
+final class FieldSetter: NSObject {
+    let field: NSTextField
+    private var changes: [(Double) -> Double?] = []
+
+    init(field: NSTextField) { self.field = field }
+
+    func add(_ change: @escaping (Double) -> Double?) -> Int {
+        changes.append(change)
+        return changes.count - 1
+    }
+
+    @objc func apply(_ sender: NSButton) {
+        guard changes.indices.contains(sender.tag) else { return }
+        let current = SongTempo.parse(field.stringValue) ?? 0
+        if let value = changes[sender.tag](current), value > 0 {
+            field.stringValue = TimelineModel.bpmText((value * 100).rounded() / 100)
         }
     }
 }
