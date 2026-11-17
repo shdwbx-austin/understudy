@@ -110,13 +110,14 @@ public struct ProjectFile: Codable, Equatable, Sendable {
 ///     <Name>/objects/SongList/     imported song lists
 ///     <Name>/objects/Export/       marker exports
 ///     <Name>/objects/VideoFile/    recordings pulled in from the backup, one folder per deck
+///     <Name>/objects/LUT/          .cube LUTs the decks' input transforms use
 ///     <Name>/internal/analysis/    waveform and timecode caches
 public struct ProjectLayout: Equatable, Sendable {
     public static let fileExtension = "understudy"
     public static let historyKeep = 50
 
     public enum Asset: String, CaseIterable, Sendable {
-        case audio = "AudioFile", songList = "SongList", export = "Export", video = "VideoFile"
+        case audio = "AudioFile", songList = "SongList", export = "Export", video = "VideoFile", lut = "LUT"
     }
 
     public let folder: URL
@@ -192,6 +193,20 @@ public struct ProjectLayout: Equatable, Sendable {
             guard let r = f.range(of: "_history"), let end = f.range(of: "__", range: r.upperBound..<f.endIndex) else { return nil }
             return Int(f[r.upperBound..<end.lowerBound])
         }.max() ?? 0
+    }
+}
+
+extension ProjectFile {
+    /// The file's paths (song audio, deck LUTs) made absolute (`toStored` false) or stored the
+    /// way `layout` keeps them (relative inside the project).
+    public mutating func mapPaths(_ layout: ProjectLayout, toStored: Bool) {
+        let f: (String) -> String = toStored ? layout.stored : layout.resolved
+        for i in show.songs.indices {
+            if let p = show.songs[i].audioPath { show.songs[i].audioPath = f(p) }
+        }
+        for i in decks.indices {
+            if case .lut(let p) = decks[i].inputTransform { decks[i].inputTransform = .lut(path: f(p)) }
+        }
     }
 }
 

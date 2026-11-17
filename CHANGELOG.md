@@ -7,6 +7,8 @@
 - **A tidier song track.** The song's name and timecode sit along the bottom instead of under the markers, and marker labels that would land on each other are left off (the marker list has them; a selected marker's label always shows).
 - **Nothing wraps in a smaller window.** The header shortens "Open in window ⌘T" to "⌘T", the transport drops its LTC status and then the lead-in before anything wraps, and the footer drops AWAKE and the mark.
 - Smaller things: long messages (an import report) are two lines with the rest on hover; the Record screen's rate reads "30 FPS · FIXED" (or AUTO-DETECTED) instead of "30 · SET"; MA3 sequence and timecode numbers show as 1001, not 1,001; the NDI line no longer repeats "NDI off" beside its switch; the Timeline window says "no decks connected" instead of "driving the decks" when none are.
+- **Log footage in the viewer and on NDI.** Each deck in View has a menu next to NDI out for how its recordings become Rec.709: None, a built-in conversion (Blackmagic Film Gen 5, Sony S-Log3 / S-Gamut3.Cine, ARRI LogC3 / AWG3, Panasonic V-Log / V-Gamut), or a `.cube` LUT you load (copied into the project's `objects/LUT/`). It runs on the GPU and applies to the picture in Understudy and the NDI feed alike, at full rate at 1080p59.94. Saved per deck in the project.
+- **NDI colours are closer to the file.** Frames now go out as opaque BGRX instead of BGRA; through NDI's codec, colours had drifted up to 9/255 (greys tinted), now about 3/255.
 
 ## 0.12.0 — 2026-11-16
 

@@ -18,13 +18,17 @@ public struct DeckConfig: Codable, Equatable, Identifiable, Sendable {
     public var enabled = true
     /// Frames to fire `play` early. Positive = deck is slow to start.
     public var playOffsetFrames: Double = 0
+    /// How its recordings become Rec.709 in the viewer and on NDI (log curve or LUT).
+    public var inputTransform: InputTransform = .none
 
-    public init(id: Int, name: String, host: String, enabled: Bool = true, playOffsetFrames: Double = 0) {
+    public init(id: Int, name: String, host: String, enabled: Bool = true, playOffsetFrames: Double = 0,
+                inputTransform: InputTransform = .none) {
         self.id = id
         self.name = name
         self.host = host
         self.enabled = enabled
         self.playOffsetFrames = playOffsetFrames
+        self.inputTransform = inputTransform
     }
 
     public init(from decoder: Decoder) throws {
@@ -34,6 +38,8 @@ public struct DeckConfig: Codable, Equatable, Identifiable, Sendable {
         host = (try? c.decodeIfPresent(String.self, forKey: .host)) ?? ""
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? true
         playOffsetFrames = (try? c.decodeIfPresent(Double.self, forKey: .playOffsetFrames)) ?? 0
+        // A curve from a newer version reads as none rather than losing the deck.
+        inputTransform = (try? c.decodeIfPresent(InputTransform.self, forKey: .inputTransform)) ?? .none
     }
 }
 

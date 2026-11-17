@@ -1,6 +1,8 @@
 import AVFoundation
 import AppKit
 import SwiftUI
+import UnderstudyCore
+import UniformTypeIdentifiers
 
 /// The selected take's recordings, locked to the timeline: one deck large, or up to three side by
 /// side, each also sent out as its own NDI stream when NDI is on.
@@ -26,6 +28,7 @@ struct VideoViewerView: View {
                 Toggle("Full size", isOn: $viewer.ndiFullSize).toggleStyle(.checkbox).controlSize(.small)
                     .help("Send the files' own size over NDI (heavier); off sends 1080p")
                     .disabled(!viewer.ndiEnabled)
+                InputTransformMenus(viewer: viewer)
                 Text(viewer.ndiStatus).font(Theme.grotesk(12, .light)).foregroundStyle(Theme.grey).lineLimit(1)
                 Spacer()
                 Button { model.loadViewerTake() } label: {
@@ -132,5 +135,67 @@ struct PlayerLayerView: NSViewRepresentable {
 
     func updateNSView(_ view: NSView, context: Context) {
         (view.layer as? AVPlayerLayer)?.player = player
+    }
+}
+
+/// One menu per deck in the viewer: how its recordings become Rec.709 (None, a camera log curve,
+/// or a .cube LUT), for the picture here and on NDI alike. Saved with the deck in the project.
+struct InputTransformMenus: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject var viewer: VideoViewer
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ForEach(viewer.slots) { slot in menu(for: slot) }
+        }
+    }
+
+    private func menu(for slot: VideoViewer.Slot) -> some View {
+        let current = model.inputTransform(deck: slot.deckID)
+        let problem = viewer.gradeProblems[slot.deckID]
+        return Menu {
+            choice(.none, current, deck: slot.deckID)
+            Section("Log to Rec.709") {
+                ForEach(LogCurve.allCases) { choice(.log($0), current, deck: slot.deckID) }
+            }
+            let luts = model.projectLUTs
+            if !luts.isEmpty || current.lutPath != nil {
+                Section("LUTs") {
+                    if let path = current.lutPath, !luts.contains(path) { choice(current, current, deck: slot.deckID) }
+                    ForEach(luts, id: \.self) { choice(.lut(path: $0), current, deck: slot.deckID) }
+                }
+            }
+            Divider()
+            Button("Load LUT…") { loadLUT(deck: slot.deckID, name: slot.name) }
+        } label: {
+            HStack(spacing: 4) {
+                if problem != nil { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.amber) }
+                Text("\(slot.name) · \(current.shortTitle)").lineLimit(1)
+            }
+            .font(Theme.grotesk(12, .light))
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .foregroundStyle(current == .none ? Theme.grey : Theme.paper)
+        .help(problem ?? "\(slot.name)'s input transform (\(current.title)), on screen and on NDI")
+    }
+
+    private func choice(_ transform: InputTransform, _ current: InputTransform, deck: Int) -> some View {
+        Button { model.setInputTransform(transform, deck: deck) } label: {
+            if transform == current { Label(transform.title, systemImage: "checkmark") } else { Text(transform.title) }
+        }
+    }
+
+    private func loadLUT(deck: Int, name: String) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "cube") ?? .data]
+        panel.message = "Choose a .cube LUT for \(name)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        if let problem = model.useLUT(url, deck: deck) {
+            let alert = NSAlert()
+            alert.messageText = "Couldn't use that LUT"
+            alert.informativeText = problem
+            alert.runModal()
+        }
     }
 }

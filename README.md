@@ -89,6 +89,7 @@ Each show is a project folder, laid out like a disguise project:
   objects/AudioFile/    song audio, copied in
   objects/SongList/     imported song lists
   objects/Export/       marker exports
+  objects/LUT/          .cube LUTs the decks' input transforms use
   internal/analysis/    waveform and timecode caches
 ```
 
@@ -134,6 +135,16 @@ The footage comes from the selected take, so record a full run-through first.
 **View** (**⌘2**) plays the selected take's recordings (up to three decks) inside Understudy, locked to the timeline's timecode the same way the decks chase it: ME 1 large with the others beside it (click one to swap), or **Side by side**. The set and transport are underneath, so you can scrub and play from View too. The files come from your backup folder (back the take up first, ⌘B) and are copied into the project's `objects/VideoFile/<deck>/`. View › Video in a Window (⌥⌘V) puts the same pictures in their own window, for a second screen.
 
 **NDI out** sends each video as its own NDI stream, *Understudy ME 1*, *Understudy ME 2*, *Understudy AUX 1*, at 1080p (or the files' own size). Every deck's source is there as soon as NDI is on: one without video sends colour bars with its name, why there's no picture and a clock, and with no decks set up there's one source, *Understudy*. The first time, macOS asks to let Understudy use the local network; allow it, or receivers won't see the sources. Understudy bundles NDI's library at build time: install the free [NDI SDK for Apple](https://ndi.video/for-developers/ndi-sdk/) (accepting its license) and `scripts/build-app.sh` copies `libndi.dylib` into the app. For CI builds, put a URL to that `libndi.dylib` in the `NDI_LIB_URL` secret. Without it, everything else works and NDI out says the library is missing.
+
+### Log footage
+
+Decks shot in a camera log curve play flat and grey until they're converted. Next to NDI out, each deck in the viewer has a menu (*ME 1 · Rec.709*) for how its recordings become Rec.709, on screen and on NDI alike:
+
+- **None (Rec.709)**: as recorded.
+- **Log to Rec.709**: *Blackmagic Film Gen 5*, *Sony S-Log3 / S-Gamut3.Cine*, *ARRI LogC3 / AWG3 (EI 800)*, *Panasonic V-Log / V-Gamut*. Each undoes the maker's curve, converts the camera's gamut to Rec.709 primaries, rolls highlights off above 80% linear light instead of clipping, and puts 18% grey at 41%, as a Rec.709 camera would. Sony, ARRI and Panasonic curves are read as 10-bit code values in a video-range signal (how a HyperDeck records them); Blackmagic's as the 0–1 signal.
+- **Load LUT…**: any `.cube` file (3D up to 128³, or 1D; `DOMAIN_MIN`/`MAX` and Resolve's input-range lines are honoured). The LUT sees the picture's values as decoded (video levels 0–1, as Resolve does for video-level clips) and its output goes out as Rec.709. It's copied into the project's `objects/LUT/`, so the project carries it; LUTs already there are in the menu.
+
+The choice is saved with the deck in the project (not the Mac): a project's footage was shot with that show's cameras, so reopening it plays it right whatever the decks see today. The conversion runs on the GPU (Core Image, in the player's video composition), so the picture you see and the NDI feed always match; it keeps 1080p59.94 at full rate on Apple silicon. A LUT that's missing or unreadable shows ⚠ on its menu and the deck plays ungraded.
 
 NDI® is a registered trademark of Vizrt NDI AB.
 

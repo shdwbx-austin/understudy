@@ -190,6 +190,7 @@ final class AppModel: ObservableObject {
         refreshAudioDevices()
         startAudio()
         viewer.onNDIEnabled = { [weak self] in self?.loadViewerTake() }
+        syncViewerTransforms()
         if viewer.ndiEnabled { loadViewerTake() }
         // Interface unplugged, replugged or arriving after launch: re-read devices and reopen.
         AudioDeviceCatalog.observeDevices { [weak self] in
@@ -802,6 +803,7 @@ final class AppModel: ObservableObject {
 
     private func settingsChanged(from old: AppSettings) {
         syncClockRate()
+        if settings.decks.map(\.inputTransform) != old.decks.map(\.inputTransform) { syncViewerTransforms() }
         if settings.confidenceEnabled != old.confidenceEnabled || settings.confidenceDeviceID != old.confidenceDeviceID {
             applyConfidence()
         } else if settings.confidenceLayout != old.confidenceLayout || settings.confidenceQuadrants != old.confidenceQuadrants

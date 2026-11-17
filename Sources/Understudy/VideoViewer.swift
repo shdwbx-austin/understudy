@@ -2,6 +2,7 @@ import AVFoundation
 import CoreMedia
 import Foundation
 import os
+import UnderstudyCore
 
 /// Plays the selected take's recordings (backed-up files, pulled into the project) in Understudy,
 /// locked to the timeline's timecode the same way the decks chase it, and sends each one out as
@@ -40,6 +41,11 @@ final class VideoViewer: ObservableObject {
         }
     }
     @Published private(set) var ndiStatus: String = ""
+    /// Each deck's input transform (log curve or LUT), applied on screen and on NDI alike.
+    @Published private(set) var transforms: [Int: InputTransform] = [:]
+    /// A deck whose transform couldn't be applied (e.g. its LUT file is missing): why.
+    @Published private(set) var gradeProblems: [Int: String] = [:]
+    private var gradeGeneration: [Int: Int] = [:]
 
     private(set) var players: [Int: AVPlayer] = [:]
     private var fps: [Int: Double] = [:]
@@ -74,6 +80,7 @@ final class VideoViewer: ObservableObject {
                     player.replaceCurrentItem(with: item)
                     players[entry.deckID] = player
                     attachOutput(to: item, deck: entry.deckID)
+                    applyGrade(deck: entry.deckID)
                     let deck = entry.deckID
                     Task { @MainActor [weak self] in
                         let rate = try? await AVURLAsset(url: url).loadTracks(withMediaType: .video).first?.load(.nominalFrameRate)
@@ -108,6 +115,71 @@ final class VideoViewer: ObservableObject {
         let output = AVPlayerItemVideoOutput(pixelBufferAttributes: attrs)
         item.add(output)
         pump.setOutput(output, for: deck)
+    }
+
+    // MARK: Input transforms
+
+    /// Sets the decks' transforms (from their settings); decks whose transform changed are
+    /// regraded at once, playing or paused.
+    func setTransforms(_ new: [Int: InputTransform]) {
+        let new = new.filter { $0.value != .none }
+        let changed = Set(new.keys).union(transforms.keys).filter { new[$0] != transforms[$0] }
+        guard !changed.isEmpty else { return }
+        transforms = new
+        changed.forEach { applyGrade(deck: $0) }
+    }
+
+    /// Applies the deck's transform again (its LUT file was loaded again).
+    func regrade(deck: Int) { applyGrade(deck: deck) }
+
+    /// Puts the deck's transform on its current item (or takes it off), off the main thread
+    /// for reading the LUT; a newer change or another file wins over a late one.
+    private func applyGrade(deck: Int) {
+        gradeGeneration[deck, default: 0] += 1
+        let generation = gradeGeneration[deck]
+        gradeProblems[deck] = nil
+        guard let player = players[deck], let item = player.currentItem else { return }
+        let transform = transforms[deck] ?? .none
+        if transform == .none {
+            if item.videoComposition != nil {
+                item.videoComposition = nil
+                redraw(deck)
+            }
+            return
+        }
+        let asset = item.asset
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let result: Result<AVVideoComposition?, Error>
+            do {
+                if let cube = try VideoGrade.cube(for: transform) {
+                    result = .success(try await VideoGrade.composition(for: asset, cube: cube))
+                } else {
+                    result = .success(nil)
+                }
+            } catch {
+                result = .failure(error)
+            }
+            await self?.finishGrade(result, deck: deck, item: item, generation: generation)
+        }
+    }
+
+    private func finishGrade(_ result: Result<AVVideoComposition?, Error>, deck: Int, item: AVPlayerItem, generation: Int?) {
+        guard gradeGeneration[deck] == generation, players[deck]?.currentItem === item else { return }
+        switch result {
+        case .success(let comp):
+            item.videoComposition = comp
+            redraw(deck)
+        case .failure(let error):
+            item.videoComposition = nil
+            gradeProblems[deck] = error.localizedDescription
+            redraw(deck)
+        }
+    }
+
+    /// A paused picture is drawn again with the new look (screen and NDI).
+    private func redraw(_ deck: Int) {
+        guard !running.contains(deck), let player = players[deck], player.currentItem?.status == .readyToPlay else { return }
+        player.seek(to: player.currentTime(), toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
     // MARK: Locking to timecode
