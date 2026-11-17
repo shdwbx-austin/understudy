@@ -158,7 +158,7 @@ struct MarkerOverlay: View {
             if lane == 0 && !clearsTags { lane = ends.dropFirst().firstIndex { $0 <= start } ?? max(ends.count, 1) }
             while ends.count <= lane { ends.append(-.infinity) }
             ends[lane] = end + 6
-            out[item.marker.id] = min(lane, 3)
+            out[item.marker.id] = lane
         }
         return out
     }
@@ -203,7 +203,9 @@ struct MarkerOverlay: View {
                         .allowsHitTesting(false)
                     // Label beside the tag, in small mono capitals; crowded ones stack downward.
                     // Arrayed hits have none: a run of them would be a wall of text.
-                    if !arrayed {
+                    // Past four lanes a label would land on another: it's left off (the marker
+                    // list has it), unless the marker is selected.
+                    if !arrayed, (lane[m.id] ?? 0) <= 3 || selected {
                     Text(m.displayName(in: timeline.markerTypes).uppercased())
                         .font(Theme.mono(9, bold: selected))
                         .tracking(0.8)
@@ -211,8 +213,9 @@ struct MarkerOverlay: View {
                         .lineLimit(1)
                         .fixedSize()
                         .padding(.horizontal, 3)
-                        .background(Theme.ink.opacity(0.75))
-                        .offset(x: x + 10, y: 24 + CGFloat(lane[m.id] ?? 0) * 15)
+                        .background(Theme.ink.opacity(selected ? 1 : 0.75))
+                        .zIndex(selected ? 1 : 0)
+                        .offset(x: x + 10, y: 24 + CGFloat(min(lane[m.id] ?? 0, 3)) * 15)
                         .allowsHitTesting(false)
                     }
                     // Tag: a square in the type's colour with its key. Drag to move, click to go.

@@ -163,10 +163,10 @@ private struct Header: View {
     private var state: String { model.clockState }
     private var color: Color { model.clockColor }
 
-    /// "30 · AUTO", or "29.97 DF · SET"; "RATE · DETECTING" until auto-detect has measured.
+    /// "30 FPS · AUTO-DETECTED", or "29.97 DF FPS · FIXED"; "RATE · DETECTING" until measured.
     private var rateText: String {
         if model.settings.ltcRateAuto, model.rateLabel.hasSuffix("DETECTING") { return "RATE · DETECTING" }
-        return "\(model.ltcRate.rawValue) · \(model.settings.ltcRateAuto ? "AUTO" : "SET")"
+        return "\(model.ltcRate.rawValue) FPS · \(model.settings.ltcRateAuto ? "AUTO-DETECTED" : "FIXED")"
     }
 }
 
@@ -426,6 +426,17 @@ private struct Footer: View {
     @ObservedObject var backup: TakeBackup
     let openBackup: () -> Void
 
+    private func footer(awake: Bool, mark: Bool) -> some View {
+        HStack(spacing: 16) {
+            BackupStatus(backup: backup, open: openBackup).lineLimit(1).fixedSize()
+            if awake {
+                Text("AWAKE").foregroundStyle(Theme.quiet).fixedSize().help("This Mac won't idle-sleep while Understudy is open")
+            }
+            Spacer(minLength: 0)
+            if mark { Text("shdwbx").font(Theme.grotesk(15, .medium)).tracking(-0.2).fixedSize() }
+        }
+    }
+
     var body: some View {
         GridRow {
             Label8(text: model.showCodeFromTimeline ? "Show code" : model.settings.separatePlaybackInput
@@ -454,13 +465,11 @@ private struct Footer: View {
                         Text(LevelMeter.label(db)).foregroundStyle(Theme.grey).frame(width: 48, alignment: .leading)
                     }
                 }
-                HStack(spacing: 16) {
-                    BackupStatus(backup: backup, open: openBackup)
-                    if model.showMachine.keepingAwake {
-                        Text("AWAKE").foregroundStyle(Theme.quiet).help("This Mac won't idle-sleep while Understudy is open")
-                    }
-                    Spacer(minLength: 0)
-                    Text("shdwbx").font(Theme.grotesk(15, .medium)).tracking(-0.2)
+                // Backup, awake and the mark; in a narrow window AWAKE, then the mark, give way.
+                ViewThatFits(in: .horizontal) {
+                    footer(awake: model.showMachine.keepingAwake, mark: true)
+                    footer(awake: false, mark: true)
+                    footer(awake: false, mark: false)
                 }
             }
             .font(Theme.mono(10))
@@ -530,7 +539,12 @@ struct TopBar: View {
             Spacer(minLength: Theme.gutter)
             if model.screen == .program {
                 Button { openWindow(id: "timeline") } label: {
-                    Text("Open in window ⌘T").font(Theme.grotesk(13, .light)).foregroundStyle(Theme.grey)
+                    // The words when there's room, else just the shortcut (never wrapped).
+                    ViewThatFits(in: .horizontal) {
+                        Text("Open in window ⌘T").lineLimit(1).fixedSize()
+                        Text("⌘T").lineLimit(1).fixedSize()
+                    }
+                    .font(Theme.grotesk(13, .light)).foregroundStyle(Theme.grey)
                 }
                 .buttonStyle(.plain)
                 .help("Open the timeline in its own window")

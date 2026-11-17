@@ -20,7 +20,7 @@ struct TimelineView: View {
             Rule()
             SongList(timeline: timeline)
             if let message = timeline.message {
-                Text(message).font(Theme.mono(10)).foregroundStyle(Theme.grey)
+                Text(message).font(Theme.mono(10)).foregroundStyle(Theme.grey).lineLimit(2).help(message)
                     .padding(.top, 8)
             }
         }
@@ -58,7 +58,7 @@ private struct TimelineHeader: View {
     /// What the timeline's code is feeding right now.
     private var role: String {
         switch model.mode {
-        case .timeline: return "DRIVING THE DECKS"
+        case .timeline: return model.decks.contains(where: \.isConnected) ? "DRIVING THE DECKS" : "FOLLOWING PROGRAM · NO DECKS CONNECTED"
         case .record where model.showCodeFromTimeline: return "SHOW CODE FOR THE RECORDING"
         case .stop where model.showCodeFromTimeline: return "SHOW CODE"
         default: return "PROGRAM (⌘1) DRIVES THE DECKS"
@@ -117,6 +117,7 @@ struct PlayheadTime: View {
     var body: some View {
         Text("\(clock(head.position)) / \(clock(total))")
             .font(Theme.mono(12)).monospacedDigit().foregroundStyle(Theme.grey)
+            .lineLimit(1).fixedSize()
     }
 }
 
@@ -261,12 +262,13 @@ struct TransportBar: View {
 
             PlayheadTime(head: timeline.head, total: timeline.layout.totalDuration)
             DowntimeReadout(timeline: timeline, head: timeline.head)
-            Spacer()
-            LoopMenu(timeline: timeline)
-            StopAfterSongToggle(timeline: timeline)
-            GapsButton(timeline: timeline)
-            if outputs {
-                OutputStatus(showToggle: !compact)
+            Spacer(minLength: 12)
+            // Everything when it fits; in a narrow window the LTC status goes first (it's in the
+            // footer too), then the lead-in, so nothing wraps.
+            ViewThatFits(in: .horizontal) {
+                options(output: outputs, gaps: true)
+                options(output: false, gaps: true)
+                options(output: false, gaps: false)
             }
             if !compact {
                 TextButton(title: "Find audio…") { timeline.chooseAudioFolder() }
@@ -275,6 +277,16 @@ struct TransportBar: View {
             }
         }
         .background(TransportKeys(timeline: timeline))
+    }
+
+    private func options(output: Bool, gaps: Bool) -> some View {
+        HStack(spacing: 18) {
+            LoopMenu(timeline: timeline)
+            StopAfterSongToggle(timeline: timeline)
+            if gaps { GapsButton(timeline: timeline) }
+            if output { OutputStatus(showToggle: !compact) }
+        }
+        .fixedSize()
     }
 }
 
@@ -344,7 +356,7 @@ private struct OutputStatus: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            Text(ltcText).font(Theme.mono(10)).tracking(1.2)
+            Text(ltcText).font(Theme.mono(10)).tracking(1.2).lineLimit(1).fixedSize()
                 .foregroundStyle(model.danteStatus.isProblem ? Theme.amber
                                  : model.timecodeOutLabel == nil ? Theme.quiet : Theme.paper)
                 .help(model.settings.danteOut ? model.danteStatus.message

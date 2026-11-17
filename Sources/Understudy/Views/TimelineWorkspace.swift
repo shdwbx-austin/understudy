@@ -46,7 +46,8 @@ struct TimelineWorkspace: View {
                 TakePicker()
                 DeckChips()
                 if let message = model.linkMessage ?? timeline.message {
-                    Text(message).font(Theme.mono(10)).foregroundStyle(Theme.grey).lineLimit(3)
+                    // Two lines at most; the whole of a long one (an import report) on hover.
+                    Text(message).font(Theme.mono(10)).foregroundStyle(Theme.grey).lineLimit(2).help(message)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -470,13 +471,16 @@ struct SongDetailTrack: View {
                                 .offset(x: px + 3, y: 0)
                         }
                     }
+                    // The song's name along the bottom, clear of the marker tags and labels at the top.
                     VStack(alignment: .leading, spacing: 3) {
                         Text(String(format: "%02d  ", index + 1) + item.song.name).font(Theme.grotesk(15, .medium)).lineLimit(1)
+                            .foregroundStyle(Theme.paper.opacity(0.8))
                         Text(item.song.start.description + (item.song.audioPath == nil ? "  ·  NO AUDIO" : ""))
                             .font(Theme.mono(9)).foregroundStyle(Theme.grey)
                     }
                     .padding(.leading, max(8, x(item.timelineStart) + 8))
-                    .padding(.top, 30)
+                    .padding(.bottom, 10)
+                    .frame(width: width, height: height, alignment: .bottomLeading)
                     .allowsHitTesting(false)
                     MarkerOverlay(timeline: timeline, from: start, scale: scale, width: width, height: height)
                     // Playhead.
