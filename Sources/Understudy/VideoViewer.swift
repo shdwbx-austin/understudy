@@ -371,7 +371,7 @@ final class VideoViewer: ObservableObject {
                 ndiStatus = "Sending " + feeds.map { feed in
                     if let problem = playProblems[feed.deckID] { return feed.source + " (" + problem + ")" }
                     return feed.source + (feed.note == nil ? "" : " (test pattern)")
-                }.joined(separator: ", ")
+                }.joined(separator: ", ") + (lib.route == .automatic ? "" : " · " + lib.route.summary)
             }
         }
     }

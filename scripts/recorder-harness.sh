@@ -22,5 +22,6 @@ swiftc -O -module-name RecorderHarness -I "$WORK/module" -L "$WORK" -lUnderstudy
     Sources/Understudy/NDITestPattern.swift Sources/Understudy/ConfidenceMonitor.swift \
     Sources/Understudy/DeckController.swift Sources/Understudy/HyperDeckClient.swift Sources/Understudy/TakeMapStore.swift \
     Sources/Understudy/RecorderTakeStore.swift Sources/Understudy/RecorderBufferTags.swift \
+    Sources/Understudy/NetworkPinning.swift Sources/Understudy/DeckDiscovery.swift \
     scripts/recorder-harness/DeckPath.swift scripts/recorder-harness/Pictures.swift scripts/recorder-harness/Stubs.swift
 "$WORK/harness" "$OUT"

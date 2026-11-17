@@ -19,6 +19,8 @@ final class HyperDeckClient: @unchecked Sendable {
     /// Set these before `connect()`; they are read on `queue`.
     var onState: (@MainActor @Sendable (State) -> Void)?
     var onAsync: (@MainActor @Sendable (HyperDeckResponse) -> Void)?
+    /// Where each connection attempt goes (the deck port, or the system's routing).
+    var onRoute: (@MainActor @Sendable (PortRoute) -> Void)?
 
     private let queue: DispatchQueue
     private var connection: NWConnection?
@@ -42,9 +44,19 @@ final class HyperDeckClient: @unchecked Sendable {
     /// Internal failures, never confused with the deck's own `120 connection failed`.
     static let connectionLostCode = 190
 
-    init(host: String) {
+    /// The deck port (BSD name) to connect from; nil = the system's routing. Read at every
+    /// (re)connect, so a port that comes up or goes down is picked up on the next attempt.
+    private var interface: String?
+
+    init(host: String, interface: String? = nil) {
         self.host = host
+        self.interface = interface
         queue = DispatchQueue(label: "understudy.hyperdeck.\(host)", qos: .userInteractive)
+    }
+
+    /// Changes the port for the next connection; the current one is left alone.
+    func setInterface(_ bsd: String?) {
+        queue.async { [self] in interface = bsd }
     }
 
     func connect() {
@@ -115,11 +127,10 @@ final class HyperDeckClient: @unchecked Sendable {
         let tcp = NWProtocolTCP.Options()
         tcp.noDelay = true
         tcp.connectionTimeout = 3
-        let connection = NWConnection(
-            host: NWEndpoint.Host(host),
-            port: 9993,
-            using: NWParameters(tls: nil, tcp: tcp)
-        )
+        let params = NWParameters(tls: nil, tcp: tcp)
+        let route = params.pin(to: interface)
+        if let onRoute { Self.onMain { onRoute(route) } }
+        let connection = NWConnection(host: NWEndpoint.Host(host), port: 9993, using: params)
         self.connection = connection
         parser = HyperDeckResponseParser()
         refused = false

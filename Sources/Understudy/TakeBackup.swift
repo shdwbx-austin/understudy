@@ -42,6 +42,8 @@ final class TakeBackup: ObservableObject {
 
     private var processes: [ProcessBox] = []
     private var cancelled = false
+    /// Where this run's copies go: the deck port (curl `--interface`), or the system's routing.
+    @Published private(set) var route: PortRoute = .automatic
 
     /// FTP port; 21 on HyperDecks. Overridable for testing (`defaults write … understudy.ftpPort`).
     static var port: Int {
@@ -51,8 +53,10 @@ final class TakeBackup: ObservableObject {
 
     // MARK: Running
 
-    func start(_ items: [Item], into folder: URL, date: Date = Date()) {
+    /// `interface`: the deck port (BSD name) to copy through; nil = the system's routing.
+    func start(_ items: [Item], into folder: URL, date: Date = Date(), interface: String? = nil) {
         guard !isRunning, !items.isEmpty else { return }
+        route = NetworkPorts.route(interface)
         let day = date.formatted(.iso8601.year().month().day())
         let dayFolder = folder.appendingPathComponent(day, isDirectory: true)
         lastFolder = dayFolder
@@ -222,7 +226,7 @@ final class TakeBackup: ObservableObject {
         if cancelled { return (-1, "") }
         let box = ProcessBox()
         box.process.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
-        box.process.arguments = args
+        box.process.arguments = CurlInterface.arguments(route.interface) + args
         let out = Pipe()
         box.process.standardOutput = out
         box.process.standardError = FileHandle.nullDevice

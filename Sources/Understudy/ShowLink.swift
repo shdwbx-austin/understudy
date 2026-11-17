@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import os
 import UnderstudyCore
 
 /// Listens for OSC on a UDP port and hands each message to `onMessage` on the main actor.
@@ -7,21 +8,29 @@ import UnderstudyCore
 final class OSCServer {
     private var listener: NWListener?
     private(set) var port: Int?
+    /// The port chosen in Settings (nil = every port), and where the listener actually is.
+    private(set) var interface: String?
+    private(set) var route: PortRoute = .automatic
     /// Last error, for Settings (nil when listening fine).
     private(set) var problem: String?
     var onMessage: ((OSCMessage, String) -> Void)?
     var onState: (() -> Void)?
 
-    func listen(on port: Int) {
-        guard port != self.port || listener == nil else { return }
+    /// Listens on `port`, on one network port when `interface` is set and usable (else on all).
+    func listen(on port: Int, interface: String? = nil) {
+        let route = NetworkPorts.route(interface)
+        guard port != self.port || interface != self.interface || route != self.route || listener == nil else { return }
         stop()
         self.port = port
+        self.interface = interface
         guard let nwPort = NWEndpoint.Port(rawValue: UInt16(clamping: port)) else {
             problem = "OSC port \(port) isn't valid."
             return
         }
         do {
-            let listener = try NWListener(using: .udp, on: nwPort)
+            let params = NWParameters.udp
+            self.route = params.pin(to: interface)
+            let listener = try NWListener(using: params, on: nwPort)
             listener.newConnectionHandler = { [weak self] connection in
                 Task { @MainActor in self?.accept(connection) }
             }
@@ -50,6 +59,8 @@ final class OSCServer {
         listener?.cancel()
         listener = nil
         port = nil
+        interface = nil
+        route = .automatic
         problem = nil
     }
 
@@ -76,19 +87,44 @@ final class OSCServer {
 /// Sends OSC to one host over UDP.
 final class OSCSender: @unchecked Sendable {
     private let connection: NWConnection
+    /// The network port the messages leave from (or the system's routing).
+    let route: PortRoute
 
-    init?(host: String, port: Int) {
+    /// `interface`: the network port (BSD name) to send from; nil = the system's routing.
+    init?(host: String, port: Int, interface: String? = nil) {
         guard !host.trimmingCharacters(in: .whitespaces).isEmpty,
               let p = NWEndpoint.Port(rawValue: UInt16(clamping: port)) else { return nil }
-        connection = NWConnection(host: NWEndpoint.Host(host.trimmingCharacters(in: .whitespaces)), port: p, using: .udp)
-        connection.start(queue: .global(qos: .userInitiated))
+        let params = NWParameters.udp
+        route = params.pin(to: interface)
+        connection = NWConnection(host: NWEndpoint.Host(host.trimmingCharacters(in: .whitespaces)), port: p, using: params)
+        connection.stateUpdateHandler = { [problem] state in
+            switch state {
+            case .waiting(let error), .failed(let error): problem.withLock { $0 = error }
+            case .ready: problem.withLock { $0 = nil }
+            default: break
+            }
+        }
+        connection.start(queue: queue)
     }
 
-    func send(_ message: OSCMessage) async throws {
+    private let queue = DispatchQueue(label: "understudy.osc.send", qos: .userInitiated)
+    /// Why the connection can't send (no route from the chosen port, network down), if it can't.
+    private let problem = OSAllocatedUnfairLock<NWError?>(initialState: nil)
+
+    /// Fails at once when there's no way to the host (a UDP connection that can't send waits
+    /// rather than failing), and after `timeout` if the send never goes out.
+    func send(_ message: OSCMessage, timeout: TimeInterval = 2) async throws {
+        if let error = problem.withLock({ $0 }) { throw error }
+        let done = OSAllocatedUnfairLock(initialState: false)
         try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
-            connection.send(content: message.encoded(), completion: .contentProcessed { error in
+            @Sendable func finish(_ error: Error?) {
+                guard done.withLock({ let was = $0; $0 = true; return !was }) else { return }
                 if let error { c.resume(throwing: error) } else { c.resume() }
-            })
+            }
+            connection.send(content: message.encoded(), completion: .contentProcessed { finish($0) })
+            queue.asyncAfter(deadline: .now() + timeout) { [problem] in
+                finish(problem.withLock { $0 } ?? URLError(.timedOut))
+            }
         }
     }
 
@@ -111,17 +147,33 @@ enum D3Client {
         return URL(string: h.hasPrefix("http") ? h : "http://\(h)")
     }
 
-    /// Runs Python 2.7 in the Designer session; returns its return value (a JSON string here).
-    static func execute(host: String, script: String) async throws -> Result {
-        guard let url = base(host)?.appendingPathComponent("api/session/python/execute") else { throw URLError(.badURL) }
-        var request = URLRequest(url: url, timeoutInterval: 15)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = D3Push.body(script: script)
+    /// One request to Designer: through URLSession, or over a connection pinned to the chosen
+    /// network port (`interface`) when it's usable. Returns the status code and body.
+    static func load(_ url: URL, method: String = "GET", contentType: String? = nil, body: Data? = nil,
+                     timeout: TimeInterval, interface: String?) async throws -> (status: Int, data: Data) {
+        if let bsd = NetworkPorts.route(interface).interface {
+            var headers: [(String, String)] = [("Accept", "application/json")]
+            if let contentType { headers.append(("Content-Type", contentType)) }
+            let response = try await PinnedHTTP.send(url, method: method, headers: headers, body: body,
+                                                     interface: bsd, timeout: timeout)
+            return (response.status, response.body)
+        }
+        var request = URLRequest(url: url, timeoutInterval: timeout)
+        request.httpMethod = method
+        if let contentType { request.setValue(contentType, forHTTPHeaderField: "Content-Type") }
+        request.httpBody = body
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw NSError(domain: "d3", code: (response as? HTTPURLResponse)?.statusCode ?? -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Designer answered HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)"])
+        return ((response as? HTTPURLResponse)?.statusCode ?? -1, data)
+    }
+
+    /// Runs Python 2.7 in the Designer session; returns its return value (a JSON string here).
+    static func execute(host: String, script: String, interface: String? = nil) async throws -> Result {
+        guard let url = base(host)?.appendingPathComponent("api/session/python/execute") else { throw URLError(.badURL) }
+        let (status, data) = try await load(url, method: "POST", contentType: "application/json",
+                                            body: D3Push.body(script: script), timeout: 15, interface: interface)
+        guard status == 200 else {
+            throw NSError(domain: "d3", code: status,
+                          userInfo: [NSLocalizedDescriptionKey: "Designer answered HTTP \(status)"])
         }
         return try JSONDecoder().decode(Result.self, from: data)
     }
@@ -136,9 +188,9 @@ enum D3Client {
     }
 
     /// Track names in the open project.
-    static func tracks(host: String) async throws -> [String] {
+    static func tracks(host: String, interface: String? = nil) async throws -> [String] {
         guard let url = base(host)?.appendingPathComponent("api/session/transport/tracks") else { throw URLError(.badURL) }
-        let (data, _) = try await URLSession.shared.data(for: URLRequest(url: url, timeoutInterval: 8))
+        let (_, data) = try await load(url, timeout: 8, interface: interface)
         struct Reply: Decodable { struct Track: Decodable { var name: String }; var result: [Track]? }
         return try JSONDecoder().decode(Reply.self, from: data).result?.map(\.name) ?? []
     }

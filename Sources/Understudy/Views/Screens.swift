@@ -164,6 +164,9 @@ struct DecksScreen: View {
                     BackupFolderSettings()
                     SwiftUI.Section {
                         Button("Back Up a Take… (⌘B)", action: backup)
+                        Button("Transcode a Take to NotchLC…") {
+                            NotificationCenter.default.post(name: .understudyOpenNotchLC, object: nil)
+                        }
                     }
                 }
             }

@@ -59,6 +59,7 @@ struct DeckCard: View {
                     Text(config.name).font(Theme.grotesk(16, .regular)).foregroundStyle(ink).lineLimit(1)
                     Text(subtitle)
                         .font(Theme.mono(10)).foregroundStyle(soft).lineLimit(1)
+                        .help(deck.isRecorder ? "" : "Control via \(deck.route.summary)")
                     if let twin = sharedAddress {
                         Text("SAME ADDRESS AS \(String(format: "%02d", twin + 1))")
                             .font(Theme.mono(9, bold: true)).tracking(1.2).foregroundStyle(inverted ? Theme.ink : Theme.amber)
@@ -160,7 +161,7 @@ struct DeckCard: View {
 
     /// Health at a glance: connection, input signal, reference, media.
     private var dots: [(color: Color, help: String)] {
-        guard deck.isConnected else { return [(connectionColor, "Not connected")] }
+        guard deck.isConnected else { return [(connectionColor, "Not connected (via \(deck.route.summary))")] }
         let input: Color = !deck.transport.reportsInput ? Theme.quiet : (deck.transport.inputVideoFormat == nil ? Theme.signal : Theme.lock)
         let ref: Color = deck.transport.referenceLocked == nil ? Theme.quiet : (deck.transport.referenceLocked == true ? Theme.lock : Theme.signal)
         let media: Color = {
@@ -170,7 +171,7 @@ struct DeckCard: View {
             case .critical, .none: return Theme.signal
             }
         }()
-        return [(Theme.lock, "Connected"), (input, "Input signal"), (ref, "Reference"), (media, "Media left")]
+        return [(Theme.lock, "Connected via \(deck.route.summary)"), (input, "Input signal"), (ref, "Reference"), (media, "Media left")]
     }
 
     /// Another slot with the same address (two slots driving one deck).
