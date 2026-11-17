@@ -864,7 +864,7 @@ final class AppModel: ObservableObject {
         }
         if settings.timelineOutputUID != old.timelineOutputUID || settings.timelineOutputChannel != old.timelineOutputChannel
             || settings.extraSongOutputs != old.extraSongOutputs
-            || settings.ltcOutputUID != old.ltcOutputUID || settings.ltcOutputChannel != old.ltcOutputChannel
+            || settings.ltcOutputDeviceUID != old.ltcOutputDeviceUID || settings.ltcOutputChannel != old.ltcOutputChannel
             || settings.ltcOutUseTrackTimecode != old.ltcOutUseTrackTimecode
             || settings.danteOut != old.danteOut || settings.danteInterface != old.danteInterface
             || settings.showCodeSource != old.showCodeSource {
@@ -987,7 +987,7 @@ final class AppModel: ObservableObject {
                     ltc: AudioRoute(deviceUID: card.uid, channel: DanteOut.timecodeChannel))
             return
         }
-        var ltcRoute = settings.ltcOutputChannel.map { AudioRoute(deviceUID: settings.ltcOutputUID, channel: $0) }
+        var ltcRoute = settings.ltcOutputChannel.map { AudioRoute(deviceUID: settings.ltcOutputDeviceUID, channel: $0) }
         // Dev Record with LTC out off: the songs' own timecode goes out on the song-audio device,
         // on the channel after the music (3 for music on 1–2), so the decks or a recorder can take it.
         let recordingFromTimeline = mode == .record && showCodeFromTimeline
