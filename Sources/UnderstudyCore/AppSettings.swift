@@ -38,6 +38,18 @@ public struct DeckConfig: Codable, Equatable, Identifiable, Sendable {
 }
 
 /// Show code from the LTC input (e.g. CuePoints, a timecode DA) or from Understudy's own song timeline.
+/// Another place the timeline's song audio plays at the same time as its main output (headphones,
+/// a second interface, a record feed): a device (nil = system default) and the first of its two channels.
+public struct SongOutput: Codable, Equatable, Hashable, Sendable {
+    public var deviceUID: String?
+    public var channel: Int
+
+    public init(deviceUID: String?, channel: Int = 0) {
+        self.deviceUID = deviceUID
+        self.channel = channel
+    }
+}
+
 public enum ShowCodeSource: String, Codable, CaseIterable, Sendable {
     case input
     case timeline
@@ -86,6 +98,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var showCodeSource: ShowCodeSource = .input
     public var timelineOutputUID: String?
     public var timelineOutputChannel = 0
+    /// More outputs for the song audio, playing alongside the main one (with Dante out too).
+    public var extraSongOutputs: [SongOutput] = []
     /// LTC generated from the timeline: output device and channel (0-based); nil channel = off.
     public var ltcOutputUID: String?
     public var ltcOutputChannel: Int?
@@ -159,6 +173,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         showCodeSource = (try? c.decodeIfPresent(ShowCodeSource.self, forKey: .showCodeSource)) ?? d.showCodeSource
         timelineOutputUID = (try? c.decodeIfPresent(String.self, forKey: .timelineOutputUID)) ?? d.timelineOutputUID
         timelineOutputChannel = (try? c.decodeIfPresent(Int.self, forKey: .timelineOutputChannel)) ?? d.timelineOutputChannel
+        extraSongOutputs = (try? c.decodeIfPresent([SongOutput].self, forKey: .extraSongOutputs)) ?? d.extraSongOutputs
         ltcOutputUID = (try? c.decodeIfPresent(String.self, forKey: .ltcOutputUID)) ?? d.ltcOutputUID
         ltcOutputChannel = (try? c.decodeIfPresent(Int.self, forKey: .ltcOutputChannel)) ?? d.ltcOutputChannel
         ltcOutUseTrackTimecode = (try? c.decodeIfPresent(Bool.self, forKey: .ltcOutUseTrackTimecode)) ?? d.ltcOutUseTrackTimecode

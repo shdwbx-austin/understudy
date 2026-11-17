@@ -124,6 +124,20 @@ private struct TimelineOutputSettings: View {
                     Text("\($0 + 1)–\($0 + 2)").tag($0)
                 }
             }
+            ForEach(Array(model.settings.extraSongOutputs.enumerated()), id: \.offset) { index, _ in
+                ExtraSongOutputRow(index: index, devices: devices)
+            }
+            Button("Add another output for song audio") {
+                // The first device not already playing the songs, else the system default.
+                let used = Set([model.settings.timelineOutputUID] + model.settings.extraSongOutputs.map(\.deviceUID))
+                let next = devices.first { !used.contains($0.uid) }?.uid
+                model.settings.extraSongOutputs.append(SongOutput(deviceUID: next))
+            }
+            .help("Play the songs to more devices at the same time, e.g. the PA feed and your headphones")
+            if !model.settings.extraSongOutputs.isEmpty {
+                Text("Every output starts each song at the same moment\(model.danteStatus.isRouted ? ", alongside Dante out" : ""). Separate devices run on their own clocks, so over a long song they can drift a few milliseconds apart; for sample-locked feeds use channels on one device.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Picker("LTC out", selection: $model.settings.ltcOutputChannel) {
                 Text("Off").tag(Int?.none)
                 ForEach(0..<max(1, channels(model.settings.ltcOutputUID)), id: \.self) { Text("Channel \($0 + 1)").tag(Optional($0)) }
@@ -167,6 +181,58 @@ private struct TimelineOutputSettings: View {
     private func channels(_ uid: String?) -> Int {
         guard let uid else { return 2 }
         return devices.first { $0.uid == uid }?.channels ?? 2
+    }
+}
+
+/// One more place the song audio plays: device, channels, remove.
+private struct ExtraSongOutputRow: View {
+    @EnvironmentObject private var model: AppModel
+    let index: Int
+    let devices: [AudioInputDevice]
+
+    var body: some View {
+        HStack {
+            Picker("Also to", selection: binding(\.deviceUID, fallback: nil)) {
+                Text("System default").tag(String?.none)
+                ForEach(devices) { Text("\($0.name) (\($0.channels) ch)").tag(Optional($0.uid)) }
+                if let uid = output?.deviceUID, !devices.contains(where: { $0.uid == uid }) {
+                    Text("Not connected").tag(Optional(uid))
+                }
+            }
+            Picker("Channels", selection: binding(\.channel, fallback: 0)) {
+                ForEach(Array(stride(from: 0, to: max(2, channelCount), by: 2)), id: \.self) {
+                    Text("\($0 + 1)–\($0 + 2)").tag($0)
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+            Button {
+                if model.settings.extraSongOutputs.indices.contains(index) { model.settings.extraSongOutputs.remove(at: index) }
+            } label: { Image(systemName: "minus.circle") }
+                .buttonStyle(.borderless)
+                .help("Stop playing the songs here")
+        }
+    }
+
+    private var output: SongOutput? {
+        model.settings.extraSongOutputs.indices.contains(index) ? model.settings.extraSongOutputs[index] : nil
+    }
+
+    private var channelCount: Int {
+        guard let uid = output?.deviceUID else { return 2 }
+        return devices.first { $0.uid == uid }?.channels ?? 2
+    }
+
+    /// Safe while a row is being removed.
+    private func binding<T>(_ path: WritableKeyPath<SongOutput, T>, fallback: T) -> Binding<T> {
+        Binding(
+            get: { output?[keyPath: path] ?? fallback },
+            set: { value in
+                guard model.settings.extraSongOutputs.indices.contains(index) else { return }
+                model.settings.extraSongOutputs[index][keyPath: path] = value
+                if path == \SongOutput.deviceUID { model.settings.extraSongOutputs[index].channel = 0 }
+            }
+        )
     }
 }
 
