@@ -162,6 +162,8 @@ final class AppModel: ObservableObject {
     let showMachine = ShowMachine()
     let backup = TakeBackup()
     let confidence = ConfidenceMonitor()
+    /// Capture devices and NDI sources the Understudy recorder can record from.
+    let recorderSources = RecorderSources()
     /// Set when the app came back in Record or Play after a restart; shown as a banner until dismissed.
     @Published var resumedMode: Mode?
     private static let lastModeKey = "understudy.lastMode"
@@ -184,9 +186,7 @@ final class AppModel: ObservableObject {
         clock = LTCClock(rate: loaded.ltcRate, freewheel: loaded.freewheelSeconds)
         decks = loaded.decks.map { DeckController(id: $0.id) }
         for deck in decks { wire(deck) }
-        for config in loaded.decks where config.enabled {
-            decks[config.id].connect(host: config.host)
-        }
+        for config in loaded.decks where config.enabled { applyHost(config.id) }
         refreshAudioDevices()
         startAudio()
         viewer.onNDIEnabled = { [weak self] in self?.loadViewerTake() }
@@ -198,11 +198,11 @@ final class AppModel: ObservableObject {
         }
         discovery.skip = { [weak self] in
             guard let self else { return [] }
-            return Set(self.decks.filter(\.isConnected).map { self.settings.decks[$0.id].host.trimmingCharacters(in: .whitespaces) })
+            return Set(self.decks.filter(\.isConnected).compactMap { self.settings.decks[$0.id].networkHost })
         }
         discovery.interface = { [weak self] in self?.settings.discoveryInterface }
         // Bonjour browsing runs only while Assign decks is open, so it never touches decks in use mid-show.
-        if loaded.decks.allSatisfy({ $0.host.trimmingCharacters(in: .whitespaces).isEmpty }) {
+        if loaded.decks.allSatisfy({ !$0.isAssigned }) {
             discovery.scan()
         }
         showMachine.keepAwake(loaded.keepAwake)
@@ -328,6 +328,35 @@ final class AppModel: ObservableObject {
                                    at: date ?? recordStartedAt ?? Date())
     }
 
+    /// Where the Understudy recorder in slot `id` writes takes: the project's VideoFile/<deck> folder
+    /// (where the View screen looks first), else the backup folder's day/<deck> folder (where it
+    /// looks next), else ~/Movies/Understudy/<deck>.
+    func recorderFolder(for id: Int, date: Date = Date()) -> URL {
+        let deck = settings.decks.indices.contains(id) ? settings.decks[id].name : "Deck \(id + 1)"
+        if let layout = projects.current {
+            return layout.objects(.video).appendingPathComponent(ProjectManager.folderName(deck), isDirectory: true)
+        }
+        if let backup = settings.backupFolder {
+            return URL(fileURLWithPath: backup, isDirectory: true)
+                .appendingPathComponent(date.formatted(.iso8601.year().month().day()), isDirectory: true)
+                .appendingPathComponent(FTPPaths.safeFolderName(deck), isDirectory: true)
+        }
+        let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Movies")
+        return movies.appendingPathComponent("Understudy", isDirectory: true)
+            .appendingPathComponent(ProjectManager.folderName(deck), isDirectory: true)
+    }
+
+    /// What the recorder stamps a take with: show code at host time `host` as timecode-of-day
+    /// seconds, or the time of day when there's no (trusted) show code, as a deck's own clock would.
+    func recorderStartSeconds(at host: Double) -> Double {
+        if rateKnown || showCodeFromTimeline, let frames = showPosition(at: host) {
+            return frames / ltcRate.exact
+        }
+        let now = Date()
+        return now.timeIntervalSince(Calendar.current.startOfDay(for: now))
+    }
+
     /// A deck (re)connected: bring it into the current mode. A deck that's already recording is
     /// left alone, so a network blip mid-take doesn't restart the recording.
     private func deckReady(_ deck: DeckController) {
@@ -352,6 +381,10 @@ final class AppModel: ObservableObject {
 
     private func wire(_ deck: DeckController) {
         deck.buildsTakeMaps = settings.recordMode == .continuous
+        let id = deck.id
+        deck.recorderFolder = { [unowned self] in self.recorderFolder(for: id) }
+        deck.recorderStartSeconds = { [unowned self] host in self.recorderStartSeconds(at: host) }
+        deck.recorderTimecodeAtVideoRate = { [unowned self] in self.settings.deckTimecodeAtVideoRate }
         deck.onRecordingFinished = { [weak self] in self?.scheduleTakeRefresh() }
         deck.onClipsRefreshed = { [weak self, weak deck] in
             guard let self, let deck else { return }
@@ -398,7 +431,8 @@ final class AppModel: ObservableObject {
             for i in list.indices where list[i] != settings.decks[i] {
                 let old = settings.decks[i]
                 settings.decks[i] = list[i]
-                if list[i].host != old.host || list[i].enabled != old.enabled { applyHost(i) }
+                if list[i].host != old.host || list[i].enabled != old.enabled || list[i].kind != old.kind
+                    || list[i].recorder != old.recorder || (list[i].isRecorder && list[i].name != old.name) { applyHost(i) }
             }
         } else {
             setDeckList(list, removed: removed)
@@ -418,6 +452,7 @@ final class AppModel: ObservableObject {
             var count = decks.count
             for id in removed.sorted(by: >) {
                 TakeMapStore.removeDeck(id: id, count: count)
+                RecorderTakeStore.removeDeck(id: id, count: count)
                 count -= 1
             }
             decks.removeSubrange(first...)
@@ -442,7 +477,9 @@ final class AppModel: ObservableObject {
         let config = settings.decks[id]
         // A deck leaving its slot mid-take must not keep recording on its own.
         if decks[id].transport.status == .record { decks[id].stopTransport() }
-        if config.enabled {
+        if config.enabled, config.isRecorder {
+            decks[id].attachRecorder(config.recorder, dropFrame: ltcRate.isDropFrame)
+        } else if config.enabled {
             decks[id].connect(host: config.host)
         } else {
             decks[id].disconnect()
@@ -482,7 +519,7 @@ final class AppModel: ObservableObject {
     /// Applies one setting to every connected deck. `done` gets the problems, by deck name.
     func applyToAll(_ key: String, _ value: String, done: @escaping ([String]) -> Void) {
         guard !setupLocked else { done(["Stop recording first."]); return }
-        let targets = activeDecks
+        let targets = activeDecks.filter { !$0.isRecorder }
         guard !targets.isEmpty else { done([]); return }
         var remaining = targets.count
         var problems: [String] = []
@@ -507,7 +544,8 @@ final class AppModel: ObservableObject {
     /// Independent of the playback take, so backing up never changes what's playing.
     func backUpTake(_ offset: Int) {
         guard mode != .record, let folder = settings.backupFolder else { return }
-        let items = activeDecks.compactMap { deck -> TakeBackup.Item? in
+        // The recorder's files are on this Mac already (in the project or the backup folder).
+        let items = activeDecks.filter { !$0.isRecorder }.compactMap { deck -> TakeBackup.Item? in
             guard let clip = deck.clip(takeOffset: offset) else { return nil }
             let config = settings.decks[deck.id]
             return TakeBackup.Item(
@@ -876,6 +914,12 @@ final class AppModel: ObservableObject {
             activeDecks.forEach { $0.refreshSlots() }
         }
         if pollDue && (rateKnown || showCodeFromTimeline) { logTakes() }
+        if mode == .record, settings.recordMode == .timecodeRun {
+            // The recorder's stand-in for a deck's timecode-run trigger.
+            let rolling = (rateKnown || showCodeFromTimeline) && showPosition(at: now) != nil
+                && (showCodeFromTimeline ? timeline.isPlaying : snapshot.rolling)
+            for deck in activeDecks where deck.isRecorder { deck.recorderShowCode(rolling: rolling) }
+        }
         if mode == .playback { chase(snapshot, now: now, pollDue: pollDue) }
         if mode == .timeline, !viewer.slots.isEmpty {
             // The viewer's videos follow the timeline like the decks: playing, or parked on the frame.
@@ -1090,7 +1134,8 @@ final class AppModel: ObservableObject {
     private func chase(_ snapshot: LTCSnapshot, now: Double, pollDue: Bool) {
         let ltcFPS = ltcRate.exact
 
-        for deck in activeDecks {
+        // The recorder has no output to chase with: the View screen plays its files instead.
+        for deck in activeDecks where !deck.isRecorder {
             let config = settings.decks[deck.id]
             guard let context = playbackContext(deck) else {
                 if deck.chase != DeckChaseState() { deck.resetChase() }
@@ -1510,6 +1555,9 @@ extension AppModel {
                     if let i = updated.firstIndex(where: { $0.deckID == deckID }) { updated[i].status = "In the project" }
                     self.viewer.load(updated)
                 }
+            } else if let recorded = deck.recorderTakePath(clip.name) {
+                slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: URL(fileURLWithPath: recorded),
+                                   status: "Recorded on this Mac"))
             } else {
                 slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: nil,
                                    status: settings.backupFolder == nil ? "Back up this take first (⌘B)" : "\(clip.name) isn't in the backup yet: back it up (⌘B)"))

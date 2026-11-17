@@ -172,6 +172,18 @@ On the Mac itself: System Settings › Energy › *Start up automatically after 
 - Backup is blocked while recording, and pressing **Record** cancels a backup in progress. Copying off a deck while it records isn't safe.
 - Clips are found by name in the deck's media folders (slots, cache, USB), up to three levels deep.
 
+## Understudy recorder (no HyperDeck)
+
+When a deck isn't there, a slot can record on the Mac instead: in **Assign decks**, switch the slot from **HYPERDECK** to **RECORDER**, choose a source and a codec, and Apply. It's a stand-in, not a replacement: it costs CPU, GPU and disk on the Mac that's also running the show, so use it in a pinch.
+
+- **Sources:** any capture device macOS sees as a camera (capture cards with macOS drivers, webcams, Continuity Camera; the list the confidence monitor uses), any NDI source on the network (needs the NDI runtime or SDK, as for NDI out), or a **Test pattern** made on the Mac for checking the encoder and disk with no hardware. The recorder keeps the source's own size and frame rate; the rate must be a broadcast rate (23.976–60).
+- **Codecs:** H.264 or H.265 on the Mac's hardware encoder (about 20 and 12 Mb/s at 1080p29.97), or ProRes 422 Proxy / 422 (about 45 and 147 Mb/s), on the ProRes engine where the Mac has one (M1 Pro/Max/Ultra and later) and in software elsewhere; the menu marks software encoders and the deck row warns while one is in use.
+- **Record and Stop** start and stop it with the HyperDecks, in either record mode. **Continuous**: it records from REC to STOP and Understudy logs show code against the take, as for a deck. **Only while code runs**: it records while show code rolls, a new take each run, like a deck's timecode-run trigger.
+- **Timecode:** each file gets a QuickTime timecode track stamped with show code at the first frame (the time of day if there's no show code), counting drop-frame when show code does, at the video rate or its LTC rate as Settings' deck timecode option says. Files are named like a deck's clips, `<record name>_0001.mov`, and takes list, map and play back in View exactly like a deck's.
+- **Where files go:** into the project's `objects/VideoFile/<deck>/` when a project is open (where View looks first), otherwise the backup folder's `<date>/<deck>/`, otherwise `~/Movies/Understudy/<deck>/`. Backup (⌘B) skips recorder slots: their files are on the Mac already. Files are written in fragments every 4 s, so a crash or power cut leaves a file that plays up to the last one.
+- **Status:** the slot's row shows the input, data rate, frames dropped and disk time left, with warnings in plain words: NO SIGNAL, *n* FRAMES DROPPED, ENCODER OR DISK FALLING BEHIND, DISK: *n* MIN LEFT (amber under 10 minutes, red under 2), SOFTWARE ENCODER. A slot with no frame for a moment holds the previous picture so the file stays constant frame rate; each held frame counts as dropped.
+- **Limits of this first version:** video only (no audio track); frames are stamped when they arrive, so NDI's network delay (typically a frame or two) isn't taken off, and a capture device's delay is whatever its driver reports; a capture device can't be open in the recorder and the confidence monitor at once; the source is open the whole time the slot is in use (a webcam's light stays on); a source that changes size mid-take stops the take; the recorder has no output, so Play to code doesn't chase it (the View screen plays its files).
+
 ## Signal flow
 
 What to buy for three or four records at 2160p59.94 is in [docs/HARDWARE.md](docs/HARDWARE.md).
@@ -274,6 +286,7 @@ Runs on macOS 13+. Building needs Swift 6 (Xcode 16 or its Command Line Tools).
 
 ```sh
 ./scripts/test.sh          # core logic tests (Swift Testing; works without Xcode)
+./scripts/recorder-harness.sh  # records ~10 s from an NDI loopback and generated frames, checks the files (temp store)
 swift run Understudy         # run unbundled while developing
 ./scripts/build-app.sh     # dist/Understudy.app + zip (ad-hoc signed)
 ```

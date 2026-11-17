@@ -42,7 +42,8 @@ final class ConfidenceMonitor: ObservableObject {
         devices = Self.discovery().devices.map { Device(id: $0.uniqueID, name: $0.localizedName) }
     }
 
-    private static func discovery() -> AVCaptureDevice.DiscoverySession {
+    /// Capture devices macOS lists as cameras (shared with the Understudy recorder).
+    nonisolated static func discovery() -> AVCaptureDevice.DiscoverySession {
         var types: [AVCaptureDevice.DeviceType] = [.builtInWideAngleCamera]
         if #available(macOS 14.0, *) {
             types += [.external, .continuityCamera]

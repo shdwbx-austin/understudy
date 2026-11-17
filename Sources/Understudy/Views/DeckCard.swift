@@ -11,7 +11,7 @@ struct DeckCard: View {
     let assign: () -> Void
     @State private var showSetup = false
 
-    private var assigned: Bool { config.enabled && !config.host.trimmingCharacters(in: .whitespaces).isEmpty }
+    private var assigned: Bool { config.enabled && config.isAssigned }
     /// The inverted state: everything on the row is drawn in ink on red.
     private var inverted: Bool { deck.isLost }
     private var ink: Color { inverted ? Theme.ink : Theme.paper }
@@ -57,7 +57,7 @@ struct DeckCard: View {
                         .padding(.top, 6)
                     Spacer(minLength: 8)
                     Text(config.name).font(Theme.grotesk(16, .regular)).foregroundStyle(ink).lineLimit(1)
-                    Text([config.host, deck.model].compactMap { $0 }.joined(separator: " · "))
+                    Text(subtitle)
                         .font(Theme.mono(10)).foregroundStyle(soft).lineLimit(1)
                     if let twin = sharedAddress {
                         Text("SAME ADDRESS AS \(String(format: "%02d", twin + 1))")
@@ -65,7 +65,7 @@ struct DeckCard: View {
                             .padding(.top, 3)
                     }
                 } else {
-                    Text(config.host.isEmpty ? "Not assigned" : "Switched off")
+                    Text(!config.isAssigned ? "Not assigned" : "Switched off")
                         .font(Theme.grotesk(18, .light)).foregroundStyle(Theme.grey)
                     Spacer(minLength: 8)
                     if !model.setupLocked {
@@ -99,11 +99,28 @@ struct DeckCard: View {
                     MetaRow(label: "Timecode", value: deck.transport.displayTimecode?.description ?? "—", color: ink, inverted: inverted)
                 }
                 MetaRow(label: "Input", value: inputText, color: inputColor, inverted: inverted)
-                MetaRow(label: "Reference", value: refText, color: refColor, inverted: inverted)
-                MetaRow(label: "Media left", value: deck.isConnected ? MediaTime.text(deck.mediaSecondsLeft) : "—",
-                        color: mediaColor, inverted: inverted)
+                if let health = recorderHealth {
+                    MetaRow(label: "Data rate", value: health.recording ? RecorderHealth.rateText(health.bytesPerSecond) : "—",
+                            color: ink, inverted: inverted)
+                    MetaRow(label: "Dropped", value: health.recording || health.droppedFrames > 0 ? "\(health.droppedFrames)" : "—",
+                            color: health.droppedFrames > 0 ? Theme.signal : ink, inverted: inverted)
+                    MetaRow(label: "Disk left", value: deck.isConnected ? MediaTime.text(deck.mediaSecondsLeft) : "—",
+                            color: mediaColor, inverted: inverted)
+                } else {
+                    MetaRow(label: "Reference", value: refText, color: refColor, inverted: inverted)
+                    MetaRow(label: "Media left", value: deck.isConnected ? MediaTime.text(deck.mediaSecondsLeft) : "—",
+                            color: mediaColor, inverted: inverted)
+                }
                 if model.isPlayingBack {
                     MetaRow(label: "Error Δ", value: errorText, color: errorColor, inverted: inverted)
+                }
+            }
+            if let health = recorderHealth {
+                ForEach(Array(health.warnings.enumerated()), id: \.offset) { _, w in
+                    Text(w.text)
+                        .font(Theme.mono(9, bold: true)).tracking(1.2)
+                        .foregroundStyle(inverted ? Theme.ink : warningColor(w.level))
+                        .padding(.top, 4)
                 }
             }
             if let error = deck.lastError {
@@ -122,7 +139,7 @@ struct DeckCard: View {
     /// Column 4: the deck number, huge and set right; Setup above it.
     private var number: some View {
         VStack(alignment: .trailing, spacing: 0) {
-            if deck.isConnected {
+            if deck.isConnected, !config.isRecorder {
                 TextButton(title: "Setup", color: soft) { showSetup = true }
                     .help("Codec, input, reference, media and play offset for this deck")
             }
@@ -158,9 +175,30 @@ struct DeckCard: View {
 
     /// Another slot with the same address (two slots driving one deck).
     private var sharedAddress: Int? {
-        let host = config.host.trimmingCharacters(in: .whitespaces)
-        guard !host.isEmpty else { return nil }
-        return model.settings.decks.firstIndex { $0.id != deck.id && $0.enabled && $0.host.trimmingCharacters(in: .whitespaces) == host }
+        guard let host = config.networkHost else { return nil }
+        return model.settings.decks.firstIndex { $0.id != deck.id && $0.enabled && $0.networkHost == host }
+    }
+
+    /// Address and model for a HyperDeck; source and codec for the recorder.
+    private var subtitle: String {
+        if config.isRecorder {
+            return ["Recorder", config.recorder.source?.label, config.recorder.codec.label].compactMap { $0 }.joined(separator: " · ")
+        }
+        return [config.host, deck.model].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// The recorder's health while it's connected (nil for a HyperDeck).
+    private var recorderHealth: RecorderHealth? {
+        guard config.isRecorder, deck.isConnected else { return nil }
+        return deck.recorderStatus?.health
+    }
+
+    private func warningColor(_ level: RecorderWarning.Level) -> Color {
+        switch level {
+        case .alarm: return Theme.signal
+        case .caution: return Theme.amber
+        case .note: return Theme.grey
+        }
     }
 
     // MARK: Text and colour

@@ -379,7 +379,7 @@ private struct DeckSummary: View {
     let assign: () -> Void
 
     var body: some View {
-        let inUse = model.decks.filter { model.settings.decks[$0.id].enabled && !model.settings.decks[$0.id].host.isEmpty }
+        let inUse = model.decks.filter { model.settings.decks[$0.id].enabled && model.settings.decks[$0.id].isAssigned }
         let connected = inUse.filter(\.isConnected).count
         let lost = inUse.filter(\.isLost)
         VStack(alignment: .leading, spacing: 6) {

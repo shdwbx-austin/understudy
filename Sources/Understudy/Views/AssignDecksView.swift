@@ -31,6 +31,7 @@ struct AssignDecksView: View {
                         .padding(.top, 16)
                     ForEach(draft.indices, id: \.self) { i in
                         SlotRow(config: $draft[i], number: i + 1, duplicate: duplicate(i), found: model.discovery.found,
+                                sources: model.recorderSources,
                                 remove: draft.count > 1 ? { draft.remove(at: i) } : nil)
                         Rule(color: Theme.rule.opacity(0.6))
                     }
@@ -59,17 +60,23 @@ struct AssignDecksView: View {
         .onAppear {
             draft = model.settings.decks
             model.discovery.startBrowsing()
+            model.recorderSources.refresh()
         }
         .onDisappear { model.discovery.stopBrowsing() }
     }
 
     private var canApply: Bool { !model.setupLocked && draft != model.settings.decks }
 
-    /// Another slot already using this slot's address.
+    /// Another slot already using this slot's address (or, for the recorder, its capture device:
+    /// a device can only be opened once).
     private func duplicate(_ i: Int) -> Int? {
-        let host = draft[i].host.trimmingCharacters(in: .whitespaces)
-        guard !host.isEmpty else { return nil }
-        return draft.indices.first { $0 != i && draft[$0].enabled && draft[$0].host.trimmingCharacters(in: .whitespaces) == host }
+        func key(_ c: DeckConfig) -> String? {
+            if let host = c.networkHost { return "host:\(host)" }
+            if c.isRecorder, let source = c.recorder.source, source.kind == .capture { return "capture:\(source.id)" }
+            return nil
+        }
+        guard let mine = key(draft[i]) else { return nil }
+        return draft.indices.first { $0 != i && draft[$0].enabled && key(draft[$0]) == mine }
     }
 
     private func apply() {
@@ -85,6 +92,7 @@ private struct SlotRow: View {
     let number: Int
     let duplicate: Int?
     let found: [FoundDeck]
+    @ObservedObject var sources: RecorderSources
     let remove: (() -> Void)?
 
     var body: some View {
@@ -98,26 +106,12 @@ private struct SlotRow: View {
                     .textFieldStyle(.plain)
                     .font(Theme.grotesk(16, .medium))
                     .frame(width: 200)
-                HStack(spacing: 6) {
-                    TextField("IP address", text: $config.host)
-                        .textFieldStyle(.plain)
-                        .font(Theme.mono(13))
-                    if !found.isEmpty {
-                        Menu {
-                            ForEach(found) { f in
-                                Button("\(f.host) — \(f.title)") { config.host = f.host; config.enabled = true }
-                            }
-                            Divider()
-                            Button("Clear") { config.host = "" }
-                        } label: { Text("▾").font(Theme.mono(12)) }
-                        .menuStyle(.borderlessButton)
-                        .menuIndicator(.hidden)
-                        .fixedSize()
-                    }
+                kindMenu
+                if config.isRecorder {
+                    recorderFields
+                } else {
+                    addressField
                 }
-                .padding(.vertical, 4)
-                .overlay(alignment: .bottom) { Rule() }
-                .frame(maxWidth: .infinity)
                 Toggle("In use", isOn: $config.enabled)
                     .toggleStyle(.switch)
                     .controlSize(.mini)
@@ -130,12 +124,113 @@ private struct SlotRow: View {
                 }
             }
             if let duplicate {
-                Text("SAME ADDRESS AS \(String(format: "%02d", duplicate + 1)) — ONE DECK CAN'T FILL TWO SLOTS")
+                Text(config.isRecorder
+                     ? "SAME CAPTURE DEVICE AS \(String(format: "%02d", duplicate + 1)) — IT CAN ONLY BE OPENED ONCE"
+                     : "SAME ADDRESS AS \(String(format: "%02d", duplicate + 1)) — ONE DECK CAN'T FILL TWO SLOTS")
                     .font(Theme.mono(9, bold: true)).tracking(1.2).foregroundStyle(Theme.amber)
+                    .padding(.leading, 44 + Theme.gutter)
+            }
+            if config.isRecorder {
+                Text("RECORDS ON THIS MAC — A STAND-IN FOR A HYPERDECK: USES CPU, GPU AND DISK WHILE THE SHOW RUNS")
+                    .font(Theme.mono(9)).tracking(1.2).foregroundStyle(Theme.grey)
                     .padding(.leading, 44 + Theme.gutter)
             }
         }
         .padding(.vertical, 10)
+    }
+
+    /// A HyperDeck's address, with the decks found on the network.
+    private var addressField: some View {
+        HStack(spacing: 6) {
+            TextField("IP address", text: $config.host)
+                .textFieldStyle(.plain)
+                .font(Theme.mono(13))
+            if !found.isEmpty {
+                Menu {
+                    ForEach(found) { f in
+                        Button("\(f.host) — \(f.title)") { config.host = f.host; config.enabled = true }
+                    }
+                    Divider()
+                    Button("Clear") { config.host = "" }
+                } label: { Text("▾").font(Theme.mono(12)) }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+            }
+        }
+        .padding(.vertical, 4)
+        .overlay(alignment: .bottom) { Rule() }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// HyperDeck or the Understudy recorder.
+    private var kindMenu: some View {
+        Menu {
+            ForEach(DeckKind.allCases) { kind in
+                Button(kind.label) { config.kind = kind }
+            }
+        } label: {
+            Text((config.isRecorder ? "RECORDER" : "HYPERDECK") + " ▾")
+                .font(Theme.mono(10, bold: true)).tracking(1.2)
+                .foregroundStyle(config.isRecorder ? Theme.amber : Theme.grey)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("A HyperDeck on the network, or the Understudy recorder recording on this Mac")
+    }
+
+    /// The recorder's source and codec.
+    private var recorderFields: some View {
+        HStack(spacing: 14) {
+            Menu {
+                if !sources.capture.isEmpty {
+                    Section("Capture devices") {
+                        ForEach(sources.capture, id: \.self) { s in Button(s.name) { pick(s) } }
+                    }
+                }
+                Section(sources.searchingNDI ? "NDI (looking…)" : "NDI") {
+                    if !sources.ndiAvailable {
+                        Text("NDI isn't installed on this Mac")
+                    } else if sources.ndi.isEmpty {
+                        Text(sources.searchingNDI ? "Looking for sources…" : "No NDI sources found")
+                    }
+                    ForEach(sources.ndi, id: \.self) { s in Button(s.name) { pick(s) } }
+                }
+                Section {
+                    Button("Test pattern") { pick(.testPattern) }
+                }
+                Divider()
+                Button("Look again") { sources.refresh() }
+            } label: {
+                Text((config.recorder.source?.label ?? "Choose a source") + " ▾")
+                    .font(Theme.mono(13))
+                    .foregroundStyle(config.recorder.source == nil ? Theme.grey : Theme.paper)
+                    .lineLimit(1)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Menu {
+                ForEach(RecorderCodec.allCases) { c in
+                    Button(c.label + (TakeWriter.hasHardwareEncoder(c) ? "" : " (software)")) { config.recorder.codec = c }
+                }
+            } label: {
+                Text(config.recorder.codec.label + " ▾").font(Theme.mono(11)).foregroundStyle(Theme.grey)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("H.264 and H.265 use the Mac's hardware encoder; ProRes uses the ProRes engine where the Mac has one")
+        }
+        .padding(.vertical, 4)
+        .overlay(alignment: .bottom) { Rule() }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func pick(_ source: RecorderSource) {
+        config.recorder.source = source
+        config.enabled = true
     }
 }
 
@@ -150,7 +245,7 @@ private struct NetworkList: View {
             SectionHead(index: 2, title: "On the network") {
                 HStack(spacing: 18) {
                     InterfacePicker()
-                    if unassigned.contains(where: { !$0.busy }), draft.contains(where: { $0.host.isEmpty }) {
+                    if unassigned.contains(where: { !$0.busy }), draft.contains(where: { !$0.isAssigned }) {
                         TextButton(title: "Fill empty slots") { fillEmpty() }
                     }
                     TextButton(title: discovery.isScanning ? "Scanning…" : "Find decks") { discovery.scan() }
@@ -169,7 +264,7 @@ private struct NetworkList: View {
                         .foregroundStyle(f.busy && slot(of: f) == nil ? Theme.amber : Theme.grey)
                     Menu {
                         ForEach(draft.indices, id: \.self) { i in
-                            Button("\(String(format: "%02d", i + 1))  \(draft[i].name)\(draft[i].host.isEmpty ? "" : " — replaces \(draft[i].host)")") {
+                            Button("\(String(format: "%02d", i + 1))  \(draft[i].name)\(replaces(draft[i]))") {
                                 assign(f, to: i)
                             }
                         }
@@ -189,7 +284,12 @@ private struct NetworkList: View {
     private var unassigned: [FoundDeck] { discovery.found.filter { slot(of: $0) == nil } }
 
     private func slot(of f: FoundDeck) -> Int? {
-        draft.firstIndex { $0.host.trimmingCharacters(in: .whitespaces) == f.host }
+        draft.firstIndex { $0.networkHost == f.host }
+    }
+
+    private func replaces(_ c: DeckConfig) -> String {
+        if c.isRecorder, let source = c.recorder.source { return " — replaces the recorder (\(source.label))" }
+        return c.host.isEmpty ? "" : " — replaces \(c.host)"
     }
 
     private func status(_ f: FoundDeck) -> String {
@@ -200,13 +300,14 @@ private struct NetworkList: View {
     private func assign(_ f: FoundDeck, to i: Int) {
         if let old = slot(of: f), old != i { draft[old].host = "" }
         draft[i].host = f.host
+        draft[i].kind = .hyperdeck
         draft[i].enabled = true
     }
 
     private func fillEmpty() {
         // Busy decks belong to another controller (e.g. another department): never auto-assign them.
         for f in unassigned where !f.busy {
-            guard let empty = draft.firstIndex(where: { $0.host.trimmingCharacters(in: .whitespaces).isEmpty }) else { return }
+            guard let empty = draft.firstIndex(where: { !$0.isAssigned }) else { return }
             assign(f, to: empty)
         }
     }
