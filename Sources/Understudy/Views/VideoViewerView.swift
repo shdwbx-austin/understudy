@@ -60,7 +60,7 @@ struct VideoViewerView: View {
         } else {
             HStack(spacing: 12) {
                 ForEach(shown) { slot in
-                    VideoPane(slot: slot, player: viewer.players[slot.deckID])
+                    VideoPane(slot: slot, viewer: viewer)
                 }
             }
             .frame(maxHeight: .infinity)
@@ -94,14 +94,14 @@ private struct DeckPicker: View {
 
 struct VideoPane: View {
     let slot: VideoViewer.Slot
-    let player: AVPlayer?
+    @ObservedObject var viewer: VideoViewer
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack {
                 Rectangle().fill(Theme.fill)
-                if let player, slot.url != nil {
-                    PlayerLayerView(player: player)
+                if slot.url != nil {
+                    FrameLayerView(viewer: viewer, deckID: slot.deckID)
                 } else {
                     Text(slot.status).font(Theme.grotesk(13, .light)).foregroundStyle(Theme.grey)
                         .multilineTextAlignment(.center).padding()
@@ -119,22 +119,42 @@ struct VideoPane: View {
     }
 }
 
-/// An AVPlayerLayer, aspect-fit, on black.
-struct PlayerLayerView: NSViewRepresentable {
-    let player: AVPlayer
+/// A deck's picture: the very BGRA frames its NDI feed sends (Playback LUT and all), aspect-fit on
+/// black, so what's on screen is exactly what goes out.
+struct FrameLayerView: NSViewRepresentable {
+    let viewer: VideoViewer
+    let deckID: Int
+
+    final class Coordinator {
+        var deckID: Int?
+        weak var viewer: VideoViewer?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         view.wantsLayer = true
-        let layer = AVPlayerLayer(player: player)
+        let layer = AVSampleBufferDisplayLayer()
         layer.videoGravity = .resizeAspect
         layer.backgroundColor = NSColor.black.cgColor
         view.layer = layer
+        viewer.attachDisplay(layer, deck: deckID)
+        context.coordinator.deckID = deckID
+        context.coordinator.viewer = viewer
         return view
     }
 
     func updateNSView(_ view: NSView, context: Context) {
-        (view.layer as? AVPlayerLayer)?.player = player
+        guard context.coordinator.deckID != deckID, let layer = view.layer as? AVSampleBufferDisplayLayer else { return }
+        viewer.detachDisplay(layer)
+        viewer.attachDisplay(layer, deck: deckID)
+        context.coordinator.deckID = deckID
+    }
+
+    static func dismantleNSView(_ view: NSView, coordinator: Coordinator) {
+        guard let layer = view.layer as? AVSampleBufferDisplayLayer else { return }
+        MainActor.assumeIsolated { coordinator.viewer?.detachDisplay(layer) }
     }
 }
 

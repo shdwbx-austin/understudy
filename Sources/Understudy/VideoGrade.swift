@@ -113,6 +113,12 @@ enum VideoGrade {
             CVBufferSetAttachment(output, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
             CVBufferSetAttachment(output, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
             CVBufferSetAttachment(output, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, .shouldPropagate)
+            // The colour space a decoded Rec.709 frame carries too: without it, displays fall back
+            // to a different 709 curve and the shadows look lifted next to an ungraded deck.
+            if let attachments = CVBufferCopyAttachments(output, .shouldPropagate),
+               let space = CVImageBufferCreateColorSpaceFromAttachments(attachments)?.takeRetainedValue() {
+                CVBufferSetAttachment(output, kCVImageBufferCGColorSpaceKey, space, .shouldPropagate)
+            }
             Self.context.render(instruction.grader.apply(to: image), to: output, bounds: image.extent, colorSpace: space)
             request.finish(withComposedVideoFrame: output)
         }

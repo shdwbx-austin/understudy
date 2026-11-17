@@ -48,6 +48,7 @@ typedef struct cndi_recv_create_v3_t {
 
 #define CNDI_FOURCC_BGRA ((uint32_t)'B' | ((uint32_t)'G' << 8) | ((uint32_t)'R' << 16) | ((uint32_t)'A' << 24))
 #define CNDI_FRAME_FORMAT_PROGRESSIVE 1
+#define CNDI_FRAME_FORMAT_INTERLEAVED 0
 #define CNDI_TIMECODE_SYNTHESIZE INT64_MAX
 #define CNDI_FRAME_TYPE_VIDEO 1
 #define CNDI_RECV_COLOR_BGRX_BGRA 0

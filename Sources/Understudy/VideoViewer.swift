@@ -104,6 +104,10 @@ final class VideoViewer: ObservableObject {
         rebuildSenders()
     }
 
+    /// Shows deck `deck`'s frames (the very frames NDI sends) in `layer`.
+    func attachDisplay(_ layer: AVSampleBufferDisplayLayer, deck: Int) { pump.addDisplay(layer, for: deck) }
+    func detachDisplay(_ layer: AVSampleBufferDisplayLayer) { pump.removeDisplay(layer) }
+
     private func attachOutput(to item: AVPlayerItem, deck: Int) {
         var attrs: [String: any Sendable] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
                                              kCVPixelBufferIOSurfacePropertiesKey as String: [String: String]()]
@@ -297,45 +301,62 @@ final class VideoViewer: ObservableObject {
     }
 }
 
-/// Pulls each player's current frame and sends it to its NDI stream, off the main thread. A
-/// feed with no new frame for a moment sends its last frame again (paused, or between takes), so
-/// a receiver that connects then still gets a picture; a feed with no video sends a test pattern.
+/// Pulls each player's current frame, off the main thread, and hands the same BGRA frame to its
+/// NDI stream and to the viewer's picture(s) of that deck, so what's on screen is exactly what goes
+/// out. A feed with no new frame for a moment sends its last frame again (paused, between takes,
+/// or while the next file opens), so receivers never see bars between takes; only a feed with no
+/// video sends the test pattern. Every frame, pattern or not, goes out at the feed's own rate and
+/// last size, so receivers don't renegotiate.
 final class NDIPump: @unchecked Sendable {
     struct Card: Equatable, Sendable {
         let title: String
         let note: String
     }
 
+    /// How a deck's frames are described to NDI.
+    struct Format: Equatable, Sendable {
+        /// Display aspect (pixel aspect included); nil: width / height.
+        var aspect: Float?
+        var interlaced = false
+    }
+
     private struct State {
         var outputs: [Int: AVPlayerItemVideoOutput] = [:]
-        /// Bumped when a deck's output changes, so its held frame is dropped.
-        var generation: [Int: Int] = [:]
         var senders: [Int: NDISender] = [:]
         var fps: [Int: Double] = [:]
         var cards: [Int: Card] = [:]
+        var formats: [Int: Format] = [:]
+        /// Per-frame NDI metadata (XML), e.g. the Playback LUT in use.
+        var metadata: [Int: String] = [:]
+        var displays: [Int: [DisplaySink]] = [:]
     }
 
     /// Idle feeds (no new frames) repeat at this rate.
     static let idleInterval = 0.1
+    /// Advertised before a feed's file says otherwise.
+    static let defaultFPS = 30000.0 / 1001
 
     private let state = OSAllocatedUnfairLock(initialState: State())
     private var timer: DispatchSourceTimer?
     private let queue = DispatchQueue(label: "understudy.ndi.pump", qos: .userInitiated)
     // Touched only on `queue`.
-    private var held: [Int: (generation: Int, buffer: CVPixelBuffer)] = [:]
+    private var held: [Int: CVPixelBuffer] = [:]
     private var lastSent: [Int: Double] = [:]
+    private var lastSize: [Int: (Int, Int)] = [:]
     private var patterns: [Int: NDITestPattern] = [:]
 
+    /// The deck's new output. Its last frame keeps going out until the new one draws.
     func setOutput(_ output: AVPlayerItemVideoOutput?, for deck: Int) {
-        state.withLock {
-            $0.outputs[deck] = output
-            $0.generation[deck, default: 0] += 1
-        }
+        state.withLock { $0.outputs[deck] = output }
     }
 
     func sender(for deck: Int) -> NDISender? { state.withLock { $0.senders[deck] } }
 
     func setFPS(_ fps: Double, for deck: Int) { state.withLock { $0.fps[deck] = fps } }
+
+    func setFormat(_ format: Format, for deck: Int) { state.withLock { $0.formats[deck] = format } }
+
+    func setMetadata(_ xml: String?, for deck: Int) { state.withLock { $0.metadata[deck] = xml } }
 
     func setSenders(_ senders: [Int: NDISender], fps: [Int: Double], cards: [Int: Card] = [:]) {
         state.withLock { s in
@@ -343,7 +364,42 @@ final class NDIPump: @unchecked Sendable {
             s.cards = cards
             for (deck, value) in fps { s.fps[deck] = value }
         }
-        if senders.isEmpty {
+        updateTimer()
+    }
+
+    // MARK: Pictures on screen
+
+    final class DisplaySink: @unchecked Sendable {
+        weak var layer: AVSampleBufferDisplayLayer?
+        var id: ObjectIdentifier? { layer.map(ObjectIdentifier.init) }
+        init(_ layer: AVSampleBufferDisplayLayer) { self.layer = layer }
+    }
+
+    /// Shows deck `deck`'s frames in `layer` (its last frame at once, if any).
+    func addDisplay(_ layer: AVSampleBufferDisplayLayer, for deck: Int) {
+        let sink = DisplaySink(layer)
+        let id = ObjectIdentifier(layer)
+        state.withLock { s in
+            s.displays[deck] = (s.displays[deck] ?? []).filter { $0.id != nil && $0.id != id } + [sink]
+        }
+        queue.async { [weak self] in
+            if let buffer = self?.held[deck] { Self.enqueue(buffer, to: [sink]) }
+        }
+        updateTimer()
+    }
+
+    func removeDisplay(_ layer: AVSampleBufferDisplayLayer) {
+        let id = ObjectIdentifier(layer)
+        state.withLock { s in
+            for (deck, sinks) in s.displays { s.displays[deck] = sinks.filter { $0.id != nil && $0.id != id } }
+            s.displays = s.displays.filter { !$0.value.isEmpty }
+        }
+        updateTimer()
+    }
+
+    private func updateTimer() {
+        let busy = state.withLock { !$0.senders.isEmpty || !$0.displays.isEmpty }
+        if !busy {
             timer?.cancel()
             timer = nil
         } else if timer == nil {
@@ -356,48 +412,88 @@ final class NDIPump: @unchecked Sendable {
         }
     }
 
+    // MARK: The loop
+
     private func tick() {
         let s = state.withLock { $0 }
         let now = CACurrentMediaTime()
-        for (deck, sender) in s.senders {
-            let fps = s.fps[deck] ?? 30
-            let generation = s.generation[deck] ?? 0
+        let decks = Set(s.senders.keys).union(s.displays.keys).union(s.outputs.keys)
+        for deck in decks {
+            let sender = s.senders[deck]
+            let fps = s.fps[deck] ?? Self.defaultFPS
             if let card = s.cards[deck] {
                 // No video: the test pattern, at the idle rate.
-                sendPattern(card, deck: deck, sender: sender, now: now)
+                if let sender { sendPattern(card, deck: deck, sender: sender, fps: fps, now: now) }
                 continue
             }
             if let output = s.outputs[deck] {
                 let time = output.itemTime(forHostTime: now)
                 if output.hasNewPixelBuffer(forItemTime: time),
                    let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) {
-                    sender.send(buffer, fps: fps)
-                    held[deck] = (generation, buffer)
-                    lastSent[deck] = now
+                    held[deck] = buffer
+                    lastSize[deck] = (CVPixelBufferGetWidth(buffer), CVPixelBufferGetHeight(buffer))
+                    if let sender { send(buffer, deck: deck, sender: sender, fps: fps, state: s, now: now) }
+                    if let sinks = s.displays[deck] { Self.enqueue(buffer, to: sinks) }
                     continue
                 }
             }
             // Nothing new: repeat the held frame now and then, so late receivers get a picture.
-            guard now - (lastSent[deck] ?? 0) >= Self.idleInterval else { continue }
-            if let h = held[deck], h.generation == generation {
-                sender.send(h.buffer, fps: fps)
-                lastSent[deck] = now
+            guard let sender, now - (lastSent[deck] ?? 0) >= Self.idleInterval else { continue }
+            if let buffer = held[deck] {
+                send(buffer, deck: deck, sender: sender, fps: fps, state: s, now: now)
             } else {
-                // The file is still opening (or a cold read off a drive): bars until it draws.
-                sendPattern(Card(title: sender.name, note: "Loading the video…"), deck: deck, sender: sender, now: now)
+                // Never had a picture yet (the first file still opening): bars until it draws.
+                sendPattern(Card(title: sender.name, note: "Loading the video…"), deck: deck, sender: sender, fps: fps, now: now)
             }
         }
-        for deck in held.keys where s.senders[deck] == nil { held[deck] = nil }
+        for deck in held.keys where !decks.contains(deck) { held[deck] = nil }
     }
 
-    private func sendPattern(_ card: Card, deck: Int, sender: NDISender, now: Double) {
+    private func send(_ buffer: CVPixelBuffer, deck: Int, sender: NDISender, fps: Double, state s: State, now: Double) {
+        let format = s.formats[deck] ?? Format()
+        sender.send(buffer, fps: fps, aspect: format.aspect, interlaced: format.interlaced, metadata: s.metadata[deck])
+        lastSent[deck] = now
+    }
+
+    private func sendPattern(_ card: Card, deck: Int, sender: NDISender, fps: Double, now: Double) {
         guard now - (lastSent[deck] ?? 0) >= Self.idleInterval else { return }
-        if patterns[deck]?.title != card.title || patterns[deck]?.note != card.note {
-            patterns[deck] = NDITestPattern(title: card.title, note: card.note)
+        let (w, h) = lastSize[deck] ?? (1920, 1080)
+        if let p = patterns[deck], p.title == card.title, p.note == card.note, p.width == w, p.height == h {} else {
+            patterns[deck] = NDITestPattern(title: card.title, note: card.note, width: w, height: h)
         }
         if let frame = patterns[deck]?.frame() {
-            sender.send(frame, fps: 1 / Self.idleInterval)
+            // Advertised at the feed's own rate (only repeated at the idle rate), progressive.
+            sender.send(frame, fps: fps, aspect: nil, interlaced: false, metadata: nil)
             lastSent[deck] = now
+        }
+    }
+
+    /// Hands a frame to on-screen layers, shown as soon as it arrives.
+    private static func enqueue(_ buffer: CVPixelBuffer, to sinks: [DisplaySink]) {
+        var format: CMVideoFormatDescription?
+        guard CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: buffer, formatDescriptionOut: &format) == noErr,
+              let format else { return }
+        var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: .zero, decodeTimeStamp: .invalid)
+        var sample: CMSampleBuffer?
+        guard CMSampleBufferCreateReadyWithImageBuffer(allocator: nil, imageBuffer: buffer, formatDescription: format,
+                                                       sampleTiming: &timing, sampleBufferOut: &sample) == noErr,
+              let sample else { return }
+        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true),
+           CFArrayGetCount(attachments) > 0 {
+            let dict = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+            CFDictionarySetValue(dict, Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
+                                 Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
+        }
+        for sink in sinks {
+            guard let layer = sink.layer else { continue }
+            if #available(macOS 14.0, *) {
+                let renderer = layer.sampleBufferRenderer
+                if renderer.status == .failed { renderer.flush() }
+                renderer.enqueue(sample)
+            } else {
+                if layer.status == .failed { layer.flush() }
+                layer.enqueue(sample)
+            }
         }
     }
 

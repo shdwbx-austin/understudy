@@ -62,17 +62,17 @@ struct ViewScreen: View {
                 .background(Rectangle().fill(Theme.fill))
         } else if sideBySide {
             HStack(alignment: .top, spacing: 12) {
-                ForEach(slots) { VideoPane(slot: $0, player: viewer.players[$0.deckID]) }
+                ForEach(slots) { VideoPane(slot: $0, viewer: viewer) }
             }
         } else {
             let main = slots.first { $0.deckID == viewer.solo } ?? slots[0]
             HStack(alignment: .top, spacing: Theme.gutter) {
-                VideoPane(slot: main, player: viewer.players[main.deckID])
+                VideoPane(slot: main, viewer: viewer)
                 if slots.count > 1 {
                     VStack(alignment: .leading, spacing: 14) {
                         ForEach(slots.filter { $0.deckID != main.deckID }) { slot in
                             Button { viewer.solo = slot.deckID } label: {
-                                VideoPane(slot: slot, player: viewer.players[slot.deckID]).contentShape(Rectangle())
+                                VideoPane(slot: slot, viewer: viewer).contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .help("Show \(slot.name) large")
