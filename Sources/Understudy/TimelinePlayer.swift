@@ -22,6 +22,8 @@ struct AudioRoute: Equatable {
 /// Song files are scheduled against host time, the same clock the transport and the chase run
 /// on, so audio, LTC and decks start together. Music and LTC use separate engines, so each can go
 /// to its own device and channels (e.g. music on 1–2 of the PA feed, LTC on 4 of an interface).
+/// Music can play to more than one output at once: each extra output is its own engine, with the
+/// same songs scheduled at the same host times.
 @MainActor
 final class TimelinePlayer {
     /// What the LTC render thread needs, swapped in whole under a lock.
@@ -34,15 +36,20 @@ final class TimelinePlayer {
         var trackCode: [Range<Double>] = []
     }
 
-    private let music = AVAudioEngine()
+    /// The main music output, then one engine per extra output.
+    private var musicEngines: [AVAudioEngine] = [AVAudioEngine()]
+    /// Engines that opened their device (a missing extra output is skipped, not fatal).
+    private var musicOpen: [Bool] = [false]
+    private var music: AVAudioEngine { musicEngines[0] }
     private let ltc = AVAudioEngine()
-    /// One player per file, on the music engine, and per timecode file, on the LTC engine.
-    private var players: [String: AVAudioPlayerNode] = [:]
+    /// One player per file on each music engine, and per timecode file, on the LTC engine.
+    private var players: [[String: AVAudioPlayerNode]] = [[:]]
     private var codePlayers: [String: AVAudioPlayerNode] = [:]
     private var files: [String: AVAudioFile] = [:]
     private var ltcNode: AVAudioSourceNode?
     private let plan = OSAllocatedUnfairLock(initialState: LTCPlan())
     private var musicRoute = AudioRoute(deviceUID: nil, channel: 0)
+    private var extraRoutes: [AudioRoute] = []
     private var ltcRoute: AudioRoute?
     private var configured = false
 
@@ -59,18 +66,38 @@ final class TimelinePlayer {
     /// Points music and LTC at their outputs. Returns true when anything changed (which stops
     /// what's playing: the caller restarts it).
     @discardableResult
-    func configure(music route: AudioRoute, ltc ltcRoute: AudioRoute?) -> Bool {
-        let devices = [route.deviceUID, ltcRoute?.deviceUID].map { $0.flatMap(AudioDeviceCatalog.deviceID(forUID:)) }
-        guard !configured || route != musicRoute || ltcRoute != self.ltcRoute || devices != routedDevices else { return false }
+    func configure(music route: AudioRoute, extra: [AudioRoute] = [], ltc ltcRoute: AudioRoute?) -> Bool {
+        let devices = ([route.deviceUID, ltcRoute?.deviceUID] + extra.map(\.deviceUID))
+            .map { $0.flatMap(AudioDeviceCatalog.deviceID(forUID:)) }
+        guard !configured || route != musicRoute || extra != extraRoutes || ltcRoute != self.ltcRoute
+                || devices != routedDevices else { return false }
         musicRoute = route
         self.ltcRoute = ltcRoute
         routedDevices = devices
         configured = true
         problem = nil
         stopMusic()
-        music.stop()
-        if !point(music, at: route, channels: [0, 1]) {
-            problem = "Couldn't open the audio output for song audio."
+        if extra != extraRoutes {
+            // New extra engines (players go with them).
+            for engine in musicEngines.dropFirst() { engine.stop() }
+            musicEngines = [music] + extra.map { _ in AVAudioEngine() }
+            players = [players[0]] + extra.map { _ in [:] }
+            extraRoutes = extra
+        }
+        musicOpen = Array(repeating: false, count: musicEngines.count)
+        for (i, engine) in musicEngines.enumerated() {
+            engine.stop()
+            let target = i == 0 ? route : extra[i - 1]
+            // An extra output naming a device that isn't here (unplugged): skip it, say so.
+            if i > 0, let uid = target.deviceUID, AudioDeviceCatalog.deviceID(forUID: uid) == nil {
+                problem = "An extra song output isn't connected; song audio plays on the others."
+                continue
+            }
+            musicOpen[i] = point(engine, at: target, channels: [0, 1])
+            if !musicOpen[i] {
+                problem = i == 0 ? "Couldn't open the audio output for song audio."
+                    : "Couldn't open an extra song output; song audio plays on the others."
+            }
         }
         ltc.stop()
         if let ltcRoute {
@@ -160,7 +187,7 @@ final class TimelinePlayer {
     func start(layout: TimelineLayout, from t: Double, at host: Double, sources: [UUID: SongSources] = [:]) {
         stopMusic()
         var trackCode: [Range<Double>] = []
-        var scheduled: [AVAudioPlayerNode] = []
+        var scheduled: [(engine: Int, node: AVAudioPlayerNode)] = []
         var scheduledCode: [AVAudioPlayerNode] = []
         for item in layout.items {
             let source = sources[item.song.id] ?? SongSources(music: item.song.audioPath, timecode: nil)
@@ -168,10 +195,13 @@ final class TimelinePlayer {
             let fileStart = item.timelineStart + (item.song.audioOffset ?? 0)
             // Never before this song's lead-in, never past its end.
             let earliest = item.timelineStart - layout.gap
-            if let path = source.music, let file = file(at: path),
-               let node = schedule(file, fileStart: fileStart, earliest: earliest, end: item.timelineEnd,
-                                   from: t, at: host, player: { self.player(path, format: $0, on: self.music, in: &self.players) }) {
-                scheduled.append(node)
+            if let path = source.music, let file = file(at: path) {
+                for e in musicEngines.indices where musicOpen[e] {
+                    if let node = schedule(file, fileStart: fileStart, earliest: earliest, end: item.timelineEnd, from: t, at: host,
+                                           player: { self.player(path, format: $0, on: self.musicEngines[e], in: &self.players[e]) }) {
+                        scheduled.append((e, node))
+                    }
+                }
             }
             if ltcRoute != nil, let path = source.timecode, let file = file(at: path) {
                 let fileEnd = fileStart + Double(file.length) / file.processingFormat.sampleRate
@@ -189,13 +219,19 @@ final class TimelinePlayer {
         startLTC()
         scheduledCode.forEach { $0.play() }
         guard !scheduled.isEmpty else { return }
-        if !music.isRunning {
-            do { try music.start() } catch {
-                problem = "Song audio: \(error.localizedDescription)"
-                return
+        var started = Set<Int>()
+        for e in Set(scheduled.map(\.engine)) {
+            let engine = musicEngines[e]
+            if !engine.isRunning {
+                do { try engine.start() } catch {
+                    problem = e == 0 ? "Song audio: \(error.localizedDescription)"
+                        : "An extra song output: \(error.localizedDescription)"
+                    continue
+                }
             }
+            started.insert(e)
         }
-        scheduled.forEach { $0.play() }
+        for item in scheduled where started.contains(item.engine) { item.node.play() }
     }
 
     /// Schedules the part of `file` that falls in [max(earliest, fileStart), end) on the timeline,
@@ -227,7 +263,7 @@ final class TimelinePlayer {
     }
 
     private func stopMusic() {
-        players.values.forEach { $0.stop() }
+        players.forEach { $0.values.forEach { $0.stop() } }
         codePlayers.values.forEach { $0.stop() }
     }
 
@@ -250,10 +286,12 @@ final class TimelinePlayer {
 
     /// Forgets players and open files no longer used by any song.
     func prune(keeping paths: Set<String>) {
-        for (path, node) in players where !paths.contains(path) {
-            node.stop()
-            music.detach(node)
-            players[path] = nil
+        for e in players.indices {
+            for (path, node) in players[e] where !paths.contains(path) {
+                node.stop()
+                musicEngines[e].detach(node)
+                players[e][path] = nil
+            }
         }
         for (path, node) in codePlayers where !paths.contains(path) {
             node.stop()

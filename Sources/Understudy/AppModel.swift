@@ -189,6 +189,8 @@ final class AppModel: ObservableObject {
         }
         refreshAudioDevices()
         startAudio()
+        viewer.onNDIEnabled = { [weak self] in self?.loadViewerTake() }
+        if viewer.ndiEnabled { loadViewerTake() }
         // Interface unplugged, replugged or arriving after launch: re-read devices and reopen.
         AudioDeviceCatalog.observeDevices { [weak self] in
             MainActor.assumeIsolated { self?.audioDevicesChanged() }
@@ -558,6 +560,7 @@ final class AppModel: ObservableObject {
     private func rebuildTakes() {
         guard let reference = activeDecks.first(where: { !$0.clips.isEmpty }) else {
             takes = []
+            if viewerVisible || viewer.ndiEnabled { loadViewerTake() }
             return
         }
         takes = reference.clips.reversed().enumerated().map { offset, clip in
@@ -821,6 +824,7 @@ final class AppModel: ObservableObject {
             syncInput()
         }
         if settings.timelineOutputUID != old.timelineOutputUID || settings.timelineOutputChannel != old.timelineOutputChannel
+            || settings.extraSongOutputs != old.extraSongOutputs
             || settings.ltcOutputUID != old.ltcOutputUID || settings.ltcOutputChannel != old.ltcOutputChannel
             || settings.ltcOutUseTrackTimecode != old.ltcOutUseTrackTimecode
             || settings.danteOut != old.danteOut || settings.danteInterface != old.danteInterface
@@ -952,9 +956,16 @@ final class AppModel: ObservableObject {
                 ltc: ltcRoute)
     }
 
-    /// Re-points the timeline's outputs; a playing timeline carries on through the change.
+    /// Re-points the timeline's outputs; a playing timeline carries on through the change. The
+    /// extra song outputs go along whatever the main one is (Dante or a device); one that's the
+    /// same as the main output, or listed twice, plays once.
     private func reroute(music: AudioRoute, ltc: AudioRoute?) {
-        if timeline.player.configure(music: music, ltc: ltc) { timeline.resumeAudioAfterReroute() }
+        var extra: [AudioRoute] = []
+        for output in settings.extraSongOutputs {
+            let route = AudioRoute(deviceUID: output.deviceUID, channel: output.channel)
+            if route != music, !extra.contains(route) { extra.append(route) }
+        }
+        if timeline.player.configure(music: music, extra: extra, ltc: ltc) { timeline.resumeAudioAfterReroute() }
     }
 
     /// Re-reads whether the preferred Dante port has a link (the soundcard is re-read on device changes).

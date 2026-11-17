@@ -27,8 +27,11 @@ final class VideoViewer: ObservableObject {
         didSet {
             UserDefaults.standard.set(ndiEnabled, forKey: "understudy.ndiEnabled")
             rebuildSenders()
+            if ndiEnabled { onNDIEnabled?() }
         }
     }
+    /// Called when NDI is switched on, so the current take's decks load even off the View screen.
+    var onNDIEnabled: (() -> Void)?
     /// NDI at 1080p (light) or the files' own size.
     @Published var ndiFullSize: Bool {
         didSet {
@@ -44,7 +47,7 @@ final class VideoViewer: ObservableObject {
     private var lastSeekTime: [Int: Double] = [:]
     private var lastCheck: [Int: Double] = [:]
     private var running: Set<Int> = []
-    private let pump = Pump()
+    private let pump = NDIPump()
 
     init() {
         ndiEnabled = UserDefaults.standard.bool(forKey: "understudy.ndiEnabled")
@@ -169,6 +172,28 @@ final class VideoViewer: ObservableObject {
 
     // MARK: NDI
 
+    /// One NDI source per deck in the viewer, video or not; with no decks at all, one source
+    /// ("Understudy") so receivers can still find this Mac. Feeds without video send a test pattern.
+    struct Feed: Equatable {
+        let deckID: Int
+        let source: String
+        /// Why there's no picture, or nil when the deck has a video.
+        let note: String?
+    }
+
+    static let noDeckID = -1
+
+    var feeds: [Feed] {
+        if slots.isEmpty {
+            return [Feed(deckID: Self.noDeckID, source: "Understudy", note: "No decks with takes yet")]
+        }
+        return slots.map { slot in
+            let name = slot.name.trimmingCharacters(in: .whitespaces)
+            return Feed(deckID: slot.deckID, source: "Understudy " + (name.isEmpty ? "Deck \(slot.deckID + 1)" : name),
+                        note: slot.url == nil ? slot.status : nil)
+        }
+    }
+
     func refreshNDIStatus() {
         let lib = NDILibrary.shared
         if !lib.isAvailable {
@@ -176,47 +201,74 @@ final class VideoViewer: ObservableObject {
         } else if !ndiEnabled {
             ndiStatus = "NDI off"
         } else {
-            let names = slots.filter { $0.url != nil }.map { "Understudy \($0.name)" }
-            ndiStatus = names.isEmpty ? "NDI on: no videos loaded" : "Sending " + names.joined(separator: ", ")
+            let failed = feeds.filter { pump.sender(for: $0.deckID) == nil }
+            if !failed.isEmpty {
+                ndiStatus = "NDI couldn't start " + failed.map(\.source).joined(separator: ", ")
+            } else {
+                ndiStatus = "Sending " + feeds.map { $0.source + ($0.note == nil ? "" : " (test pattern)") }.joined(separator: ", ")
+            }
         }
     }
 
     private func rebuildSenders() {
         var senders: [Int: NDISender] = [:]
+        var notes: [Int: NDIPump.Card] = [:]
         if ndiEnabled {
-            for slot in slots where slot.url != nil {
-                senders[slot.deckID] = pump.sender(for: slot.deckID)?.name == "Understudy \(slot.name)"
-                    ? pump.sender(for: slot.deckID) : NDISender(name: "Understudy \(slot.name)")
+            for feed in feeds {
+                let existing = pump.sender(for: feed.deckID)
+                senders[feed.deckID] = existing?.name == feed.source ? existing : NDISender(name: feed.source)
+                if let note = feed.note { notes[feed.deckID] = .init(title: feed.source, note: note) }
             }
         }
-        pump.setSenders(senders, fps: fps)
+        pump.setSenders(senders, fps: fps, cards: notes)
         refreshNDIStatus()
     }
 }
 
-/// Pulls each player's current frame and sends it to its NDI stream, off the main thread.
-private final class Pump: @unchecked Sendable {
+/// Pulls each player's current frame and sends it to its NDI stream, off the main thread. A
+/// feed with no new frame for a moment sends its last frame again (paused, or between takes), so
+/// a receiver that connects then still gets a picture; a feed with no video sends a test pattern.
+final class NDIPump: @unchecked Sendable {
+    struct Card: Equatable, Sendable {
+        let title: String
+        let note: String
+    }
+
     private struct State {
         var outputs: [Int: AVPlayerItemVideoOutput] = [:]
+        /// Bumped when a deck's output changes, so its held frame is dropped.
+        var generation: [Int: Int] = [:]
         var senders: [Int: NDISender] = [:]
         var fps: [Int: Double] = [:]
+        var cards: [Int: Card] = [:]
     }
+
+    /// Idle feeds (no new frames) repeat at this rate.
+    static let idleInterval = 0.1
 
     private let state = OSAllocatedUnfairLock(initialState: State())
     private var timer: DispatchSourceTimer?
     private let queue = DispatchQueue(label: "understudy.ndi.pump", qos: .userInitiated)
+    // Touched only on `queue`.
+    private var held: [Int: (generation: Int, buffer: CVPixelBuffer)] = [:]
+    private var lastSent: [Int: Double] = [:]
+    private var patterns: [Int: NDITestPattern] = [:]
 
     func setOutput(_ output: AVPlayerItemVideoOutput?, for deck: Int) {
-        state.withLock { $0.outputs[deck] = output }
+        state.withLock {
+            $0.outputs[deck] = output
+            $0.generation[deck, default: 0] += 1
+        }
     }
 
     func sender(for deck: Int) -> NDISender? { state.withLock { $0.senders[deck] } }
 
     func setFPS(_ fps: Double, for deck: Int) { state.withLock { $0.fps[deck] = fps } }
 
-    func setSenders(_ senders: [Int: NDISender], fps: [Int: Double]) {
+    func setSenders(_ senders: [Int: NDISender], fps: [Int: Double], cards: [Int: Card] = [:]) {
         state.withLock { s in
             s.senders = senders
+            s.cards = cards
             for (deck, value) in fps { s.fps[deck] = value }
         }
         if senders.isEmpty {
@@ -236,11 +288,44 @@ private final class Pump: @unchecked Sendable {
         let s = state.withLock { $0 }
         let now = CACurrentMediaTime()
         for (deck, sender) in s.senders {
-            guard let output = s.outputs[deck] else { continue }
-            let time = output.itemTime(forHostTime: now)
-            guard output.hasNewPixelBuffer(forItemTime: time),
-                  let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) else { continue }
-            sender.send(buffer, fps: s.fps[deck] ?? 30)
+            let fps = s.fps[deck] ?? 30
+            let generation = s.generation[deck] ?? 0
+            if let card = s.cards[deck] {
+                // No video: the test pattern, at the idle rate.
+                sendPattern(card, deck: deck, sender: sender, now: now)
+                continue
+            }
+            if let output = s.outputs[deck] {
+                let time = output.itemTime(forHostTime: now)
+                if output.hasNewPixelBuffer(forItemTime: time),
+                   let buffer = output.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: nil) {
+                    sender.send(buffer, fps: fps)
+                    held[deck] = (generation, buffer)
+                    lastSent[deck] = now
+                    continue
+                }
+            }
+            // Nothing new: repeat the held frame now and then, so late receivers get a picture.
+            guard now - (lastSent[deck] ?? 0) >= Self.idleInterval else { continue }
+            if let h = held[deck], h.generation == generation {
+                sender.send(h.buffer, fps: fps)
+                lastSent[deck] = now
+            } else {
+                // The file is still opening (or a cold read off a drive): bars until it draws.
+                sendPattern(Card(title: sender.name, note: "Loading the video…"), deck: deck, sender: sender, now: now)
+            }
+        }
+        for deck in held.keys where s.senders[deck] == nil { held[deck] = nil }
+    }
+
+    private func sendPattern(_ card: Card, deck: Int, sender: NDISender, now: Double) {
+        guard now - (lastSent[deck] ?? 0) >= Self.idleInterval else { return }
+        if patterns[deck]?.title != card.title || patterns[deck]?.note != card.note {
+            patterns[deck] = NDITestPattern(title: card.title, note: card.note)
+        }
+        if let frame = patterns[deck]?.frame() {
+            sender.send(frame, fps: 1 / Self.idleInterval)
+            lastSent[deck] = now
         }
     }
 

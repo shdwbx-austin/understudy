@@ -36,9 +36,10 @@
     <array>
         <string>_hyperdeck_ctrl._tcp</string>
         <string>_blackmagic._tcp</string>
+        <string>_ndi._tcp</string>
     </array>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Understudy finds and controls HyperDeck recorders on your show network.</string>
+    <string>Understudy finds and controls HyperDeck recorders on your show network and sends its NDI feeds there.</string>
     <key>SUFeedURL</key>
     <string>https://github.com/shdwbx-austin/understudy/releases/latest/download/appcast.xml</string>
     <key>SUPublicEDKey</key>

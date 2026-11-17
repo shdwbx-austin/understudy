@@ -49,6 +49,16 @@ struct DanteOutTests {
         #expect(!old.danteOut && old.danteInterface == nil && !old.ltcOutUseTrackTimecode)
     }
 
+    @Test func extraSongOutputsRoundTripAndOldSettingsHaveNone() throws {
+        var settings = AppSettings()
+        #expect(settings.extraSongOutputs.isEmpty)
+        settings.extraSongOutputs = [SongOutput(deviceUID: "headphones"), SongOutput(deviceUID: nil, channel: 2)]
+        let decoded = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+        #expect(decoded.extraSongOutputs == settings.extraSongOutputs)
+        let old = try JSONDecoder().decode(AppSettings.self, from: Data(#"{"timelineOutputChannel": 2}"#.utf8))
+        #expect(old.extraSongOutputs.isEmpty && old.timelineOutputChannel == 2)
+    }
+
     @Test func devRecordSendsTrackTimecodeAfterTheMusic() {
         // SHDWBX-style 4-channel device, music on 1–2: timecode on 3.
         #expect(DevTimecodeOut.channel(recordingFromTimeline: true, ltcOutSet: false, musicChannel: 0, deviceChannels: 4) == 2)
