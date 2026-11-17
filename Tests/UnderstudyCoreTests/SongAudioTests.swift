@@ -43,22 +43,6 @@ struct AudioMatcherTests {
     }
 }
 
-struct PeakAccumulatorTests {
-    @Test func loudestSampleInEachSlice() {
-        var acc = PeakAccumulator(totalFrames: 8, buckets: 4)
-        let values: [Float] = [0.1, 0.5, 0.2, 0.2, 0.9, 0.0, 0.3, 0.4]
-        values.withUnsafeBufferPointer { acc.add(UnsafeBufferPointer(rebasing: $0[0..<3])) }   // chunked
-        values.withUnsafeBufferPointer { acc.add(UnsafeBufferPointer(rebasing: $0[3..<8])) }
-        #expect(acc.peaks == [0.5, 0.2, 0.9, 0.4])
-        #expect(abs((acc.normalized.first ?? 0) - Float(0.5) / Float(0.9)) < 1e-6)
-    }
-
-    @Test func fewerFramesThanBuckets() {
-        let acc = PeakAccumulator(totalFrames: 3, buckets: 100)
-        #expect(acc.peaks.count == 3)
-    }
-}
-
 struct LTCChannelScannerTests {
     /// Stereo stems-style file: music on the left, LTC on the right starting 2 s before the song.
     @Test func findsTheTimecodeChannelAndWhereTheFileStarts() throws {

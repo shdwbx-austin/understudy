@@ -59,15 +59,23 @@ final class DeckDiscovery: ObservableObject {
         browsers.removeAll()
     }
 
+    /// The interface Bonjour browsing was started on (it's restarted when that changes).
+    private var browsingOn: String?
+
     func startBrowsing() {
         guard browsers.isEmpty else { return }
+        let chosen = interface()
+        browsingOn = chosen
         for type in Self.serviceTypes {
-            let browser = NWBrowser(for: .bonjour(type: type, domain: nil), using: .tcp)
+            // Pinned to the deck port when one is chosen, so Bonjour asks only on that network.
+            let params = NWParameters.tcp
+            params.pin(to: chosen)
+            let browser = NWBrowser(for: .bonjour(type: type, domain: nil), using: params)
             browser.browseResultsChangedHandler = { [weak self] results, _ in
                 for result in results {
                     guard case let .service(name, _, _, _) = result.endpoint else { continue }
                     let discovery = self
-                    Self.resolve(result.endpoint) { host in
+                    Self.resolve(result.endpoint, interface: chosen) { host in
                         guard let host else { return }
                         Task { @MainActor in await discovery?.check(host, name: name) }
                     }
@@ -78,9 +86,17 @@ final class DeckDiscovery: ObservableObject {
         }
     }
 
+    /// After the deck port changes: browse again on the new one, if browsing.
+    func restartBrowsingIfNeeded() {
+        guard !browsers.isEmpty, browsingOn != interface() else { return }
+        stopBrowsing()
+        startBrowsing()
+    }
+
     /// Opens a throwaway connection to a Bonjour service to learn its IPv4 address.
-    private nonisolated static func resolve(_ endpoint: NWEndpoint, done: @escaping @Sendable (String?) -> Void) {
+    private nonisolated static func resolve(_ endpoint: NWEndpoint, interface: String?, done: @escaping @Sendable (String?) -> Void) {
         let params = NWParameters.tcp
+        params.pin(to: interface)
         if let ip = params.defaultProtocolStack.internetProtocol as? NWProtocolIP.Options {
             ip.version = .v4
         }
@@ -134,12 +150,12 @@ final class DeckDiscovery: ObservableObject {
                 var iterator = unique.makeIterator()
                 for _ in 0..<Self.parallelProbes {
                     guard let host = iterator.next() else { break }
-                    group.addTask { (host, await Self.probe(host)) }
+                    group.addTask { (host, await Self.probe(host, interface: chosen)) }
                 }
                 while let (host, greeting) = await group.next() {
                     if let greeting { self?.add(host: host, name: nil, greeting: greeting) }
                     if let next = iterator.next() {
-                        group.addTask { (next, await Self.probe(next)) }
+                        group.addTask { (next, await Self.probe(next, interface: chosen)) }
                     }
                 }
             }
@@ -158,7 +174,7 @@ final class DeckDiscovery: ObservableObject {
             add(host: host, name: name, greeting: nil)
             return
         }
-        if let greeting = await Self.probe(host) {
+        if let greeting = await Self.probe(host, interface: interface()) {
             add(host: host, name: name, greeting: greeting)
         }
     }
@@ -192,11 +208,14 @@ final class DeckDiscovery: ObservableObject {
     }
 
     /// Connects to `host`:9993 and reads the greeting. Closed ports fail at once; silent hosts time out.
-    nonisolated static func probe(_ host: String, timeout: TimeInterval = 0.7) async -> HyperDeckGreeting? {
+    /// `interface`: the deck port (BSD name) to probe from; nil = the system's routing.
+    nonisolated static func probe(_ host: String, interface: String? = nil, timeout: TimeInterval = 0.7) async -> HyperDeckGreeting? {
         await withCheckedContinuation { continuation in
             let tcp = NWProtocolTCP.Options()
             tcp.connectionTimeout = 1
-            let connection = NWConnection(host: NWEndpoint.Host(host), port: 9993, using: NWParameters(tls: nil, tcp: tcp))
+            let params = NWParameters(tls: nil, tcp: tcp)
+            params.pin(to: interface)
+            let connection = NWConnection(host: NWEndpoint.Host(host), port: 9993, using: params)
             let q = DispatchQueue(label: "understudy.probe")
             let state = ProbeState()
 
@@ -284,7 +303,7 @@ final class DeckDiscovery: ObservableObject {
     }
 
     /// macOS's names for network ports, by BSD name.
-    private nonisolated static func portNames() -> [String: String] {
+    nonisolated static func portNames() -> [String: String] {
         var names: [String: String] = [:]
         guard let all = SCNetworkInterfaceCopyAll() as? [SCNetworkInterface] else { return names }
         for iface in all {

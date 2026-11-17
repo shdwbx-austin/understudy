@@ -70,6 +70,9 @@ struct UnderstudyApp: App {
                 Button("Back Up a Take…") {
                     NotificationCenter.default.post(name: .understudyOpenBackup, object: nil)
                 }.keyboardShortcut("b", modifiers: .command)
+                Button("Transcode a Take to NotchLC…") {
+                    NotificationCenter.default.post(name: .understudyOpenNotchLC, object: nil)
+                }
                 Button("Assign Decks…") {
                     NotificationCenter.default.post(name: .understudyOpenAssign, object: nil)
                 }

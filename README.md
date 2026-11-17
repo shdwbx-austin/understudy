@@ -169,6 +169,26 @@ Only one copy runs at a time: a second launch hands over to the running one.
 
 On the Mac itself: System Settings › Energy › *Start up automatically after a power failure*, automatic login, and Screen Sharing so you can watch and drive it from your laptop. Put it on a small UPS, and give LTC its own USB audio interface (the Mac mini's headphone jack is output only).
 
+## Network ports (a Mac on several networks)
+
+A show Mac often has several ports: the show network, Dante, the internet, an NDI or video network. **Settings › Network** picks the port for each kind of traffic. *Automatic (system routing)*, the default, leaves it to macOS: traffic for a network goes out of the port on that network, the rest out of the top port in System Settings › Network.
+
+| Traffic | What uses the port |
+|---|---|
+| **Deck control** | HyperDeck control (TCP 9993), finding decks (Bonjour and the subnet scan) and FTP backups. The same choice as **Assign decks › On:**. |
+| **grandMA3** | OSC to the console (Send to grandMA3). |
+| **disguise** | HTTP to Designer (Push to disguise, the track list). |
+| **NDI** | NDI out (*Understudy ME n*) and NDI in for the Understudy recorder. |
+| **OSC in** | The OSC control port listens only on this port (Companion, a console). |
+
+Each picker lists the Mac's ports with their address and subnet (or *no link*). Under it, **Now** says where the traffic is going: `en8 · 10.0.0.5`, *system routing*, or why the chosen port isn't in use. A chosen port is used while it has a link and an IPv4 address; until then that traffic follows the system's routing rather than stopping, and **Now** says so in amber. Settings also warns when a deck, console or Designer address isn't on the chosen port's subnet (it's then reached only if that network has a router to it).
+
+How it's applied: connections are pinned to the port's interface (Network.framework's `requiredInterface`, the equivalent of `IP_BOUND_IF`), so they can't leave by another port; FTP copies run curl with `--interface`. A deck that isn't recording reconnects through a newly chosen port at once; a recording deck keeps its connection and moves when it next reconnects. The status lines say which port is in use: OSC in's status, the grandMA3 and disguise messages, the NDI line in View, and Backup.
+
+NDI chooses its network adapters only when it starts, from its config file. Understudy writes its own copy of your NDI config (from `~/.ndi/ndi-config.v1.json`, as NDI Access Manager saves it) with `adapters.allowed` set to the port's addresses, and points NDI at it for Understudy only, so other NDI apps and Access Manager's settings aren't changed. A new NDI port takes effect the next time Understudy opens; Settings says so until then. If the port's address changes (DHCP), reopen Understudy too.
+
+Dante out and AES67 out keep their own **Network port** pickers on the Audio out tab.
+
 ## Backing up takes
 
 **Backup** copies the selected take off every connected deck into a folder on the Mac, by FTP, which HyperDecks serve on port 21 with no login. Choose a folder inside Dropbox and Dropbox syncs the files.
@@ -177,6 +197,17 @@ On the Mac itself: System Settings › Energy › *Start up automatically after 
 - Decks copy in parallel. A file already there at full size is skipped. An interrupted copy resumes.
 - Backup is blocked while recording, and pressing **Record** cancels a backup in progress. Copying off a deck while it records isn't safe.
 - Clips are found by name in the deck's media folders (slots, cache, USB), up to three levels deep.
+
+## NotchLC test clips
+
+**Record › Transcode a Take to NotchLC…** turns the selected take's files (one per connected deck, from the project, the backup folder or the Understudy recorder) into NotchLC `.mov` files to load into disguise or another media server as test clips. The source files are only ever read.
+
+- **What it needs:** NotchLC can only be encoded on a Mac through **Adobe Media Encoder** (Creative Cloud) with **Notch's free NotchLC plugin for Adobe**. Get the macOS installer from Notch's downloads page (notch.one/downloads), install it, and quit Media Encoder if it was open. The sheet says what's missing until both are there. FFmpeg only decodes NotchLC, and Notch's other encoders are Windows-only or need a paid licence: see [docs/NOTCHLC.md](docs/NOTCHLC.md).
+- **How it runs:** Understudy opens Media Encoder (or uses the copy it opened earlier) and leaves it open, with a small watcher script inside it. Files are encoded one at a time in the background, with progress per file and **Cancel**, which stops Media Encoder's queue. If you opened Media Encoder yourself, quit it first so Understudy can start it with the watcher. If Media Encoder is busy with its own queue, the file fails with that message: let the queue finish, then transcode again.
+- **Where files go:** into a `NotchLC` folder beside the project's media for that deck (`objects/VideoFile/<deck>/NotchLC/`), or beside each file when no project is open, or into `<folder>/<deck>/` if you choose a folder. Each file is named like its source (`PGM_0003.mov`). A file that's already there is skipped (files only appear under their name once complete), so delete it to transcode again.
+- **Timecode and rate:** the frame rate and size follow the source. Notch's exporter doesn't write timecode, so Understudy copies the encoded file into place with the source's QuickTime timecode track added (no re-encode).
+- **Quality:** the NotchLC format's defaults. For another quality, save a preset in Media Encoder (Preset Browser → **+** → Create Encoding Preset, Format: NotchLC) and choose its `.epr` under **Preset**.
+- Blocked while recording (the files are still being written). Media Encoder writes each encode to a short path in the temporary folder first: Notch's plugin (1.4.3) crashes Media Encoder when the output path is long, as paths inside Dropbox projects often are. That needs room on the startup disk for the largest file.
 
 ## Understudy recorder (no HyperDeck)
 
@@ -293,7 +324,10 @@ Runs on macOS 13+. Building needs Swift 6 (Xcode 16 or its Command Line Tools).
 
 ```sh
 ./scripts/test.sh          # core logic tests (Swift Testing; works without Xcode)
+./scripts/network-harness.sh   # pins deck control, discovery, OSC in/out, disguise HTTP, curl and NDI to lo0 and en0 against stand-ins on 127.0.0.1 and 10.255.255.1; checks where the bytes go (temp store)
+./scripts/notchlc-harness.sh   # transcodes generated clips through Media Encoder + the NotchLC plugin; checks codec, frames, rate, timecode, decodes them back, and Cancel (temp store; needs AME and the plugin)
 ./scripts/recorder-harness.sh  # records from NDI loopbacks (BGRA, UYVY, SD interlaced), generated and 10-bit frames; checks frames, timecode, colour and field tags, decoded colours (temp store)
+./scripts/waveform-harness.sh  # renders a generated song's waveform at whole-song, 8× and 32× zoom to PNGs; checks an older cached analysis is upgraded in place; times drawing a 2-hour show (temp store)
 ./scripts/ma3-harness.sh       # runs the grandMA3 marker export's Lua (OSC lines and plugin) on a mock console: what it builds, and that nothing foreign is deleted, overwritten or reassigned (needs `brew install lua`)
 swift run Understudy         # run unbundled while developing
 ./scripts/build-app.sh     # dist/Understudy.app + zip (ad-hoc signed)

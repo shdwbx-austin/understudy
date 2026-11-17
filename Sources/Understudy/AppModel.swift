@@ -100,6 +100,8 @@ final class AppModel: ObservableObject {
     @Published var linkMessage: String?
     @Published private(set) var linkBusy = false
     let osc = OSCServer()
+    /// This Mac's network ports, refreshed every few seconds (for Settings' port warnings).
+    @Published private(set) var portStates: [NetworkPortState] = []
     let projects = ProjectManager()
     /// Recordings played in Understudy, locked to the timeline, and sent out over NDI.
     let viewer = VideoViewer()
@@ -161,6 +163,7 @@ final class AppModel: ObservableObject {
     private var lastSeekSent = 0.0
     let showMachine = ShowMachine()
     let backup = TakeBackup()
+    let notchLC = NotchLCTranscoder()
     let confidence = ConfidenceMonitor()
     /// Capture devices and NDI sources the Understudy recorder can record from.
     let recorderSources = RecorderSources()
@@ -172,6 +175,7 @@ final class AppModel: ObservableObject {
     private var rateDetector = LTCRateDetector()
     private let audio = AudioLTCInput()
     private var loop: Task<Void, Never>?
+    private var portWatch: Task<Void, Never>?
     private var lastPoll = 0.0
     private var lastInfoUpdate = 0.0
     private var takeRefreshScheduled = false
@@ -217,6 +221,12 @@ final class AppModel: ObservableObject {
         osc.onState = { [weak self] in self?.refreshOSCStatus() }
         applyOSC()
         applyAES67()
+        portWatch = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                self?.watchNetworkPorts()
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+        }
         // Back into Record or Play after a restart, if asked. Decks are brought into the mode as
         // they connect (deckReady); a deck that kept recording through the restart is left alone.
         if loaded.resumeLastMode,
@@ -479,7 +489,7 @@ final class AppModel: ObservableObject {
         if config.enabled, config.isRecorder {
             decks[id].attachRecorder(config.recorder, dropFrame: ltcRate.isDropFrame)
         } else if config.enabled {
-            decks[id].connect(host: config.host)
+            decks[id].connect(host: config.host, interface: settings.discoveryInterface)
         } else {
             decks[id].disconnect()
         }
@@ -553,7 +563,7 @@ final class AppModel: ObservableObject {
                 fileName: clip.name
             )
         }
-        backup.start(items, into: URL(fileURLWithPath: folder, isDirectory: true))
+        backup.start(items, into: URL(fileURLWithPath: folder, isDirectory: true), interface: settings.discoveryInterface)
     }
 
     func chooseBackupFolder() {
@@ -873,7 +883,9 @@ final class AppModel: ObservableObject {
         if settings.chase != old.chase || settings.deckTimecodeAtVideoRate != old.deckTimecodeAtVideoRate {
             decks.forEach { $0.resetChase() }
         }
-        if settings.oscEnabled != old.oscEnabled || settings.oscPort != old.oscPort { applyOSC() }
+        if settings.oscEnabled != old.oscEnabled || settings.oscPort != old.oscPort
+            || settings.interfaces.oscIn != old.interfaces.oscIn { applyOSC() }
+        if settings.discoveryInterface != old.discoveryInterface { applyDeckInterface() }
         if settings.aes67Enabled != old.aes67Enabled || settings.aes67Interface != old.aes67Interface
             || settings.aes67Multicast != old.aes67Multicast || settings.aes67Name != old.aes67Name { applyAES67() }
         if settings.decks != old.decks || settings.recordNaming != old.recordNaming || targets(of: settings) != targets(of: old)
@@ -1197,13 +1209,33 @@ final class Readout: ObservableObject {
 
 extension AppModel {
     func applyOSC() {
-        if settings.oscEnabled { osc.listen(on: settings.oscPort) } else { osc.stop() }
+        if settings.oscEnabled { osc.listen(on: settings.oscPort, interface: settings.interfaces.oscIn) } else { osc.stop() }
         refreshOSCStatus()
     }
 
     func refreshOSCStatus() {
-        let status = !settings.oscEnabled ? "Off" : (osc.problem ?? "Listening on UDP \(settings.oscPort)")
+        let on = osc.route == .automatic ? "all network ports" : osc.route.summary
+        let status = !settings.oscEnabled ? "Off" : (osc.problem ?? "Listening on UDP \(settings.oscPort) · \(on)")
         if status != oscStatus { oscStatus = status }
+    }
+
+    /// The deck port changed: decks reconnect through it (a recording deck when it next reconnects),
+    /// and Bonjour browsing moves to it.
+    func applyDeckInterface() {
+        for (id, config) in settings.decks.enumerated() where id < decks.count && config.enabled {
+            guard let host = config.networkHost else { continue }
+            decks[id].setInterface(settings.discoveryInterface, host: host)
+        }
+        discovery.restartBrowsingIfNeeded()
+    }
+
+    /// Ports coming and going (a cable pulled, an adaptor plugged in, DHCP): Settings' warnings
+    /// follow, and the OSC listener moves onto or off its chosen port. Senders pick the route
+    /// up on their next connection.
+    func watchNetworkPorts() {
+        let states = NetworkPorts.states()
+        if states != portStates { portStates = states }
+        if settings.oscEnabled, PortRoute.resolve(settings.interfaces.oscIn, ports: states) != osc.route { applyOSC() }
     }
 
     /// A Stream Deck, MA3 or anything else asked for something.
@@ -1296,7 +1328,7 @@ extension AppModel {
     func deployMarkersToMA3(confirm: Bool = true) {
         let plan = ma3Plan()
         guard plan.markerCount > 0 else { linkMessage = "No markers to send."; return }
-        guard let sender = OSCSender(host: settings.ma3Host, port: settings.ma3Port) else {
+        guard let sender = OSCSender(host: settings.ma3Host, port: settings.ma3Port, interface: settings.interfaces.ma3) else {
             linkMessage = "Set the grandMA3's IP in Settings › Show control."
             return
         }
@@ -1314,16 +1346,17 @@ extension AppModel {
         let steps = MA3Deploy.steps(plan)
         let address = settings.ma3Prefix.isEmpty ? "/cmd" : "/\(settings.ma3Prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/cmd"
         let summary = MA3Deploy.summary(plan)
+        let via = " (via \(sender.route.summary))"
         linkBusy = true
-        linkMessage = "Sending to grandMA3…"
+        linkMessage = "Sending to grandMA3…" + via
         Task { @MainActor [weak self] in
             do {
                 for (i, step) in steps.enumerated() {
                     try await sender.send(OSCMessage(address, [.string(step.command)]))
                     if step.pause > 0 { try await Task.sleep(nanoseconds: UInt64(step.pause * 1e9)) }
-                    if i % 10 == 0 { self?.linkMessage = "Sending to grandMA3… \(i + 1)/\(steps.count)" }
+                    if i % 10 == 0 { self?.linkMessage = "Sending to grandMA3… \(i + 1)/\(steps.count)" + via }
                 }
-                self?.linkMessage = "Sent to grandMA3: \(summary) (OSC can't confirm; check the console's command line feedback.)"
+                self?.linkMessage = "Sent to grandMA3: \(summary)\(via). (OSC can't confirm; check the console's command line feedback.)"
             } catch {
                 self?.linkMessage = "grandMA3: \(error.localizedDescription)"
             }
@@ -1341,27 +1374,29 @@ extension AppModel {
         }
         let script = D3Push.script(rows, rate: ltcRate)
         let host = settings.d3Host
+        let interface = settings.interfaces.d3
+        let via = " (via \(NetworkPorts.route(interface).summary))"
         linkBusy = true
-        linkMessage = "Sending to disguise…"
+        linkMessage = "Sending to disguise…" + via
         Task { @MainActor [weak self] in
             do {
-                let result = try await D3Client.execute(host: host, script: script)
+                let result = try await D3Client.execute(host: host, script: script, interface: interface)
                 if let code = result.status?.code, code != 0 {
                     self?.linkMessage = "disguise: \(result.status?.message ?? "error \(code)")"
                 } else if let inner = D3Client.resultDictionary(result.returnValue) {
-                    self?.linkMessage = Self.d3Report(inner)
+                    self?.linkMessage = Self.d3Report(inner, via: via)
                 } else {
                     self?.linkMessage = "disguise answered: \(result.returnValue ?? result.pythonLog ?? "no result")"
                 }
             } catch {
-                self?.linkMessage = "disguise: \(error.localizedDescription)"
+                self?.linkMessage = "disguise: \(error.localizedDescription)" + via
             }
             self?.linkBusy = false
         }
     }
 
-    /// One line from the script's result.
-    nonisolated static func d3Report(_ r: [String: Any]) -> String {
+    /// One line from the script's result; `via` names the network port it went out of.
+    nonisolated static func d3Report(_ r: [String: Any], via: String = "") -> String {
         let placed = r["placed"] as? Int ?? 0
         let tracks = (r["tracks"] as? [String: Any])?.keys.sorted() ?? []
         let missing = (r["missing"] as? [Any])?.compactMap { $0 as? String } ?? []
@@ -1373,7 +1408,7 @@ extension AppModel {
         if !missing.isEmpty { s += "; no track named " + missing.map { "“\($0)”" }.joined(separator: ", ") }
         if skipped > 0 { s += "; \(skipped) outside the track" }
         if kept > 0 { s += "; \(kept) existing note\(kept == 1 ? "" : "s") kept" }
-        return s + "."
+        return s + via + "."
     }
 }
 
@@ -1606,5 +1641,56 @@ extension AppModel {
             backupIndex[name] = url.path
         }
         return backupIndex[file]
+    }
+}
+
+// MARK: - NotchLC transcodes
+
+extension AppModel {
+    /// One take's files (by offset, 0 = latest), one per connected deck, found where View finds
+    /// them: the project, then the backup folder, then the recorder's own folder. Each with where
+    /// its NotchLC transcode goes: a NotchLC folder beside the project's media for that deck (or
+    /// beside the file when no project is open), or a deck folder inside the chosen folder.
+    func notchLCItems(_ offset: Int) -> [NotchLCTranscoder.Item] {
+        activeDecks.compactMap { deck -> NotchLCTranscoder.Item? in
+            let name = settings.decks[deck.id].name.trimmingCharacters(in: .whitespaces)
+            guard let clip = deck.clip(takeOffset: offset) else { return nil }
+            let source = projects.videoPath(deck: name, file: clip.name)
+                ?? findBackup(clip.name)
+                ?? deck.recorderTakePath(clip.name)
+            guard let source else {
+                return .init(deckName: name, source: nil, destination: nil,
+                             missing: "\(clip.name) isn't on this Mac: back it up first (⌘B)")
+            }
+            let url = URL(fileURLWithPath: source)
+            let folder: URL
+            if let chosen = settings.notchLCFolder {
+                folder = NotchLC.chosenFolder(URL(fileURLWithPath: chosen, isDirectory: true), deck: name)
+            } else if let layout = projects.current {
+                folder = NotchLC.defaultFolder(mediaFolder: layout.objects(.video)
+                    .appendingPathComponent(ProjectManager.folderName(name), isDirectory: true))
+            } else {
+                folder = NotchLC.defaultFolder(mediaFolder: url.deletingLastPathComponent())
+            }
+            return .init(deckName: name, source: url, destination: NotchLC.outputURL(for: url, in: folder))
+        }
+    }
+
+    /// Transcodes one take (0 = latest) to NotchLC. Not while recording: the files are still growing.
+    func transcodeTake(_ offset: Int) {
+        guard mode != .record else { return }
+        notchLC.start(notchLCItems(offset), preset: settings.notchLCPreset)
+    }
+
+    func chooseNotchLCFolder() {
+        if let path = NotchLCTranscoder.chooseFolder(startingAt: settings.notchLCFolder ?? settings.backupFolder) {
+            settings.notchLCFolder = path
+        }
+    }
+
+    func chooseNotchLCPreset() {
+        if let path = NotchLCTranscoder.choosePreset(startingAt: settings.notchLCPreset) {
+            settings.notchLCPreset = path
+        }
     }
 }

@@ -1,39 +1,5 @@
 import Foundation
 
-// MARK: - Waveform peaks
-
-/// Builds a waveform overview: the loudest sample in each of `buckets` equal slices of a file,
-/// fed a chunk at a time so a long song never has to be in memory at once.
-public struct PeakAccumulator: Sendable {
-    public private(set) var peaks: [Float]
-    private let framesPerBucket: Double
-    private var frame = 0
-
-    /// `totalFrames` is the file's length; `buckets` is capped at the frame count.
-    public init(totalFrames: Int, buckets: Int) {
-        let count = max(1, min(buckets, totalFrames))
-        peaks = [Float](repeating: 0, count: count)
-        framesPerBucket = Double(max(totalFrames, 1)) / Double(count)
-    }
-
-    /// `magnitudes` are per-frame levels (e.g. the loudest channel's absolute sample), in order.
-    public mutating func add(_ magnitudes: UnsafeBufferPointer<Float>) {
-        let last = peaks.count - 1
-        for value in magnitudes {
-            let bucket = min(last, Int(Double(frame) / framesPerBucket))
-            if value > peaks[bucket] { peaks[bucket] = value }
-            frame += 1
-        }
-    }
-
-    /// Peaks scaled so the loudest is 1 (quiet songs still read), clamped to 0…1.
-    public var normalized: [Float] {
-        let top = peaks.max() ?? 0
-        guard top > 0 else { return peaks }
-        return peaks.map { min(1, $0 / top) }
-    }
-}
-
 // MARK: - Finding song audio in a folder
 
 /// Matches audio files to songs by name, for "find audio in folder".

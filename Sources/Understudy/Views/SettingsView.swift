@@ -48,11 +48,16 @@ struct SettingsView: View {
                 .formStyle(.grouped)
                 .tabItem { Label("Show control", systemImage: "dot.radiowaves.left.and.right") }
             .tag("control")
+
+            Form { NetworkSettings() }
+                .formStyle(.grouped)
+                .tabItem { Label("Network", systemImage: "network") }
+            .tag("network")
         }
         .font(Theme.grotesk(13))
         .tint(Theme.paper)
         .frame(width: 580, height: 600)
-        .onAppear { if !["general", "audio", "control"].contains(tab) { tab = "general" } }
+        .onAppear { if !["general", "audio", "control", "network"].contains(tab) { tab = "general" } }
     }
 }
 
@@ -440,7 +445,7 @@ private struct ShowControlSettings: View {
         guard !host.isEmpty else { return }
         d3Problem = nil
         Task { @MainActor in
-            do { d3Tracks = try await D3Client.tracks(host: host); if d3Tracks.isEmpty { d3Problem = "No tracks" } }
+            do { d3Tracks = try await D3Client.tracks(host: host, interface: model.settings.interfaces.d3); if d3Tracks.isEmpty { d3Problem = "No tracks" } }
             catch { d3Tracks = []; d3Problem = error.localizedDescription }
         }
     }

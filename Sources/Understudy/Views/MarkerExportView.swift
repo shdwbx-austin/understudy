@@ -484,10 +484,11 @@ private struct D3ExportPane: View {
 
     private func fetch() {
         let host = model.settings.d3Host
+        let interface = model.settings.interfaces.d3
         problem = nil
         Task { @MainActor in
             do {
-                let list = try await D3Client.tracks(host: host)
+                let list = try await D3Client.tracks(host: host, interface: interface)
                 tracks = list
                 if list.isEmpty { problem = "Designer has no tracks." }
             } catch {

@@ -76,11 +76,11 @@ final class TimelineModel: ObservableObject {
         didSet { if autoOrderFromTakes != oldValue { save() } }
     }
     var currentSetlist: Setlist? { setlists.first { $0.id == currentSetlistID } }
-    /// Waveform overviews (0…1 peaks) by audio file path, filled in the background.
     /// What's known about each audio file (timecode, clean copies, waveform), by path.
     @Published private(set) var analyses: [String: AudioAnalysis] = [:]
     private var analyzing: Set<String> = []
-    var waveforms: [String: [Float]] { analyses.mapValues(\.peaks) }
+    /// An audio file's waveform, once analysed.
+    func waveform(for path: String) -> WaveformPeaks? { analyses[path]?.waveform }
     /// Play a track's own timecode to LTC out instead of generated code (Settings).
     var useTrackTimecode = true {
         didSet { if useTrackTimecode != oldValue, isPlaying { restartPlayback() } }

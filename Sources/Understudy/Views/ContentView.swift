@@ -8,6 +8,7 @@ struct ContentView: View {
     @EnvironmentObject private var model: AppModel
     @State private var showAssign = false
     @State private var showBackup = false
+    @State private var showNotchLC = false
 
     var body: some View {
         GeometryReader { geo in
@@ -45,6 +46,7 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
         .sheet(isPresented: $showAssign) { AssignDecksView().environmentObject(model) }
         .sheet(isPresented: $showBackup) { BackupView(backup: model.backup).environmentObject(model) }
+        .sheet(isPresented: $showNotchLC) { NotchLCView(transcoder: model.notchLC).environmentObject(model) }
         .confirmationDialog(
             "Stop recording?",
             isPresented: Binding(get: { model.pendingMode != nil }, set: { if !$0 { model.pendingMode = nil } }),
@@ -58,6 +60,7 @@ struct ContentView: View {
             Text("This ends the take on every deck.")
         }
         .onReceive(NotificationCenter.default.publisher(for: .understudyOpenBackup)) { _ in showBackup = true }
+        .onReceive(NotificationCenter.default.publisher(for: .understudyOpenNotchLC)) { _ in showNotchLC = true }
         .onReceive(NotificationCenter.default.publisher(for: .understudyOpenAssign)) { _ in showAssign = true }
         .onAppear { model.mainWindowOpened() }
     }
@@ -108,6 +111,7 @@ struct DeckControl: View {
 
 extension Notification.Name {
     static let understudyOpenBackup = Notification.Name("understudy.openBackup")
+    static let understudyOpenNotchLC = Notification.Name("understudy.openNotchLC")
     static let understudyOpenAssign = Notification.Name("understudy.openAssign")
 }
 
