@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **View plays takes from the backup folder where they are.** Nothing is copied into the project unless you turn on Settings › Backup › *Copy takes into the project when viewed* (off by default), and then only when the project's disk has room (with 10 GB to spare); otherwise the take plays from the backup and View says why it wasn't copied. The picture says which day folder it's playing from.
+- **Fixed: View could play the wrong file, or a broken one, for a take.** Decks reuse clip names, so the backup folder can hold the same name in several day folders. View now takes the newest file with the take's name in that deck's folder (and a project copy only when it's that recording), and reads the folder afresh each time: before, it remembered the first file it found, so a take still downloading kept pointing at an older file of the same name.
+
 ## 0.14.0 — 2026-11-17
 
 - **A network port for each kind of traffic.** Settings › Network has a port picker for deck control (HyperDeck control, finding decks and FTP backups), grandMA3, disguise, NDI and OSC in, so a show Mac on several networks sends each out of the right port. *Automatic (system routing)* is the default and behaves as before. Each picker shows the ports' addresses and subnets, says where the traffic goes now, and warns when the port has no link or IPv4 address, or a deck, console or Designer address isn't on its subnet. Connections are pinned to the port's interface; a port that's down or gone falls back to the system's routing (and says so) rather than stopping the show. NDI is limited to the port through its own adapter setting, for Understudy only, from the next launch.

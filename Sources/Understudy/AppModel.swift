@@ -114,7 +114,6 @@ final class AppModel: ObservableObject {
     }
     func viewerDisappeared() { viewerViews = max(0, viewerViews - 1) }
     /// Backup files by name, so a take's recordings are found without searching the drive each time.
-    private var backupIndex: [String: String] = [:]
     /// AES67 out (test), when on.
     private var aes67: AES67Sender?
     private var aes67State: TimelineModel.RenderState?
@@ -1591,10 +1590,13 @@ extension AppModel {
         return deckAt - context.clipStart
     }
 
-    /// Loads the selected take's recordings for the first three decks: from the project if they're
-    /// there, else from the backup folder (copied into the project in the background).
+    /// Loads the selected take's recordings for the first three decks, played where they are:
+    /// the project's copy or the backup folder (the newest file with the take's name in the deck's
+    /// folder), else the Understudy recorder's file. With Copy takes into the project on, a backup
+    /// is also copied in, if the project's disk has room.
     func loadViewerTake() {
         let decksWithTakes = activeDecks.prefix(VideoViewer.maxSlots)
+        let backups = backupFiles()
         var slots: [VideoViewer.Slot] = []
         for deck in decksWithTakes {
             let name = settings.decks[deck.id].name.trimmingCharacters(in: .whitespaces)
@@ -1602,13 +1604,29 @@ extension AppModel {
                 slots.append(.init(deckID: deck.id, name: name, clipName: nil, url: nil, status: "No take on this deck"))
                 continue
             }
-            if let inProject = projects.videoPath(deck: name, file: clip.name) {
-                slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: URL(fileURLWithPath: inProject), status: "In the project"))
-            } else if let backup = findBackup(clip.name) {
-                slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: URL(fileURLWithPath: backup),
-                                   status: projects.current == nil ? "From the backup" : "Copying into the project…"))
+            if let found = takeFile(clip.name, deck: name, backups: backups) {
+                let url = URL(fileURLWithPath: found.path)
+                if found.inProject {
+                    slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: url, status: "In the project"))
+                    continue
+                }
+                let from = "From the backup" + (found.day.map { " · \($0)" } ?? "")
+                guard settings.copyTakesIntoProject, let project = projects.current else {
+                    slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: url, status: from))
+                    continue
+                }
+                let size = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+                let free = (try? project.folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+                    .volumeAvailableCapacityForImportantUsage) ?? nil
+                if let free, !TakeFileLookup.fits(size: size, available: free) {
+                    let gb = { (b: Int64) in String(format: "%.0f GB", Double(b) / 1e9) }
+                    slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: url,
+                                       status: from + " (no room to copy it into the project: \(gb(size)), \(gb(free)) free)"))
+                    continue
+                }
+                slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: url, status: from + " · copying into the project…"))
                 let deckID = deck.id
-                projects.adoptVideo(backup, deck: name) { [weak self] _ in
+                projects.adoptVideo(found.path, deck: name) { [weak self] _ in
                     // Next load plays the project copy; now just say it's there.
                     guard let self else { return }
                     var updated = self.viewer.slots
@@ -1626,21 +1644,38 @@ extension AppModel {
         viewer.load(slots)
     }
 
-    /// A backed-up file by name (complete copies only), searching the backup folder's date and
-    /// deck folders once and remembering what it found.
-    private func findBackup(_ file: String) -> String? {
-        if let p = backupIndex[file], FileManager.default.fileExists(atPath: p) { return p }
-        guard let folder = settings.backupFolder else { return nil }
+    /// The take's file: the project's copy or a backup, whichever is this deck's newest.
+    private func takeFile(_ file: String, deck: String, backups: [String: [TakeFileLookup.Candidate]]) -> TakeFileLookup.Candidate? {
+        var candidates = backups[file] ?? []
+        if let p = projects.videoPath(deck: deck, file: file) {
+            let url = URL(fileURLWithPath: p)
+            let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            candidates.append(.init(path: p, modified: date, folder: url.deletingLastPathComponent().lastPathComponent, inProject: true))
+        }
+        return TakeFileLookup.best(candidates, deck: deck)
+    }
+
+    /// Complete recordings in the backup folder (its day and deck folders), by file name. Read
+    /// afresh each time: a download in progress is a .part file until it finishes, and a name
+    /// can be in several day folders.
+    private func backupFiles() -> [String: [TakeFileLookup.Candidate]] {
+        guard let folder = settings.backupFolder else { return [:] }
         let fm = FileManager.default
-        guard let walker = fm.enumerator(at: URL(fileURLWithPath: folder, isDirectory: true), includingPropertiesForKeys: nil,
-                                         options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return nil }
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .isRegularFileKey]
+        guard let walker = fm.enumerator(at: URL(fileURLWithPath: folder, isDirectory: true), includingPropertiesForKeys: keys,
+                                         options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [:] }
+        var out: [String: [TakeFileLookup.Candidate]] = [:]
         for case let url as URL in walker {
             if walker.level > 3 { walker.skipDescendants(); continue }
-            let name = url.lastPathComponent
-            guard !name.hasSuffix(".part"), ["mov", "mp4", "mxf"].contains(url.pathExtension.lowercased()) else { continue }
-            backupIndex[name] = url.path
+            guard ["mov", "mp4", "mxf"].contains(url.pathExtension.lowercased()),
+                  let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true else { continue }
+            let parent = url.deletingLastPathComponent()
+            let day = parent.deletingLastPathComponent().lastPathComponent
+            out[url.lastPathComponent, default: []].append(.init(
+                path: url.path, modified: values.contentModificationDate ?? .distantPast, folder: parent.lastPathComponent,
+                day: day.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil ? day : nil))
         }
-        return backupIndex[file]
+        return out
     }
 }
 
@@ -1652,11 +1687,11 @@ extension AppModel {
     /// its NotchLC transcode goes: a NotchLC folder beside the project's media for that deck (or
     /// beside the file when no project is open), or a deck folder inside the chosen folder.
     func notchLCItems(_ offset: Int) -> [NotchLCTranscoder.Item] {
-        activeDecks.compactMap { deck -> NotchLCTranscoder.Item? in
+        let backups = backupFiles()
+        return activeDecks.compactMap { deck -> NotchLCTranscoder.Item? in
             let name = settings.decks[deck.id].name.trimmingCharacters(in: .whitespaces)
             guard let clip = deck.clip(takeOffset: offset) else { return nil }
-            let source = projects.videoPath(deck: name, file: clip.name)
-                ?? findBackup(clip.name)
+            let source = takeFile(clip.name, deck: name, backups: backups)?.path
                 ?? deck.recorderTakePath(clip.name)
             guard let source else {
                 return .init(deckName: name, source: nil, destination: nil,
