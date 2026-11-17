@@ -71,7 +71,7 @@ final class NDILibrary: @unchecked Sendable {
     }
 }
 
-/// One NDI output ("Understudy ME 1"), sending BGRA frames.
+/// One NDI output ("Understudy ME 1"), sending opaque BGRA frames (as BGRX).
 final class NDISender: @unchecked Sendable {
     let name: String
     private let instance: OpaquePointer?
@@ -87,8 +87,9 @@ final class NDISender: @unchecked Sendable {
         guard instance != nil else { return nil }
     }
 
-    /// Sends one BGRA pixel buffer (copied by NDI before it returns).
-    func send(_ buffer: CVPixelBuffer, fps: Double) {
+    /// Sends one BGRA pixel buffer (copied by NDI before it returns). `aspect` is the picture's
+    /// display aspect (nil: width / height); `metadata` is per-frame NDI XML.
+    func send(_ buffer: CVPixelBuffer, fps: Double, aspect: Float? = nil, interlaced: Bool = false, metadata: String? = nil) {
         guard let instance, let sendVideo = lib.sendVideo else { return }
         CVPixelBufferLockBaseAddress(buffer, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
@@ -98,20 +99,29 @@ final class NDISender: @unchecked Sendable {
         var frame = cndi_video_frame_v2_t()
         frame.xres = Int32(w)
         frame.yres = Int32(h)
-        frame.FourCC = Self.fourCCBGRA
+        frame.FourCC = Self.fourCCBGRX
         frame.frame_rate_N = n
         frame.frame_rate_D = d
-        frame.picture_aspect_ratio = Float(w) / Float(max(h, 1))
-        frame.frame_format_type = Int32(CNDI_FRAME_FORMAT_PROGRESSIVE)
+        frame.picture_aspect_ratio = aspect ?? Float(w) / Float(max(h, 1))
+        frame.frame_format_type = Int32(interlaced ? CNDI_FRAME_FORMAT_INTERLEAVED : CNDI_FRAME_FORMAT_PROGRESSIVE)
         frame.timecode = Int64.max
         frame.p_data = base.assumingMemoryBound(to: UInt8.self)
         frame.line_stride_in_bytes = Int32(CVPixelBufferGetBytesPerRow(buffer))
-        sendVideo(instance, &frame)
+        if let metadata {
+            metadata.withCString { xml in
+                frame.p_metadata = xml
+                sendVideo(instance, &frame)
+            }
+        } else {
+            sendVideo(instance, &frame)
+        }
     }
 
-    /// NDI's FourCC for 8-bit BGRA ("BGRA", little-endian).
-    static let fourCCBGRA: UInt32 = UInt32(UInt8(ascii: "B")) | UInt32(UInt8(ascii: "G")) << 8
-        | UInt32(UInt8(ascii: "R")) << 16 | UInt32(UInt8(ascii: "A")) << 24
+    /// NDI's FourCC for 8-bit BGRX ("BGRX", little-endian): BGRA memory, alpha ignored. The
+    /// pictures are opaque, and sent as BGRA NDI carries an alpha plane and its colours came back
+    /// a few steps further off (measured: up to 9/255 vs 3.5/255 through NDI's codec).
+    static let fourCCBGRX: UInt32 = UInt32(UInt8(ascii: "B")) | UInt32(UInt8(ascii: "G")) << 8
+        | UInt32(UInt8(ascii: "R")) << 16 | UInt32(UInt8(ascii: "X")) << 24
 
     /// 29.97 → 30000/1001, 25 → 25000/1000.
     static func rational(_ fps: Double) -> (Int32, Int32) {

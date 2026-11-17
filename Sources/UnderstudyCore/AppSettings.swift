@@ -118,6 +118,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var aes67Name = "Understudy"
     /// How recordings are named on the decks.
     public var recordNaming = RecordNaming()
+    /// How Understudy plays recordings back (Playback LUTs): viewer and NDI out only.
+    public var playback = PlaybackLUTSettings()
     /// OSC control in (Stream Deck via Companion, grandMA3, …): play, pause, markers.
     public var oscEnabled = true
     public var oscPort = 9000
@@ -180,6 +182,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         danteOut = (try? c.decodeIfPresent(Bool.self, forKey: .danteOut)) ?? d.danteOut
         danteInterface = (try? c.decodeIfPresent(String.self, forKey: .danteInterface)) ?? d.danteInterface
         recordNaming = (try? c.decodeIfPresent(RecordNaming.self, forKey: .recordNaming)) ?? d.recordNaming
+        playback = PlaybackLUTSettings.decode(from: c, playback: .playback, decks: .decks)
         aes67Enabled = (try? c.decodeIfPresent(Bool.self, forKey: .aes67Enabled)) ?? d.aes67Enabled
         aes67Interface = (try? c.decodeIfPresent(String.self, forKey: .aes67Interface)) ?? d.aes67Interface
         aes67Multicast = (try? c.decodeIfPresent(String.self, forKey: .aes67Multicast)) ?? d.aes67Multicast

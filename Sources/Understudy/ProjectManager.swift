@@ -73,9 +73,7 @@ final class ProjectManager: ObservableObject {
     func read(_ layout: ProjectLayout) throws -> ProjectFile {
         let data = try Data(contentsOf: layout.file)
         var file = try ProjectFile.decoder().decode(ProjectFile.self, from: data)
-        for i in file.show.songs.indices {
-            if let p = file.show.songs[i].audioPath { file.show.songs[i].audioPath = layout.resolved(p) }
-        }
+        file.mapPaths(layout, toStored: false)
         return file
     }
 
@@ -123,9 +121,7 @@ final class ProjectManager: ObservableObject {
     private func write(_ file: ProjectFile, to layout: ProjectLayout) throws {
         var f = file
         f.modified = Date()
-        for i in f.show.songs.indices {
-            if let p = f.show.songs[i].audioPath { f.show.songs[i].audioPath = layout.stored(p) }
-        }
+        f.mapPaths(layout, toStored: true)
         let data = try ProjectFile.encoder().encode(f)
         try data.write(to: layout.file, options: .atomic)
     }
