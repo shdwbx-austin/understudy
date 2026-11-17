@@ -31,7 +31,7 @@ struct ViewScreen: View {
             HStack(spacing: 18) {
                 Toggle("NDI out", isOn: $viewer.ndiEnabled).toggleStyle(.switch).controlSize(.small).tint(Theme.lock)
                 Toggle("Full size", isOn: $viewer.ndiFullSize).toggleStyle(.checkbox).controlSize(.small)
-                    .help("Send the files' own size over NDI (heavier); off sends 1080p")
+                    .help("Send every file at its own size over NDI (heavier); off scales files over 1080 lines down to 1080, keeping their shape")
                     .disabled(!viewer.ndiEnabled)
                 PlaybackLUTMenus(viewer: viewer)
                 Text(viewer.ndiStatus).font(Theme.grotesk(12, .light)).foregroundStyle(Theme.grey).lineLimit(1)
