@@ -4,8 +4,9 @@ import UnderstudyCore
 
 /// What Understudy knows about a song's audio file.
 struct AudioAnalysis: Codable, Sendable {
-    /// Waveform of the music channels (the timecode channel left out), 0…1.
-    var peaks: [Float]
+    /// Waveform of the music channels (the timecode channel left out). Kept in its own file beside
+    /// the analysis (`waveform.peaks`), not in the JSON.
+    var waveform: WaveformPeaks?
     /// Timecode found in the file, if any.
     var ltc: LTCScanResult?
     /// The file without its timecode channel; nil when there's no timecode (play the original),
@@ -18,6 +19,10 @@ struct AudioAnalysis: Codable, Sendable {
     var tempo: TempoEstimate?
     /// Tempo detection has run on this file (so a file with no clear tempo isn't read again).
     var tempoChecked: Bool?
+
+    // Older analyses also have `peaks` (3000 0…1 values per song): it's ignored, and the
+    // waveform is rebuilt from the audio file.
+    enum CodingKeys: String, CodingKey { case ltc, musicPath, ltcPath, channels, tempo, tempoChecked }
 }
 
 /// Reads a song's audio once, in the background: looks for LTC in each channel, writes a copy
@@ -25,22 +30,37 @@ struct AudioAnalysis: Codable, Sendable {
 /// LTC out), and builds a waveform of the music. Everything is cached by the file's path, size
 /// and date, so the next launch is instant.
 enum AudioAnalyzer {
-    static let buckets = 3000
     /// Seconds of the start of the file scanned for timecode.
     static let scanSeconds = 20.0
-    private static let version = 2
+    /// Part of every cache folder's name (it was the waveform's bucket count and the analysis
+    /// version). Unchanged so existing analyses are still found: a missing or older waveform file
+    /// is rebuilt on its own, without splitting the audio again.
+    private static let folderKey = "3000|2"
 
     static func analyze(path: String, rate: FrameRate, root: URL) -> AudioAnalysis? {
         guard let folder = cacheFolder(for: path, rate: rate, root: root) else { return nil }
         let meta = folder.appendingPathComponent("analysis.json")
+        let wave = folder.appendingPathComponent("waveform.peaks")
         if let data = try? Data(contentsOf: meta), var cached = try? JSONDecoder().decode(AudioAnalysis.self, from: data),
            cached.musicPath.map({ FileManager.default.fileExists(atPath: $0) }) ?? true,
            cached.ltcPath.map({ FileManager.default.fileExists(atPath: $0) }) ?? true {
-            // Analysed before tempo detection existed: listen for the tempo once, keep the rest.
-            if cached.tempoChecked != true {
-                cached.tempo = tempoOnly(path: path, ltcChannel: cached.ltc?.channel)
-                cached.tempoChecked = true
-                if let data = try? JSONEncoder().encode(cached) { try? data.write(to: meta, options: .atomic) }
+            let music = (0..<cached.channels).filter { $0 != cached.ltc?.channel }
+            cached.waveform = music.isEmpty ? nil : (try? Data(contentsOf: wave)).flatMap { WaveformPeaks(encoded: $0) }
+            // Analysed before tempo detection, or before this waveform format: read the file once
+            // more for what's missing, keep the rest.
+            let needWaveform = !music.isEmpty && cached.waveform == nil
+            let needTempo = cached.tempoChecked != true
+            if needWaveform || needTempo {
+                let heard = listen(path: path, music: music, waveform: needWaveform, tempo: needTempo)
+                if needWaveform, let waveform = heard.waveform {
+                    cached.waveform = waveform
+                    try? waveform.encoded().write(to: wave, options: .atomic)
+                }
+                if needTempo {
+                    cached.tempo = heard.tempo
+                    cached.tempoChecked = true
+                    if let data = try? JSONEncoder().encode(cached) { try? data.write(to: meta, options: .atomic) }
+                }
             }
             return cached
         }
@@ -80,19 +100,14 @@ enum AudioAnalyzer {
         }
         let musicBuffer = musicFile.flatMap { AVAudioPCMBuffer(pcmFormat: $0.processingFormat, frameCapacity: chunk) }
         let ltcBuffer = ltcFile.flatMap { AVAudioPCMBuffer(pcmFormat: $0.processingFormat, frameCapacity: chunk) }
-        var accumulator = PeakAccumulator(totalFrames: Int(file.length), buckets: buckets)
-        var magnitudes = [Float](repeating: 0, count: Int(chunk))
+        var builder = WaveformBuilder(sampleRate: sampleRate, expectedFrames: Int(file.length))
+        var lows = [Float](repeating: 0, count: Int(chunk)), highs = lows
         var listener = TempoListener(sampleRate: sampleRate, channels: musicChannels, chunk: Int(chunk))
         while file.framePosition < file.length {
             do { try file.read(into: buffer, frameCount: chunk) } catch { break }
             let frames = Int(buffer.frameLength)
             guard frames > 0, let data = buffer.floatChannelData else { break }
-            for f in 0..<frames {
-                var peak: Float = 0
-                for c in musicChannels { peak = max(peak, abs(data[c][f])) }
-                magnitudes[f] = peak
-            }
-            magnitudes.withUnsafeBufferPointer { accumulator.add(UnsafeBufferPointer(rebasing: $0[0..<frames])) }
+            if !musicChannels.isEmpty { addFrames(data, channels: musicChannels, frames: frames, to: &builder, lows: &lows, highs: &highs) }
             listener.feed(data, frames: frames)
             if let musicFile, let musicBuffer, let out = musicBuffer.floatChannelData {
                 musicBuffer.frameLength = AVAudioFrameCount(frames)
@@ -105,8 +120,9 @@ enum AudioAnalyzer {
                 try? ltcFile.write(from: ltcBuffer)
             }
         }
+        let waveform = musicChannels.isEmpty ? nil : builder.finish()
         let analysis = AudioAnalysis(
-            peaks: musicChannels.isEmpty ? [] : accumulator.normalized,
+            waveform: waveform,
             ltc: ltc,
             musicPath: musicFile == nil ? nil : folder.appendingPathComponent("music.caf").path,
             ltcPath: ltcFile == nil ? nil : folder.appendingPathComponent("timecode.caf").path,
@@ -117,25 +133,53 @@ enum AudioAnalyzer {
         // Close the copies before anyone reads them.
         musicFile = nil
         ltcFile = nil
+        if let waveform { try? waveform.encoded().write(to: wave, options: .atomic) }
         if let data = try? JSONEncoder().encode(analysis) { try? data.write(to: meta, options: .atomic) }
         return analysis
     }
 
-    /// Reads the file once more just to listen for its tempo (for analyses made before this).
-    static func tempoOnly(path: String, ltcChannel: Int?) -> TempoEstimate? {
-        guard let file = try? AVAudioFile(forReading: URL(fileURLWithPath: path)) else { return nil }
+    /// Each frame's lowest and highest sample across `channels`, into the waveform.
+    private static func addFrames(_ data: UnsafePointer<UnsafeMutablePointer<Float>>, channels: [Int], frames: Int,
+                                  to builder: inout WaveformBuilder, lows: inout [Float], highs: inout [Float]) {
+        if lows.count < frames {
+            lows = [Float](repeating: 0, count: frames)
+            highs = lows
+        }
+        let first = data[channels[0]]
+        for f in 0..<frames { lows[f] = first[f]; highs[f] = first[f] }
+        for c in channels.dropFirst() {
+            let ch = data[c]
+            for f in 0..<frames {
+                lows[f] = min(lows[f], ch[f])
+                highs[f] = max(highs[f], ch[f])
+            }
+        }
+        lows.withUnsafeBufferPointer { l in
+            highs.withUnsafeBufferPointer { h in
+                builder.add(lows: UnsafeBufferPointer(rebasing: l[0..<frames]), highs: UnsafeBufferPointer(rebasing: h[0..<frames]))
+            }
+        }
+    }
+
+    /// Reads the file once more for the waveform, the tempo or both (for analyses made before them).
+    static func listen(path: String, music: [Int], waveform: Bool, tempo: Bool) -> (waveform: WaveformPeaks?, tempo: TempoEstimate?) {
+        guard let file = try? AVAudioFile(forReading: URL(fileURLWithPath: path)) else { return (nil, nil) }
         let format = file.processingFormat
         let chunk: AVAudioFrameCount = 32_768
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunk) else { return nil }
-        let music = (0..<Int(format.channelCount)).filter { $0 != ltcChannel }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: chunk) else { return (nil, nil) }
+        let music = music.filter { $0 < Int(format.channelCount) }
         var listener = TempoListener(sampleRate: format.sampleRate, channels: music, chunk: Int(chunk))
+        var builder = WaveformBuilder(sampleRate: format.sampleRate, expectedFrames: Int(file.length))
+        var lows = [Float](repeating: 0, count: Int(chunk)), highs = lows
         while file.framePosition < file.length {
             do { try file.read(into: buffer, frameCount: chunk) } catch { break }
             let frames = Int(buffer.frameLength)
             guard frames > 0, let data = buffer.floatChannelData else { break }
-            listener.feed(data, frames: frames)
+            if tempo { listener.feed(data, frames: frames) }
+            if waveform, !music.isEmpty { addFrames(data, channels: music, frames: frames, to: &builder, lows: &lows, highs: &highs) }
         }
-        return listener.estimate(hint: SongTempo.bpm(fromFileName: (path as NSString).lastPathComponent))
+        return (waveform && !music.isEmpty ? builder.finish() : nil,
+                tempo ? listener.estimate(hint: SongTempo.bpm(fromFileName: (path as NSString).lastPathComponent)) : nil)
     }
 
     private static func lossless(_ sampleRate: Double, channels: Int, bits: Int) -> [String: Any] {
@@ -151,7 +195,7 @@ enum AudioAnalyzer {
         let date = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
         var hash: UInt64 = 0xcbf2_9ce4_8422_2325   // FNV-1a
         let name = URL(fileURLWithPath: path).lastPathComponent
-        for byte in "\(name)|\(size)|\(Int(date))|\(rate.rawValue)|\(buckets)|\(version)".utf8 {
+        for byte in "\(name)|\(size)|\(Int(date))|\(rate.rawValue)|\(folderKey)".utf8 {
             hash ^= UInt64(byte)
             hash = hash &* 0x100_0000_01b3
         }

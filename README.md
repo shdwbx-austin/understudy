@@ -321,6 +321,7 @@ Runs on macOS 13+. Building needs Swift 6 (Xcode 16 or its Command Line Tools).
 ./scripts/network-harness.sh   # pins deck control, discovery, OSC in/out, disguise HTTP, curl and NDI to lo0 and en0 against stand-ins on 127.0.0.1 and 10.255.255.1; checks where the bytes go (temp store)
 ./scripts/notchlc-harness.sh   # transcodes generated clips through Media Encoder + the NotchLC plugin; checks codec, frames, rate, timecode, decodes them back, and Cancel (temp store; needs AME and the plugin)
 ./scripts/recorder-harness.sh  # records from NDI loopbacks (BGRA, UYVY, SD interlaced), generated and 10-bit frames; checks frames, timecode, colour and field tags, decoded colours (temp store)
+./scripts/waveform-harness.sh  # renders a generated song's waveform at whole-song, 8× and 32× zoom to PNGs; checks an older cached analysis is upgraded in place; times drawing a 2-hour show (temp store)
 swift run Understudy         # run unbundled while developing
 ./scripts/build-app.sh     # dist/Understudy.app + zip (ad-hoc signed)
 ```
