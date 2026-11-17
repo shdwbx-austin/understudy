@@ -294,6 +294,7 @@ Runs on macOS 13+. Building needs Swift 6 (Xcode 16 or its Command Line Tools).
 ```sh
 ./scripts/test.sh          # core logic tests (Swift Testing; works without Xcode)
 ./scripts/recorder-harness.sh  # records from NDI loopbacks (BGRA, UYVY, SD interlaced), generated and 10-bit frames; checks frames, timecode, colour and field tags, decoded colours (temp store)
+./scripts/ma3-harness.sh       # runs the grandMA3 marker export's Lua (OSC lines and plugin) on a mock console: what it builds, and that nothing foreign is deleted, overwritten or reassigned (needs `brew install lua`)
 swift run Understudy         # run unbundled while developing
 ./scripts/build-app.sh     # dist/Understudy.app + zip (ad-hoc signed)
 ```
