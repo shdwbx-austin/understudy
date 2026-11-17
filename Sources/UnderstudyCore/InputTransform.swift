@@ -2,9 +2,9 @@ import Foundation
 
 // MARK: - The choice
 
-/// A deck's input transform for the viewer and NDI: nothing (the default: pictures as recorded),
-/// or a .cube LUT the user chose, e.g. to turn log footage into Rec.709. Nothing is converted
-/// unless a LUT is chosen. Saved per deck (`DeckConfig`), so it travels with the project.
+/// A playback feed's look in Understudy's viewer and NDI out: nothing (the default: pictures as
+/// recorded), or a .cube LUT the user chose, e.g. to turn log footage into Rec.709. It's a
+/// playback setting only: the deck, its outputs and its recordings are never changed.
 public enum InputTransform: Hashable, Sendable, Codable {
     /// As recorded.
     case none
@@ -42,6 +42,60 @@ public enum InputTransform: Hashable, Sendable, Codable {
         case .none: break
         case .lut(let path): try c.encode(path, forKey: .lut)
         }
+    }
+}
+
+// MARK: - Playback settings
+
+/// How Understudy plays recordings back (viewer and NDI out), saved in the project apart from the
+/// deck list: nothing here reaches a deck.
+public struct PlaybackLUTSettings: Codable, Equatable, Sendable {
+    /// Playback LUT per feed: the feed's name (the deck's name as View and NDI show it, e.g.
+    /// "ME 1", which is also its folder in objects/VideoFile/) → .cube path.
+    public var luts: [String: String] = [:]
+
+    public init(luts: [String: String] = [:]) { self.luts = luts }
+
+    /// A deck's feed name: its name, or "Deck N" when it has none (as the viewer labels it).
+    public static func feed(_ deck: DeckConfig) -> String {
+        let name = deck.name.trimmingCharacters(in: .whitespaces)
+        return name.isEmpty ? "Deck \(deck.id + 1)" : name
+    }
+
+    public func lut(feed: String) -> InputTransform {
+        luts[feed].map { .lut(path: $0) } ?? .none
+    }
+
+    public mutating func setLUT(_ transform: InputTransform, feed: String) {
+        luts[feed] = transform.lutPath
+    }
+
+    /// Settings and projects saved before Playback LUTs kept a LUT on each deck
+    /// (`decks[].inputTransform`): read those into a playback setting. `decks` is the raw deck list.
+    public init(migratingDecks decks: [LegacyDeck]) {
+        for deck in decks {
+            guard case .lut(let path)? = deck.inputTransform else { continue }
+            luts[Self.feed(DeckConfig(id: deck.id, name: deck.name ?? "ME \(deck.id + 1)", host: ""))] = path
+        }
+    }
+
+    /// Just enough of an old deck entry to find its LUT.
+    public struct LegacyDeck: Decodable, Sendable {
+        public let id: Int
+        public let name: String?
+        public let inputTransform: InputTransform?
+    }
+
+    /// The saved playback settings, or (none saved) whatever older deck entries carried.
+    static func decode<K: CodingKey>(from c: KeyedDecodingContainer<K>, playback: K, decks: K) -> PlaybackLUTSettings {
+        if let saved = try? c.decodeIfPresent(PlaybackLUTSettings.self, forKey: playback) { return saved }
+        let legacy = (try? c.decodeIfPresent([FailableLegacyDeck].self, forKey: decks)) ?? []
+        return PlaybackLUTSettings(migratingDecks: legacy.compactMap(\.deck))
+    }
+
+    private struct FailableLegacyDeck: Decodable {
+        let deck: LegacyDeck?
+        init(from decoder: Decoder) throws { deck = try? LegacyDeck(from: decoder) }
     }
 }
 

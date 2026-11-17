@@ -84,12 +84,12 @@ Each show is a project folder, laid out like a disguise project:
 
 ```
 <Projects folder>/<Name>/
-  <Name>.understudy     songs, set, setlists, markers, decks, recording names, MA3/disguise targets
+  <Name>.understudy     songs, set, setlists, markers, decks, recording names, MA3/disguise targets, playback LUTs
   history/              snapshots, at most one every 5 minutes (last 50 kept)
   objects/AudioFile/    song audio, copied in
   objects/SongList/     imported song lists
   objects/Export/       marker exports
-  objects/LUT/          .cube LUTs chosen for the decks
+  objects/LUT/          .cube Playback LUTs (viewer and NDI out only)
   internal/analysis/    waveform and timecode caches
 ```
 
@@ -136,14 +136,14 @@ The footage comes from the selected take, so record a full run-through first.
 
 **NDI out** sends each video as its own NDI stream, *Understudy ME 1*, *Understudy ME 2*, *Understudy AUX 1*, at 1080p (or the files' own size). Every deck's source is there as soon as NDI is on: one without video sends colour bars with its name, why there's no picture and a clock, and with no decks set up there's one source, *Understudy*. The first time, macOS asks to let Understudy use the local network; allow it, or receivers won't see the sources. Understudy bundles NDI's library at build time: install the free [NDI SDK for Apple](https://ndi.video/for-developers/ndi-sdk/) (accepting its license) and `scripts/build-app.sh` copies `libndi.dylib` into the app. For CI builds, put a URL to that `libndi.dylib` in the `NDI_LIB_URL` secret. Without it, everything else works and NDI out says the library is missing.
 
-### LUTs (log footage)
+### Playback LUT (log footage)
 
-Understudy shows and sends recordings as they are: footage shot in a camera log curve stays flat and grey unless you choose a LUT. Next to NDI out, each deck in the viewer has a menu (*ME 1 · No LUT*):
+Understudy shows and sends recordings as they are: footage shot in a camera log curve stays flat and grey unless you choose a **Playback LUT**. It's a playback setting: it applies only to Understudy's viewer and NDI out. The deck, its outputs and its recordings are never changed. Next to NDI out, *Playback LUT* has a menu per deck (*ME 1 · None*):
 
 - **None**: as recorded (the default).
 - **Load LUT…**: any `.cube` file, e.g. your camera maker's log-to-Rec.709 LUT (3D up to 128³, or 1D; `DOMAIN_MIN`/`MAX` and Resolve's input-range lines are honoured). The LUT sees the picture's values as decoded (video levels 0–1, as Resolve does for video-level clips). It's copied into the project's `objects/LUT/`, so the project carries it; LUTs already there are listed in the menu.
 
-The choice is saved with the deck in the project, so a show's footage plays the same whenever it's reopened. The LUT runs on the GPU (Core Image, in the player's video composition), so the picture you see and the NDI feed always match; it keeps 1080p59.94 at full rate on Apple silicon. A LUT that's missing or unreadable shows ⚠ on its menu and the deck plays as recorded.
+Playback LUTs are saved in the project's playback settings (not with the decks), by feed name (*ME 1*, the same name as the deck's NDI source and its `objects/VideoFile/` folder). Projects saved by a pre-release build that kept the LUT on the deck are moved over when opened. The LUT runs on the GPU (Core Image, in the viewer's video composition), so the picture you see and the NDI feed always match; it keeps 1080p59.94 at full rate on Apple silicon. A LUT that's missing or unreadable shows ⚠ on its menu and the deck plays as recorded.
 
 NDI® is a registered trademark of Vizrt NDI AB.
 

@@ -33,7 +33,7 @@ struct ViewScreen: View {
                 Toggle("Full size", isOn: $viewer.ndiFullSize).toggleStyle(.checkbox).controlSize(.small)
                     .help("Send the files' own size over NDI (heavier); off sends 1080p")
                     .disabled(!viewer.ndiEnabled)
-                InputTransformMenus(viewer: viewer)
+                PlaybackLUTMenus(viewer: viewer)
                 Text(viewer.ndiStatus).font(Theme.grotesk(12, .light)).foregroundStyle(Theme.grey).lineLimit(1)
                 Spacer()
                 Button { model.loadViewerTake() } label: {

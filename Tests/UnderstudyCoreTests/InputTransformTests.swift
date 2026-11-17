@@ -108,56 +108,91 @@ struct InputTransformTests {
         #expect(throws: (any Error).self) { try CubeLUT.parse("LUT_3D_SIZE 2\n0 0 nan\n") }
     }
 
-    // MARK: The choice persisting
+    // MARK: Playback LUTs: a playback setting, saved apart from the decks
 
-    @Test func choiceSurvivesSettingsAndProjects() throws {
+    @Test func playbackLUTsSurviveSettingsAndProjects() throws {
         var settings = AppSettings()
-        settings.decks[0].inputTransform = .lut(path: "/Users/a/LUTs/SLog3_to_709.cube")
-        settings.decks[1].inputTransform = .lut(path: "/Shows/RKS/objects/LUT/Show.cube")
-        let data = try JSONEncoder().encode(settings)
-        let back = try JSONDecoder().decode(AppSettings.self, from: data)
-        #expect(back.decks[0].inputTransform == .lut(path: "/Users/a/LUTs/SLog3_to_709.cube"))
-        #expect(back.decks[1].inputTransform == .lut(path: "/Shows/RKS/objects/LUT/Show.cube"))
-        #expect(back.decks[2].inputTransform == .none)
+        settings.playback.setLUT(.lut(path: "/Users/a/LUTs/SLog3_to_709.cube"), feed: "ME 1")
+        settings.playback.setLUT(.lut(path: "/Shows/RKS/objects/LUT/Show.cube"), feed: "ME 2")
+        let back = try JSONDecoder().decode(AppSettings.self, from: JSONEncoder().encode(settings))
+        #expect(back.playback == settings.playback)
+        #expect(back.playback.lut(feed: "ME 1") == .lut(path: "/Users/a/LUTs/SLog3_to_709.cube"))
+        #expect(back.playback.lut(feed: "AUX 1") == .none)
 
-        let file = ProjectFile(name: "RKS", decks: settings.decks)
+        let file = ProjectFile(name: "RKS", decks: settings.decks, playback: settings.playback)
         let reread = try ProjectFile.decoder().decode(ProjectFile.self, from: ProjectFile.encoder().encode(file))
-        #expect(reread.decks.map(\.inputTransform) == settings.decks.map(\.inputTransform))
+        #expect(reread.playback == settings.playback)
+        // Not a deck property: the deck list carries no LUT.
+        let decksJSON = String(decoding: try JSONEncoder().encode(reread.decks), as: UTF8.self)
+        #expect(!decksJSON.contains("lut") && !decksJSON.contains("inputTransform"))
+        // None clears it.
+        settings.playback.setLUT(.none, feed: "ME 1")
+        #expect(settings.playback.luts["ME 1"] == nil)
+    }
+
+    @Test func feedsAreNamedLikeTheViewer() {
+        #expect(PlaybackLUTSettings.feed(DeckConfig(id: 0, name: " ME 1 ", host: "")) == "ME 1")
+        #expect(PlaybackLUTSettings.feed(DeckConfig(id: 2, name: "  ", host: "")) == "Deck 3")
     }
 
     @Test func projectLUTsAreStoredRelative() throws {
         let layout = ProjectLayout(folder: URL(fileURLWithPath: "/Shows/RKS"))
         var file = ProjectFile(name: "RKS")
-        file.decks[0].inputTransform = .lut(path: "/Shows/RKS/objects/LUT/Show.cube")
-        file.decks[1].inputTransform = .lut(path: "/Users/a/LUTs/Other.cube")
+        file.playback.setLUT(.lut(path: "/Shows/RKS/objects/LUT/Show.cube"), feed: "ME 1")
+        file.playback.setLUT(.lut(path: "/Users/a/LUTs/Other.cube"), feed: "ME 2")
         file.mapPaths(layout, toStored: true)
-        #expect(file.decks[0].inputTransform == .lut(path: "objects/LUT/Show.cube"))
-        #expect(file.decks[1].inputTransform == .lut(path: "/Users/a/LUTs/Other.cube"))
-        #expect(file.decks[2].inputTransform == .none)
+        #expect(file.playback.luts == ["ME 1": "objects/LUT/Show.cube", "ME 2": "/Users/a/LUTs/Other.cube"])
         let json = String(decoding: try ProjectFile.encoder().encode(file), as: UTF8.self)
-        #expect(json.contains("\"lut\" : \"objects\\/LUT\\/Show.cube\""))
+        #expect(json.contains("\"playback\" : {"))
+        #expect(json.contains("\"ME 1\" : \"objects\\/LUT\\/Show.cube\""))
         file.mapPaths(layout, toStored: false)
-        #expect(file.decks[0].inputTransform == .lut(path: "/Shows/RKS/objects/LUT/Show.cube"))
+        #expect(file.playback.lut(feed: "ME 1") == .lut(path: "/Shows/RKS/objects/LUT/Show.cube"))
+    }
+
+    /// Decks as saved by the first version of this feature: a LUT on the deck itself.
+    static let legacyDecks = """
+        [{"id": 0, "name": "ME 1", "host": "10.255.255.1", "inputTransform": {"lut": "objects/LUT/Show.cube"}},
+         {"id": 1, "name": "ME 2", "host": "", "inputTransform": {"log": "sLog3"}},
+         {"id": 2, "name": "", "host": "", "inputTransform": {"lut": "/Users/a/LUTs/Aux.cube"}},
+         {"id": 3, "name": "ME 4", "host": "", "inputTransform": {}},
+         {"id": 4, "name": "ME 5", "host": ""}]
+        """
+
+    @Test func oldProjectsMoveDeckLUTsIntoPlayback() throws {
+        let json = "{\"name\": \"Old\", \"decks\": \(Self.legacyDecks)}"
+        let file = try ProjectFile.decoder().decode(ProjectFile.self, from: Data(json.utf8))
+        // The LUTs land in playback, by feed; a built-in log curve (never shipped) is dropped.
+        #expect(file.playback.luts == ["ME 1": "objects/LUT/Show.cube", "Deck 3": "/Users/a/LUTs/Aux.cube"])
+        // The decks themselves still load, host and all, and carry no LUT any more.
+        #expect(file.decks.count == 5 && file.decks[0].host == "10.255.255.1")
+        let written = String(decoding: try ProjectFile.encoder().encode(file), as: UTF8.self)
+        #expect(!written.contains("inputTransform"))
+        // Read back from the new place, the same.
+        let again = try ProjectFile.decoder().decode(ProjectFile.self, from: Data(written.utf8))
+        #expect(again.playback == file.playback)
+    }
+
+    @Test func oldSettingsMoveDeckLUTsIntoPlayback() throws {
+        let json = "{\"decks\": \(Self.legacyDecks), \"oscPort\": 9001}"
+        let settings = try JSONDecoder().decode(AppSettings.self, from: Data(json.utf8))
+        #expect(settings.playback.luts == ["ME 1": "objects/LUT/Show.cube", "Deck 3": "/Users/a/LUTs/Aux.cube"])
+        #expect(settings.oscPort == 9001 && settings.decks[0].host == "10.255.255.1")
+    }
+
+    @Test func savedPlaybackWinsOverLeftoverDeckLUTs() throws {
+        let json = "{\"name\": \"X\", \"decks\": \(Self.legacyDecks), \"playback\": {\"luts\": {}}}"
+        let file = try ProjectFile.decoder().decode(ProjectFile.self, from: Data(json.utf8))
+        #expect(file.playback.luts.isEmpty)
     }
 
     @Test func nothingIsConvertedUnlessALUTIsChosen() throws {
-        // New decks and settings have no transform.
-        #expect(DeckConfig(id: 0, name: "ME 1", host: "").inputTransform == .none)
-        #expect(AppSettings().decks.allSatisfy { $0.inputTransform == .none })
-        #expect(ProjectFile(name: "New").decks.allSatisfy { $0.inputTransform == .none })
-        // A deck saved before transforms existed, one with a built-in log conversion from a
-        // pre-release build, and an empty one: all play as recorded.
-        let json = """
-            [{"id": 0, "name": "ME 1", "host": "10.255.255.1"},
-             {"id": 1, "name": "ME 2", "host": "", "inputTransform": {"log": "sLog3"}},
-             {"id": 2, "name": "AUX", "host": "", "inputTransform": {}},
-             {"id": 3, "name": "ME 4", "host": "", "inputTransform": {"lut": ""}}]
-            """
-        let decks = try JSONDecoder().decode([DeckConfig].self, from: Data(json.utf8))
-        #expect(decks.map(\.inputTransform) == [.none, .none, .none, .none])
-        // None is written as an empty object, never as a conversion.
-        let written = String(decoding: try JSONEncoder().encode(decks[1]), as: UTF8.self)
-        #expect(written.contains("\"inputTransform\":{}"))
-        #expect(decks[1].name == "ME 2")
+        #expect(AppSettings().playback.luts.isEmpty)
+        #expect(ProjectFile(name: "New").playback.luts.isEmpty)
+        // A deck list from before this feature: no LUTs.
+        let json = "{\"name\": \"Old\", \"decks\": [{\"id\": 0, \"name\": \"ME 1\", \"host\": \"\"}]}"
+        #expect(try ProjectFile.decoder().decode(ProjectFile.self, from: Data(json.utf8)).playback.luts.isEmpty)
+        // Anything but a LUT reads as none.
+        let none = try JSONDecoder().decode(InputTransform.self, from: Data("{\"log\": \"vLog\"}".utf8))
+        #expect(none == .none)
     }
 }

@@ -41,7 +41,7 @@ final class VideoViewer: ObservableObject {
         }
     }
     @Published private(set) var ndiStatus: String = ""
-    /// Each deck's chosen LUT, applied on screen and on NDI alike.
+    /// Each deck slot's Playback LUT, applied on screen and on NDI alike (never to the deck).
     @Published private(set) var transforms: [Int: InputTransform] = [:]
     /// A deck whose transform couldn't be applied (e.g. its LUT file is missing): why.
     @Published private(set) var gradeProblems: [Int: String] = [:]

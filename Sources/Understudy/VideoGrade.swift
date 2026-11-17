@@ -4,7 +4,7 @@ import Foundation
 import os
 import UnderstudyCore
 
-/// Applies a deck's chosen .cube LUT to its player item on the GPU: a Core
+/// Applies a feed's Playback LUT (.cube) to the viewer's player item on the GPU: a Core
 /// Image colour cube run by the item's video composition. The player layer on screen and the
 /// AVPlayerItemVideoOutput feeding NDI both get the converted frames, so the two always match.
 enum VideoGrade {

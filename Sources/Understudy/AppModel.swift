@@ -803,7 +803,7 @@ final class AppModel: ObservableObject {
 
     private func settingsChanged(from old: AppSettings) {
         syncClockRate()
-        if settings.decks.map(\.inputTransform) != old.decks.map(\.inputTransform) { syncViewerTransforms() }
+        if settings.playback != old.playback || settings.decks.map(\.name) != old.decks.map(\.name) { syncViewerTransforms() }
         if settings.confidenceEnabled != old.confidenceEnabled || settings.confidenceDeviceID != old.confidenceDeviceID {
             applyConfidence()
         } else if settings.confidenceLayout != old.confidenceLayout || settings.confidenceQuadrants != old.confidenceQuadrants
@@ -839,7 +839,8 @@ final class AppModel: ObservableObject {
         if settings.oscEnabled != old.oscEnabled || settings.oscPort != old.oscPort { applyOSC() }
         if settings.aes67Enabled != old.aes67Enabled || settings.aes67Interface != old.aes67Interface
             || settings.aes67Multicast != old.aes67Multicast || settings.aes67Name != old.aes67Name { applyAES67() }
-        if settings.decks != old.decks || settings.recordNaming != old.recordNaming || targets(of: settings) != targets(of: old) {
+        if settings.decks != old.decks || settings.recordNaming != old.recordNaming || targets(of: settings) != targets(of: old)
+            || settings.playback != old.playback {
             scheduleProjectSave()
         }
     }
@@ -1330,7 +1331,8 @@ extension AppModel {
     /// The open show as a project file.
     func currentProjectFile() -> ProjectFile {
         var f = ProjectFile(name: projectName ?? "Untitled", created: projectCreated, show: timeline.content(),
-                            decks: settings.decks, recordNaming: settings.recordNaming, targets: targets(of: settings))
+                            decks: settings.decks, recordNaming: settings.recordNaming, targets: targets(of: settings),
+                            playback: settings.playback)
         f.modified = Date()
         return f
     }
@@ -1353,6 +1355,7 @@ extension AppModel {
             timeline.load(file.show)
             if file.decks != settings.decks { setDeckList(file.decks) }
             settings.recordNaming = file.recordNaming
+            settings.playback = file.playback
             apply(file.targets)
             linkMessage = nil
             refreshTakes()
@@ -1369,7 +1372,7 @@ extension AppModel {
     func newProject(named name: String, keepShow: Bool, show: ShowContent? = nil) -> Bool {
         let content = show ?? (keepShow ? timeline.content() : ShowContent())
         let file = ProjectFile(name: name, show: content, decks: settings.decks, recordNaming: settings.recordNaming,
-                               targets: targets(of: settings))
+                               targets: targets(of: settings), playback: settings.playback)
         do {
             let layout = try projects.create(named: name, file: file)
             return openProject(layout)

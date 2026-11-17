@@ -63,10 +63,12 @@ public struct ProjectFile: Codable, Equatable, Sendable {
     public var decks: [DeckConfig]
     public var recordNaming: RecordNaming
     public var targets: ShowTargets
+    /// Playback LUTs (viewer and NDI out), kept apart from the deck list.
+    public var playback: PlaybackLUTSettings
 
     public init(name: String, created: Date = Date(), show: ShowContent = ShowContent(),
                 decks: [DeckConfig] = AppSettings().decks, recordNaming: RecordNaming = RecordNaming(),
-                targets: ShowTargets = ShowTargets()) {
+                targets: ShowTargets = ShowTargets(), playback: PlaybackLUTSettings = PlaybackLUTSettings()) {
         self.name = name
         self.created = created
         self.modified = created
@@ -74,6 +76,7 @@ public struct ProjectFile: Codable, Equatable, Sendable {
         self.decks = decks
         self.recordNaming = recordNaming
         self.targets = targets
+        self.playback = playback
     }
 
     public init(from decoder: Decoder) throws {
@@ -86,6 +89,7 @@ public struct ProjectFile: Codable, Equatable, Sendable {
         decks = AppSettings.normalized((try? c.decode([DeckConfig].self, forKey: .decks)) ?? AppSettings().decks)
         recordNaming = (try? c.decode(RecordNaming.self, forKey: .recordNaming)) ?? RecordNaming()
         targets = (try? c.decode(ShowTargets.self, forKey: .targets)) ?? ShowTargets()
+        playback = PlaybackLUTSettings.decode(from: c, playback: .playback, decks: .decks)
     }
 
     public static func encoder() -> JSONEncoder {
@@ -110,7 +114,7 @@ public struct ProjectFile: Codable, Equatable, Sendable {
 ///     <Name>/objects/SongList/     imported song lists
 ///     <Name>/objects/Export/       marker exports
 ///     <Name>/objects/VideoFile/    recordings pulled in from the backup, one folder per deck
-///     <Name>/objects/LUT/          .cube LUTs the decks' input transforms use
+///     <Name>/objects/LUT/          .cube Playback LUTs (viewer and NDI out only)
 ///     <Name>/internal/analysis/    waveform and timecode caches
 public struct ProjectLayout: Equatable, Sendable {
     public static let fileExtension = "understudy"
@@ -197,16 +201,14 @@ public struct ProjectLayout: Equatable, Sendable {
 }
 
 extension ProjectFile {
-    /// The file's paths (song audio, deck LUTs) made absolute (`toStored` false) or stored the
+    /// The file's paths (song audio, Playback LUTs) made absolute (`toStored` false) or stored the
     /// way `layout` keeps them (relative inside the project).
     public mutating func mapPaths(_ layout: ProjectLayout, toStored: Bool) {
         let f: (String) -> String = toStored ? layout.stored : layout.resolved
         for i in show.songs.indices {
             if let p = show.songs[i].audioPath { show.songs[i].audioPath = f(p) }
         }
-        for i in decks.indices {
-            if case .lut(let p) = decks[i].inputTransform { decks[i].inputTransform = .lut(path: f(p)) }
-        }
+        playback.luts = playback.luts.mapValues(f)
     }
 }
 

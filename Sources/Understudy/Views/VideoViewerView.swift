@@ -28,7 +28,7 @@ struct VideoViewerView: View {
                 Toggle("Full size", isOn: $viewer.ndiFullSize).toggleStyle(.checkbox).controlSize(.small)
                     .help("Send the files' own size over NDI (heavier); off sends 1080p")
                     .disabled(!viewer.ndiEnabled)
-                InputTransformMenus(viewer: viewer)
+                PlaybackLUTMenus(viewer: viewer)
                 Text(viewer.ndiStatus).font(Theme.grotesk(12, .light)).foregroundStyle(Theme.grey).lineLimit(1)
                 Spacer()
                 Button { model.loadViewerTake() } label: {
@@ -138,48 +138,53 @@ struct PlayerLayerView: NSViewRepresentable {
     }
 }
 
-/// One menu per deck in the viewer: None (as recorded, the default) or a .cube LUT the user
-/// loads, for the picture here and on NDI alike. Saved with the deck in the project.
-struct InputTransformMenus: View {
+/// "Playback LUT", then one menu per deck in the viewer: None (as recorded, the default) or a
+/// .cube LUT. A playback setting: it changes Understudy's viewer and NDI out only, never the deck,
+/// its outputs or its recordings. Saved in the project's playback settings.
+struct PlaybackLUTMenus: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var viewer: VideoViewer
 
+    static let scope = "Applies only to Understudy's viewer and NDI out. The deck, its outputs and its recordings are never changed."
+
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
+            if !viewer.slots.isEmpty {
+                Text("Playback LUT").font(Theme.grotesk(12, .light)).foregroundStyle(Theme.grey)
+                    .help(Self.scope)
+            }
             ForEach(viewer.slots) { slot in menu(for: slot) }
         }
     }
 
     private func menu(for slot: VideoViewer.Slot) -> some View {
-        let current = model.inputTransform(deck: slot.deckID)
+        let current = model.playbackLUT(deck: slot.deckID)
         let problem = viewer.gradeProblems[slot.deckID]
         return Menu {
-            choice(.none, current, deck: slot.deckID)
-            let luts = model.projectLUTs
-            if !luts.isEmpty || current.lutPath != nil {
-                Section("LUTs") {
-                    if let path = current.lutPath, !luts.contains(path) { choice(current, current, deck: slot.deckID) }
-                    ForEach(luts, id: \.self) { choice(.lut(path: $0), current, deck: slot.deckID) }
-                }
+            Section("Playback LUT for \(slot.name): viewer and NDI out only") {
+                choice(.none, current, deck: slot.deckID)
+                let luts = model.projectLUTs
+                if let path = current.lutPath, !luts.contains(path) { choice(current, current, deck: slot.deckID) }
+                ForEach(luts, id: \.self) { choice(.lut(path: $0), current, deck: slot.deckID) }
+                Button("Load LUT…") { loadLUT(deck: slot.deckID, name: slot.name) }
             }
             Divider()
-            Button("Load LUT…") { loadLUT(deck: slot.deckID, name: slot.name) }
+            Text("The deck, its outputs and its recordings are never changed.")
         } label: {
             HStack(spacing: 4) {
                 if problem != nil { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.amber) }
-                Text("\(slot.name) · \(current == .none ? "No LUT" : current.title)").lineLimit(1)
+                Text("\(slot.name) · \(current.title)").lineLimit(1)
             }
             .font(Theme.grotesk(12, .light))
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
         .foregroundStyle(current == .none ? Theme.grey : Theme.paper)
-        .help(problem ?? (current == .none ? "Apply a .cube LUT to \(slot.name), on screen and on NDI"
-                                           : "\(slot.name): LUT \(current.title), on screen and on NDI"))
+        .help(problem ?? "Playback LUT for \(slot.name): \(current.title). " + Self.scope)
     }
 
     private func choice(_ transform: InputTransform, _ current: InputTransform, deck: Int) -> some View {
-        Button { model.setInputTransform(transform, deck: deck) } label: {
+        Button { model.setPlaybackLUT(transform, deck: deck) } label: {
             if transform == current { Label(transform.title, systemImage: "checkmark") } else { Text(transform.title) }
         }
     }
@@ -187,11 +192,11 @@ struct InputTransformMenus: View {
     private func loadLUT(deck: Int, name: String) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "cube") ?? .data]
-        panel.message = "Choose a .cube LUT for \(name)"
+        panel.message = "Choose a .cube Playback LUT for \(name) (viewer and NDI out only; the deck is never changed)"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         if let problem = model.useLUT(url, deck: deck) {
             let alert = NSAlert()
-            alert.messageText = "Couldn't use that LUT"
+            alert.messageText = "Couldn't use that Playback LUT"
             alert.informativeText = problem
             alert.runModal()
         }
