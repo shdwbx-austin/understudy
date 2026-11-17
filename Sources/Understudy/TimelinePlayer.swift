@@ -47,6 +47,9 @@ final class TimelinePlayer {
     private var codePlayers: [String: AVAudioPlayerNode] = [:]
     private var files: [String: AVAudioFile] = [:]
     private var ltcNode: AVAudioSourceNode?
+    /// Each engine's stereo bus: players and the LTC node mix here (mono centred on both sides),
+    /// and the engine's main mixer spreads it to the device's full width for the channel map.
+    private var buses: [ObjectIdentifier: AVAudioMixerNode] = [:]
     private let plan = OSAllocatedUnfairLock(initialState: LTCPlan())
     private var musicRoute = AudioRoute(deviceUID: nil, channel: 0)
     private var extraRoutes: [AudioRoute] = []
@@ -79,7 +82,7 @@ final class TimelinePlayer {
         stopMusic()
         if extra != extraRoutes {
             // New extra engines (players go with them).
-            for engine in musicEngines.dropFirst() { engine.stop() }
+            for engine in musicEngines.dropFirst() { engine.stop(); buses[ObjectIdentifier(engine)] = nil }
             musicEngines = [music] + extra.map { _ in AVAudioEngine() }
             players = [players[0]] + extra.map { _ in [:] }
             extraRoutes = extra
@@ -112,8 +115,13 @@ final class TimelinePlayer {
         return true
     }
 
-    /// Points an engine's output at a device and maps its stereo output onto `channels` from the
+    /// Points an engine's output at a device and maps its stereo bus onto `channels` from the
     /// route's first channel (e.g. [0, 1] → device channels 3–4 for channel 2).
+    ///
+    /// The engine's output is as wide as the device, and the channel map places the bus's sides.
+    /// A client narrower than the device leaks: on a 4-channel device, a stereo client mapped
+    /// [-1, -1, 0, -1] sounded on channels 1 and 3 (measured on a Loopback device), which put
+    /// LTC on the song channels.
     private func point(_ engine: AVAudioEngine, at route: AudioRoute, channels: [Int]) -> Bool {
         guard let unit = engine.outputNode.audioUnit else { return false }
         var device: AudioDeviceID = 0
@@ -127,9 +135,11 @@ final class TimelinePlayer {
             AudioUnitGetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &device, &size)
         }
         let rate = engine.outputNode.outputFormat(forBus: 0).sampleRate
-        let stereo = AVAudioFormat(standardFormatWithSampleRate: rate > 0 ? rate : 48_000, channels: 2)
-        engine.connect(engine.mainMixerNode, to: engine.outputNode, format: stereo)
+        let sampleRate = rate > 0 ? rate : 48_000
         let deviceChannels = max(2, AudioDeviceCatalog.channelCount(device, scope: kAudioDevicePropertyScopeOutput))
+        let stereo = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)
+        engine.connect(bus(engine), to: engine.mainMixerNode, format: stereo)
+        engine.connect(engine.mainMixerNode, to: engine.outputNode, format: Self.discrete(deviceChannels, sampleRate: sampleRate))
         var map = [Int32](repeating: -1, count: deviceChannels)
         for (source, offset) in channels.enumerated() {
             let target = route.channel + offset
@@ -138,6 +148,21 @@ final class TimelinePlayer {
         AudioUnitSetProperty(unit, kAudioOutputUnitProperty_ChannelMap, kAudioUnitScope_Input, 0,
                              &map, UInt32(map.count * MemoryLayout<Int32>.size))
         return true
+    }
+
+    /// `count` channels in order, no speaker positions (so stereo lands on the first two).
+    private static func discrete(_ count: Int, sampleRate: Double) -> AVAudioFormat {
+        if count == 2 { return AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)! }
+        let layout = AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | UInt32(count))!
+        return AVAudioFormat(standardFormatWithSampleRate: sampleRate, channelLayout: layout)
+    }
+
+    private func bus(_ engine: AVAudioEngine) -> AVAudioMixerNode {
+        if let bus = buses[ObjectIdentifier(engine)] { return bus }
+        let bus = AVAudioMixerNode()
+        engine.attach(bus)
+        buses[ObjectIdentifier(engine)] = bus
+        return bus
     }
 
     // MARK: LTC
@@ -149,7 +174,7 @@ final class TimelinePlayer {
         let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1)!
         let node = Self.makeLTCNode(format: format, sampleRate: sampleRate, plan: plan)
         ltc.attach(node)
-        ltc.connect(node, to: ltc.mainMixerNode, format: format)
+        ltc.connect(node, to: bus(ltc), format: format)
         ltcNode = node
     }
 
@@ -274,7 +299,7 @@ final class TimelinePlayer {
         if let node = nodes[path] { return node }
         let node = AVAudioPlayerNode()
         engine.attach(node)
-        engine.connect(node, to: engine.mainMixerNode, format: format)
+        engine.connect(node, to: bus(engine), format: format)
         nodes[path] = node
         return node
     }
