@@ -24,6 +24,11 @@ enum AudioDeviceCatalog {
     /// Output channels on a device (nil UID = the system's default output).
     static func outputChannels(uid: String?) -> Int {
         if let uid { return outputDevices().first { $0.uid == uid }?.channels ?? 0 }
+        return defaultOutputDevice()?.channels ?? 0
+    }
+
+    /// The system's default output device.
+    static func defaultOutputDevice() -> AudioInputDevice? {
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -31,9 +36,9 @@ enum AudioDeviceCatalog {
         )
         var device: AudioDeviceID = 0
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) == noErr
-        else { return 0 }
-        return channelCount(device, scope: kAudioDevicePropertyScopeOutput)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &device) == noErr,
+              device != 0 else { return nil }
+        return outputDevices().first { $0.id == device }
     }
 
     static func deviceID(forUID uid: String) -> AudioDeviceID? {

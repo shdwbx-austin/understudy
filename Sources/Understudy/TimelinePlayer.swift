@@ -104,6 +104,8 @@ final class TimelinePlayer {
             installLTCNode()
             if !point(ltc, at: ltcRoute, channels: [0]) {
                 problem = "Couldn't open the LTC output."
+            } else if ltcRoute.channel >= AudioDeviceCatalog.outputChannels(uid: ltcRoute.deviceUID) {
+                problem = "LTC out is set to channel \(ltcRoute.channel + 1), which its device doesn't have; no LTC is going out."
             }
             startLTC()
         }

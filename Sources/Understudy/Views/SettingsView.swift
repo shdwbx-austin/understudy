@@ -138,19 +138,27 @@ private struct TimelineOutputSettings: View {
                 Text("Every output starts each song at the same moment\(model.danteStatus.isRouted ? ", alongside Dante out" : ""). Separate devices run on their own clocks, so over a long song they can drift a few milliseconds apart; for sample-locked feeds use channels on one device.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            // The device first: its channels are what LTC out offers.
+            Picker("LTC device", selection: ltcDevice) {
+                Text("Same as song audio (\(name(model.settings.timelineOutputUID)))").tag(LTCDevice.song)
+                Text("System default (\(name(nil)))").tag(LTCDevice.systemDefault)
+                ForEach(devices) { Text("\($0.name) (\($0.channels) ch)").tag(LTCDevice.device($0.uid)) }
+                if case .device(let uid) = ltcDevice.wrappedValue, !devices.contains(where: { $0.uid == uid }) {
+                    Text("Not connected").tag(LTCDevice.device(uid))
+                }
+            }
             Picker("LTC out", selection: $model.settings.ltcOutputChannel) {
                 Text("Off").tag(Int?.none)
-                ForEach(0..<max(1, channels(model.settings.ltcOutputUID)), id: \.self) { Text("Channel \($0 + 1)").tag(Optional($0)) }
+                ForEach(0..<max(1, channels(model.settings.ltcOutputDeviceUID)), id: \.self) {
+                    Text(ltcChannelLabel($0)).tag(Optional($0))
+                }
+                if let channel = model.settings.ltcOutputChannel, channel >= channels(model.settings.ltcOutputDeviceUID) {
+                    Text("Channel \(channel + 1) (not on this device)").tag(Optional(channel))
+                }
             }
             if model.settings.ltcOutputChannel != nil || model.settings.danteOut {
                 Toggle("Use the track's own timecode", isOn: $model.settings.ltcOutUseTrackTimecode)
                     .help("When a song's audio has timecode on a channel, play that to LTC out instead of generated code")
-            }
-            if model.settings.ltcOutputChannel != nil {
-                Picker("LTC device", selection: $model.settings.ltcOutputUID) {
-                    Text("System default").tag(String?.none)
-                    ForEach(devices) { Text("\($0.name) (\($0.channels) ch)").tag(Optional($0.uid)) }
-                }
             }
             Text("In Timeline mode the song timeline is the clock. LTC out follows it at the show rate, so disguise and anything else can chase the reordered playlist.")
                 .font(.caption).foregroundStyle(.secondary)
@@ -178,9 +186,41 @@ private struct TimelineOutputSettings: View {
         AES67Settings()
     }
 
+    /// A device's output channels (nil = the system default), 2 when it isn't here.
     private func channels(_ uid: String?) -> Int {
-        guard let uid else { return 2 }
+        guard let uid else { return max(2, AudioDeviceCatalog.outputChannels(uid: nil)) }
         return devices.first { $0.uid == uid }?.channels ?? 2
+    }
+
+    private func name(_ uid: String?) -> String {
+        guard let uid else { return AudioDeviceCatalog.defaultOutputDevice()?.name ?? "none" }
+        return devices.first { $0.uid == uid }?.name ?? "not connected"
+    }
+
+    /// "Channel 3", or "Channel 1 (song audio)" where the songs already play on the same device.
+    private func ltcChannelLabel(_ channel: Int) -> String {
+        let settings = model.settings
+        let songChannels = settings.timelineOutputChannel...(settings.timelineOutputChannel + 1)
+        let shared = settings.ltcOutputDeviceUID == settings.timelineOutputUID && songChannels.contains(channel)
+        return "Channel \(channel + 1)" + (shared ? " (song audio)" : "")
+    }
+
+    private enum LTCDevice: Hashable { case song, systemDefault, device(String) }
+
+    private var ltcDevice: Binding<LTCDevice> {
+        Binding(
+            get: {
+                if model.settings.ltcOutputFollowsSong { return .song }
+                return model.settings.ltcOutputUID.map(LTCDevice.device) ?? .systemDefault
+            },
+            set: { choice in
+                switch choice {
+                case .song: model.settings.ltcOutputFollowsSong = true
+                case .systemDefault: model.settings.ltcOutputFollowsSong = false; model.settings.ltcOutputUID = nil
+                case .device(let uid): model.settings.ltcOutputFollowsSong = false; model.settings.ltcOutputUID = uid
+                }
+            }
+        )
     }
 }
 
@@ -219,7 +259,7 @@ private struct ExtraSongOutputRow: View {
     }
 
     private var channelCount: Int {
-        guard let uid = output?.deviceUID else { return 2 }
+        guard let uid = output?.deviceUID else { return max(2, AudioDeviceCatalog.outputChannels(uid: nil)) }
         return devices.first { $0.uid == uid }?.channels ?? 2
     }
 
