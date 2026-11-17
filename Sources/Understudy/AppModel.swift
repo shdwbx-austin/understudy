@@ -1356,6 +1356,7 @@ extension AppModel {
             if file.decks != settings.decks { setDeckList(file.decks) }
             settings.recordNaming = file.recordNaming
             settings.playback = file.playback
+            adoptPlaybackLUTs()
             apply(file.targets)
             linkMessage = nil
             refreshTakes()

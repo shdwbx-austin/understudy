@@ -111,14 +111,35 @@ struct VideoPane: View {
                 }
             }
             .aspectRatio(16 / 9, contentMode: .fit)
+            .overlay(alignment: .topLeading) { lutBadge }
             HStack(alignment: .firstTextBaseline) {
                 Text(slot.name).font(Theme.grotesk(15, .medium))
                 Text(slot.clipName ?? "").font(Theme.mono(10)).foregroundStyle(Theme.grey).lineLimit(1)
                 Spacer()
                 if slot.url != nil { Text(slot.status).font(Theme.grotesk(11, .light)).foregroundStyle(Theme.quiet) }
             }
+            if let problem = viewer.gradeProblems[slot.deckID] {
+                Text("Playback LUT not applied: \(problem)")
+                    .font(Theme.grotesk(11, .light)).foregroundStyle(Theme.amber)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            }
         }
         .frame(maxWidth: .infinity)
+    }
+
+    /// "LUT · <name>" while a Playback LUT is on, "LUT MISSING · as recorded" (amber) when it
+    /// can't be applied: plain to see on the picture, not only in a tooltip.
+    @ViewBuilder private var lutBadge: some View {
+        if let lut = viewer.transforms[slot.deckID] {
+            let missing = viewer.gradeProblems[slot.deckID] != nil
+            Text(missing ? "LUT MISSING · as recorded" : "LUT · \(lut.title)")
+                .font(Theme.mono(10, bold: true))
+                .foregroundStyle(missing ? Color.black : Theme.paper)
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(missing ? Theme.amber : Color.black.opacity(0.6))
+                .padding(8)
+                .help(viewer.gradeProblems[slot.deckID] ?? PlaybackLUTMenus.scope)
+        }
     }
 }
 
@@ -193,6 +214,7 @@ struct PlaybackLUTMenus: View {
             }
             Divider()
             Text("The deck, its outputs and its recordings are never changed.")
+            Text("The LUT sees the file's own values (wide-gamut and HDR files as recorded).")
         } label: {
             HStack(spacing: 4) {
                 if problem != nil { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.amber) }

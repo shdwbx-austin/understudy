@@ -52,6 +52,17 @@ extension AppModel {
                    uniquingKeysWith: { a, _ in a })
     }
 
+    /// Copies Playback LUTs that live outside the open project into its objects/LUT/ (e.g. one
+    /// chosen before a project was open), so the project carries them.
+    func adoptPlaybackLUTs() {
+        guard let layout = projects.current else { return }
+        var playback = settings.playback
+        for (feed, path) in playback.luts where !layout.isInside(path) && FileManager.default.fileExists(atPath: path) {
+            if let copy = projects.adopt(URL(fileURLWithPath: path), as: .lut) { playback.luts[feed] = copy.path }
+        }
+        if playback != settings.playback { settings.playback = playback }
+    }
+
     /// Hands the Playback LUTs to the viewer (at launch, and when they or the decks' names change).
     func syncViewerTransforms() {
         viewer.setTransforms(viewerLUTs)
