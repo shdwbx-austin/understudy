@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Undo and redo** (⌘Z, ⇧⌘Z) for marker changes (add, move, paste, cut, quantize, array, delete, rename, type), loops and tempos. Edit › Undo names the change; while typing in a field they undo the typing.
+- **Pasted markers look as far apart as they are.** Pasting kept the exact spacing, but each song was drawn fitted to the width, so the same gap looked narrower in a longer song. Zoomed in, every song is now drawn at the same scale (the zoom is held in seconds). Pasting where some markers land past the song's end now says so.
+- **Decks is now Record** (⌘3), and the menu with Stop / Record / Play to code / Follow Program is the Record menu.
+- **Select several, all through:** ⇧-drag across the song box-selects markers (⌘⇧ adds); ⇧-click a marker type selects its markers in the song; in the playlist ⇧-click selects a run of songs and ⌘-click adds one, and right-click acts on them all (add to / take off the set, one tempo for all, remove audio, delete).
+- **Every deck in Program**, in one row along the bottom: full chips while they fit, then number and name with a status bar, then small numbered squares in the status colour. Hover any of them for name, address, state, timecode, input, reference, media left and drift.
+
 ## 0.10.0 — 2026-11-16
 
 - **Copy and paste markers.** ⌘C copies the selected markers (any types; arrays stay arrays), ⌘X cuts, ⌘V pastes them at the playhead keeping their spacing, in any song (snapped when Snap is on), and selects them. ⌘A selects the song's markers. A readable list goes on the clipboard for notes. Text fields keep their own copy and paste. Also in the Markers menu and right-click.

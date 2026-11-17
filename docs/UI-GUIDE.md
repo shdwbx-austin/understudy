@@ -97,24 +97,24 @@ start window. Everything else is a `TextButton`.
 
 ## 5. The screens
 
-### The main window (`ContentView`): Program · View · Decks
+### The main window (`ContentView`): Program · View · Record
 
 Understudy is built for lighting and screens programmers and producers, so the timeline is the
 main tool and the recorders are a supporting act. One `TopBar` runs across every screen: the
-name and project, `ScreenTabs` (Program ⌘1 · View ⌘2 · Decks ⌘3, light Haas words, the current
+name and project, `ScreenTabs` (Program ⌘1 · View ⌘2 · Record ⌘3, light Haas words, the current
 one white with a fine underline, no boxes), `DeckState`, and the show timecode with its state.
 The input `Footer` runs along the bottom of every screen.
 
 - **`DeckState`** says what the decks are doing on every screen, as a coloured square and a few
   words: Recording (red, on a red tint), Playing to code (green), Following Program (white),
-  Decks stopped (grey). It's the one place deck state always shows; click it for Decks.
+  Decks stopped (grey). It's the one place deck state always shows; click it for Record.
 - **Screens and deck modes.** Program and View take the decks: `AppModel.show(_:)` puts them in
   Timeline mode (shown as Follow Program), and leaving Record asks first (the screen changes only
   once that's confirmed). Decks leaves them as they are. When the decks leave Timeline mode from
-  anywhere (Decks menu, OSC, a restart), `followMode()` brings Decks up, so a recording is never
+  anywhere (Record menu, OSC, a restart), `followMode()` brings Record up, so a recording is never
   happening off-screen. Recording from the timeline (show code from the timeline) stays on
   Program. Opening the main window takes the decks unless they came back recording or playing.
-  (A first cut also followed settings changes; at launch that flipped the screen to Decks before
+  (A first cut also followed settings changes; at launch that flipped the screen to Record before
   the window opened. Only real mode changes move the screen.)
 
 ### Program (`TimelineWorkspace`)
@@ -153,9 +153,9 @@ The take's pictures, locked to the timeline (`VideoViewer`, shared with the ⌥�
 viewer loads while either is showing). ME 1 large with the others in a 280 pt strip beside it
 (click one to swap), or side by side. Underneath: the set (96 pt, for scrubbing) and the
 transport without outputs, then NDI out. The empty state says how to get pictures (record on
-Decks, back up).
+Record, back up).
 
-### Decks (`DecksScreen`)
+### Record (`DecksScreen`)
 
 Everything about the recorders, under small sub-tabs: **Control** (the old show screen: the show
 code large, Decks do (Stop · Record · Play to code · Follow Program, ⇧⌘. R P F, the current one a
@@ -174,12 +174,12 @@ After CuePoints' start window:
 ### Settings and sheets
 
 - **Settings** holds the Mac's things only, in tabs: General · Audio out · Show control. The
-  decks' settings (timecode in, recording, playback, backup folder) moved to the Decks screen,
+  decks' settings (timecode in, recording, playback, backup folder) moved to the Record screen,
   next to the decks. Each is a grouped `Form` that leads with its show-critical setting; tuning
   that's normally automatic (chase) and features not in daily use (the confidence monitor) are
   folded under disclosures.
 - **Show things live in the project** and are edited where they're used: Assign decks and marker
-  types. Recording names are the exception: saved with the project, but edited in Decks ›
+  types. Recording names are the exception: saved with the project, but edited in Record ›
   Recording.
 - **Sheets** are for setup: Assign decks, Backup, deck Setup, Marker types. They use the same
   ink background and hairlines.
@@ -197,7 +197,7 @@ After CuePoints' start window:
 
   | Keys | Does |
   |---|---|
-  | ⌘1 / ⌘2 / ⌘3 | Program / View / Decks |
+  | ⌘1 / ⌘2 / ⌘3 | Program / View / Record |
   | ⇧⌘. ⇧⌘R ⇧⌘P ⇧⌘F | decks: Stop / Record / Play to code / Follow Program |
   | space | play/pause |
   | ← → | step a frame |
@@ -208,6 +208,8 @@ After CuePoints' start window:
   | [ ] | previous/next marker |
   | I / O / L / ⇧L | loop in / loop out / loop on-off / clear the loop |
   | Q | quantize the selected markers to the snap value |
+  | ⌘Z / ⇧⌘Z | undo / redo (markers, loops, tempos); text fields keep their own |
+  | ⇧-drag on the song | box-select markers (⌘⇧ adds) |
   | ⌘C / ⌘X / ⌘V / ⌘A | copy / cut / paste at the playhead / select the song's markers (not in text fields) |
   | Return | name the selected marker (and, after a drop, the new one opens by itself) |
   | ⌘-click, ⇧-click | select several markers; Esc back to one |

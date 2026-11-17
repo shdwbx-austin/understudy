@@ -66,7 +66,15 @@ private struct MarkerChip: View {
         let hidden = timeline.hiddenMarkerKinds.contains(type.id)
         let color = Color(hex: type.color)
         // A swatch, not a pill: a colour bar, the key in mono, the name in light type.
-        let chip = Button { timeline.dropMarker(type.id) } label: {
+        // ⇧-click: select this type's markers in the song (⌘⇧ adds them); click: drop one.
+        let chip = Button {
+            let flags = NSEvent.modifierFlags
+            if flags.contains(.shift) {
+                timeline.selectMarkers(ofKind: type.id, adding: flags.contains(.command))
+            } else {
+                timeline.dropMarker(type.id)
+            }
+        } label: {
             HStack(spacing: 7) {
                 Rectangle().fill(color.opacity(hidden ? 0.3 : 1)).frame(width: 3, height: 16)
                 Text(number.map(String.init) ?? "·").font(Theme.mono(10)).foregroundStyle(Theme.grey)
@@ -77,7 +85,7 @@ private struct MarkerChip: View {
             .background(Rectangle().fill(hidden ? Color.clear : Theme.fill))
         }
         .buttonStyle(.plain)
-        .help("Add a \(type.name) marker at the playhead\(number.map { " (\($0))" } ?? ""). Right-click to hide or show \(type.name) markers.")
+        .help("Add a \(type.name) marker at the playhead\(number.map { " (\($0))" } ?? ""). ⇧-click selects every \(type.name) marker in the song. Right-click to hide or show them.")
         .contextMenu {
             Button(hidden ? "Show \(type.name) Markers" : "Hide \(type.name) Markers") {
                 if hidden { timeline.hiddenMarkerKinds.remove(type.id) } else { timeline.hiddenMarkerKinds.insert(type.id) }

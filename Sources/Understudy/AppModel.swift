@@ -78,7 +78,7 @@ final class AppModel: ObservableObject {
     }
 
     /// Decks that stop following the timeline (Stop, Record from LTC, Play to code, from a menu,
-    /// OSC or a restart) bring the Decks screen up, so what they're doing is in front of you.
+    /// OSC or a restart) bring the Record screen up, so what they're doing is in front of you.
     private func followMode() {
         if !showsTimelineWorkspace, screen != .decks { screen = .decks }
     }

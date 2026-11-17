@@ -33,6 +33,9 @@ struct UnderstudyApp: App {
                 }
         }
         .commands {
+            CommandGroup(replacing: .undoRedo) {
+                UndoCommands(timeline: model.timeline)
+            }
             CommandGroup(replacing: .newItem) {
                 ProjectCommands(model: model, projects: model.projects)
             }
@@ -46,7 +49,7 @@ struct UnderstudyApp: App {
             CommandGroup(before: .toolbar) {
                 Toggle("Program", isOn: screenBinding(.program)).keyboardShortcut("1", modifiers: .command)
                 Toggle("View", isOn: screenBinding(.view)).keyboardShortcut("2", modifiers: .command)
-                Toggle("Decks", isOn: screenBinding(.decks)).keyboardShortcut("3", modifiers: .command)
+                Toggle("Record", isOn: screenBinding(.decks)).keyboardShortcut("3", modifiers: .command)
                 Divider()
                 ZoomCommands(timeline: model.timeline)
                 Divider()
@@ -54,7 +57,7 @@ struct UnderstudyApp: App {
                 OpenVideoCommand()
                 Divider()
             }
-            CommandMenu("Decks") {
+            CommandMenu("Record") {
                 // What the decks do. Toggles show a tick on the current one; leaving Record asks first.
                 Toggle("Stop", isOn: modeBinding(.stop)).keyboardShortcut(".", modifiers: [.command, .shift])
                 Toggle("Record", isOn: modeBinding(.record)).keyboardShortcut("r", modifiers: [.command, .shift])
@@ -259,5 +262,24 @@ private struct ZoomCommands: View {
         Button("Whole Song") { timeline.setZoom(1) }
             .keyboardShortcut("0", modifiers: .command)
             .disabled(timeline.detailZoom <= 1)
+    }
+}
+
+/// Edit › Undo / Redo: a text field being typed in keeps its own undo; otherwise they undo marker,
+/// loop and tempo changes, by name ("Undo Paste Markers").
+private struct UndoCommands: View {
+    @ObservedObject var timeline: TimelineModel
+
+    private var typing: Bool { NSApp.keyWindow?.firstResponder is NSText }
+
+    var body: some View {
+        Button(timeline.undoName.map { "Undo \($0)" } ?? "Undo") {
+            if typing { NSApp.sendAction(Selector(("undo:")), to: nil, from: nil) } else { timeline.undo() }
+        }
+        .keyboardShortcut("z", modifiers: .command)
+        Button(timeline.redoName.map { "Redo \($0)" } ?? "Redo") {
+            if typing { NSApp.sendAction(Selector(("redo:")), to: nil, from: nil) } else { timeline.redo() }
+        }
+        .keyboardShortcut("z", modifiers: [.command, .shift])
     }
 }

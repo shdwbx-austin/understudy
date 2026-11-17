@@ -62,7 +62,7 @@ struct ContentView: View {
     }
 }
 
-/// The Decks screen's Control section: the show code large, the deck state, the take and every
+/// The Record screen's Control section: the show code large, the deck state, the take and every
 /// deck. Readable from across the room.
 struct DeckControl: View {
     @EnvironmentObject private var model: AppModel
@@ -553,7 +553,7 @@ struct ScreenTabs: View {
         HStack(spacing: 30) {
             tab("Program", "⌘1", .program, "The timeline: songs, markers, transport. The decks follow it.")
             tab("View", "⌘2", .view, "The take's pictures, locked to the timeline, and NDI out")
-            tab("Decks", "⌘3", .decks, "Record, play to code, and set up the decks, timecode and backup")
+            tab("Record", "⌘3", .decks, "Record, play to code, and set up the decks, timecode and backup")
         }
         .fixedSize()
     }
@@ -594,7 +594,7 @@ struct DeckState: View {
         }
         .buttonStyle(.plain)
         .fixedSize()
-        .help("What the decks are doing. Click for the Decks screen (⌘3).")
+        .help("What the decks are doing. Click for the Record screen (⌘3).")
     }
 
     private var state: (String, Color) {

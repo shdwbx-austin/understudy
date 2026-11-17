@@ -9,7 +9,7 @@ struct SettingsView: View {
 
     var body: some View {
         // This Mac's things only. The decks' own settings (timecode, recording, playback, backup)
-        // are on the Decks screen; the show's (marker types, MA3/disguise targets, recording
+        // are on the Record screen; the show's (marker types, MA3/disguise targets, recording
         // names) travel with the project.
         TabView(selection: $tab) {
             Form {
@@ -21,7 +21,7 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {
-                Text("Timecode inputs, recording, playback and backup are on the Decks screen (⌘3).")
+                Text("Timecode inputs, recording, playback and backup are on the Record screen (⌘3).")
                     .font(.caption).foregroundStyle(.secondary)
             }
 
@@ -406,7 +406,7 @@ private struct AES67Settings: View {
     }
 }
 
-// MARK: - Deck settings (shown on the Decks screen)
+// MARK: - Deck settings (shown on the Record screen)
 
 /// Where show code comes from: LTC inputs, rate, coasting through dropouts.
 struct TimecodeSettings: View {

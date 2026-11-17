@@ -225,6 +225,9 @@ private struct PlaylistRow: View {
     @State private var hover = false
 
     private var current: Bool { timeline.currentSongID == song.id }
+    private var picked: Bool { timeline.selectedSongIDs.contains(song.id) }
+    /// The songs a right-click acts on: the picked ones when this is one of them, else this one.
+    private var targets: Set<UUID> { picked && timeline.selectedSongIDs.count > 1 ? timeline.selectedSongIDs : [song.id] }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -260,8 +263,16 @@ private struct PlaylistRow: View {
             Text(duration.map(clock) ?? "—").font(Theme.mono(10)).foregroundStyle(Theme.grey)
                 .frame(width: 40, alignment: .trailing)
         }
+        .overlay(alignment: .leading) { if picked { Rectangle().fill(Theme.paper).frame(width: 2).offset(x: -6) } }
         .contentShape(Rectangle())
         .onTapGesture {
+            // ⇧-click: a run of songs; ⌘-click: one more. A plain click plays or adds as before.
+            let flags = NSEvent.modifierFlags
+            if flags.contains(.shift) || flags.contains(.command) {
+                timeline.selectSong(song.id, toggle: flags.contains(.command), range: flags.contains(.shift))
+                return
+            }
+            timeline.selectSong(song.id)
             if let setIndex { timeline.jump(toSong: setIndex) } else { timeline.addToSet(song.id) }
         }
         .onHover { hover = $0 }
@@ -275,6 +286,16 @@ private struct PlaylistRow: View {
             return true
         }
         .contextMenu {
+            if targets.count > 1 {
+                SongGroupActions(timeline: timeline, ids: targets)
+            } else {
+                single
+            }
+        }
+        .help(song.start.description + " · ⇧-click or ⌘-click to pick several")
+    }
+
+    @ViewBuilder private var single: some View {
             if song.inSet {
                 Button("Take Off the Set") { timeline.removeFromSet(song.id) }
             } else {
@@ -292,8 +313,6 @@ private struct PlaylistRow: View {
             }
             Divider()
             Button("Delete from Library", role: .destructive) { timeline.remove(song.id) }
-        }
-        .help(song.start.description)
     }
 
     private func timecodeHelp(_ channel: Int) -> String {
@@ -305,6 +324,42 @@ private struct PlaylistRow: View {
             text += " Its code doesn't match the song list, so the song list is used."
         }
         return text
+    }
+}
+
+/// What can be done to several songs at once (right-click one of the picked songs).
+private struct SongGroupActions: View {
+    @ObservedObject var timeline: TimelineModel
+    let ids: Set<UUID>
+
+    var body: some View {
+        let songs = timeline.songs.filter { ids.contains($0.id) }
+        Text("\(songs.count) Songs")
+        if songs.contains(where: { !$0.inSet }) {
+            Button("Add to the Set") { timeline.addToSet(Set(songs.filter { !$0.inSet }.map(\.id))) }
+        }
+        if songs.contains(where: \.inSet) {
+            Button("Take Off the Set") { timeline.removeFromSet(Set(songs.filter(\.inSet).map(\.id))) }
+        }
+        Button("Tempo for All…") {
+            if let text = promptForText("Tempo for \(songs.count) songs (BPM, or empty for none)", value: ""),
+               text.trimmingCharacters(in: .whitespaces).isEmpty || SongTempo.parse(text) != nil {
+                timeline.setTempo(ids, bpm: SongTempo.parse(text))
+            }
+        }
+        if songs.contains(where: { $0.audioPath != nil }) {
+            Button("Remove Audio") { timeline.removeAudio(from: ids) }
+        }
+        Divider()
+        Button("Deselect") { timeline.clearSongSelection() }
+        Button("Delete \(songs.count) from Library", role: .destructive) {
+            let alert = NSAlert()
+            alert.messageText = "Delete \(songs.count) songs from the library?"
+            alert.informativeText = songs.map(\.name).joined(separator: ", ")
+            alert.addButton(withTitle: "Delete")
+            alert.addButton(withTitle: "Cancel")
+            if alert.runModal() == .alertFirstButtonReturn { timeline.remove(ids) }
+        }
     }
 }
 
@@ -322,6 +377,8 @@ struct SongDetailTrack: View {
     @State private var pinchBase: Double?
     /// A loop being dragged out along the ruler (timeline seconds), shown before it's set.
     @State private var rulerLoop: (from: Double, to: Double)?
+    /// A ⇧-drag selecting the markers inside it (timeline seconds).
+    @State private var selectBand: (from: Double, to: Double, adding: Bool)?
 
     var body: some View {
         GeometryReader { geo in
@@ -330,7 +387,7 @@ struct SongDetailTrack: View {
                 let gap = timeline.gap
                 let from = item.timelineStart - gap
                 let full = max(item.timelineEnd - from, 1)
-                let zoom = min(max(1, timeline.detailZoom), TimelineModel.maxZoom)
+                let zoom = timeline.zoom(forSongSpan: full)
                 let span = full / zoom
                 let start = zoom <= 1.0001 ? from : min(max(from, viewStart), item.timelineEnd - span)
                 let end = start + span
@@ -392,6 +449,15 @@ struct SongDetailTrack: View {
                         }
                         .allowsHitTesting(false)
                     }
+                    // A ⇧-drag selection in progress.
+                    if let band = selectBand {
+                        let a = max(0, x(min(band.from, band.to))), b = min(width, x(max(band.from, band.to)))
+                        Rectangle().fill(Theme.paper.opacity(0.08))
+                            .overlay(Rectangle().strokeBorder(Theme.paper.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [3, 3])))
+                            .frame(width: max(1, b - a), height: height - 22)
+                            .offset(x: a, y: 22)
+                            .allowsHitTesting(false)
+                    }
                     // Ruler: song-relative time, frames when zoomed in close.
                     let first = (max(0, start - item.timelineStart) / step).rounded(.up) * step
                     let last = min(item.duration, end - item.timelineStart)
@@ -428,13 +494,23 @@ struct SongDetailTrack: View {
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
                             let at = start + min(max(0, value.location.x), width) / scale
-                            if value.startLocation.y < 22, abs(value.translation.width) > 3 {
+                            let flags = NSEvent.modifierFlags
+                            if selectBand != nil || (flags.contains(.shift) && value.startLocation.y >= 22) {
+                                // ⇧-drag on the song: box-select markers (⌘⇧ adds to the selection).
+                                let from = selectBand?.from ?? start + min(max(0, value.startLocation.x), width) / scale
+                                selectBand = (from, at, selectBand?.adding ?? flags.contains(.command))
+                            } else if value.startLocation.y < 22, abs(value.translation.width) > 3 {
                                 rulerLoop = (start + min(max(0, value.startLocation.x), width) / scale, at)
                             } else if rulerLoop == nil {
                                 timeline.scrub(to: at)
                             }
                         }
                         .onEnded { _ in
+                            if let band = selectBand {
+                                timeline.selectMarkers(from: band.from, to: band.to, adding: band.adding)
+                                selectBand = nil
+                                return
+                            }
                             if let r = rulerLoop {
                                 timeline.setLoopSection(from: r.from, to: r.to)
                                 rulerLoop = nil
@@ -719,47 +795,107 @@ struct TakePicker: View {
 }
 
 /// One small block per assigned deck: number, name, its one status word, and drift.
+/// Every deck in one row across the bottom of Program. They share the width: full chips (number,
+/// name, status, drift) while there's room, then number and name with a status mark, then small
+/// numbered squares in the status colour. Hover any of them for the details.
 struct DeckChips: View {
     @EnvironmentObject private var model: AppModel
 
     var body: some View {
-        let assigned = model.decks.filter { model.settings.decks.indices.contains($0.id) && !model.settings.decks[$0.id].host.trimmingCharacters(in: .whitespaces).isEmpty }
-        // Up to four across, then wrap: 16 decks make four rows of four.
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 190), spacing: 8)], spacing: 6) {
-            ForEach(assigned, id: \.id) { deck in
-                DeckChip(deck: deck, config: model.settings.decks[deck.id])
+        let decks = model.decks.filter { model.settings.decks.indices.contains($0.id) }
+        if decks.isEmpty {
+            Text("No decks in this project.").font(Theme.grotesk(13, .light)).foregroundStyle(Theme.grey)
+        } else {
+            GeometryReader { geo in
+                let spacing: CGFloat = 6
+                let each = (geo.size.width - spacing * CGFloat(decks.count - 1)) / CGFloat(decks.count)
+                let style: DeckChip.Style = each >= 150 ? .full : each >= 64 ? .compact : .square
+                HStack(spacing: spacing) {
+                    ForEach(decks, id: \.id) { deck in
+                        DeckChip(deck: deck, config: model.settings.decks[deck.id], style: style)
+                            .frame(width: style == .square ? 28 : each)
+                    }
+                    if style == .square { Spacer(minLength: 0) }
+                }
             }
-        }
-        if assigned.isEmpty {
-            Text("No decks assigned.").font(Theme.grotesk(13, .light)).foregroundStyle(Theme.grey)
+            .frame(height: 28)
         }
     }
 }
 
-private struct DeckChip: View {
+struct DeckChip: View {
+    enum Style { case full, compact, square }
     @EnvironmentObject private var model: AppModel
     @ObservedObject var deck: DeckController
     let config: DeckConfig
+    var style: Style = .full
 
-    /// One slim line per deck: number, name, status word, drift. Red outline when lost.
     var body: some View {
-        let status = DeckStatus.word(deck, model: model)
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(String(format: "%02d", deck.id + 1))
-                .font(Theme.mono(10))
-                .foregroundStyle(Theme.grey)
-            Text(config.name.trimmingCharacters(in: .whitespaces)).font(Theme.grotesk(12, .regular)).lineLimit(1)
-            Text(status.text).font(Theme.grotesk(12, .light)).foregroundStyle(status.color).lineLimit(1)
-            Spacer(minLength: 4)
-            Text(deck.smoothedError.map { String(format: "Δ %+.1f", $0) } ?? "")
-                .font(Theme.mono(9)).foregroundStyle(Theme.quiet)
+        let status = assigned ? DeckStatus.word(deck, model: model) : ("Not assigned", Theme.quiet)
+        Group {
+            switch style {
+            case .full:
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    number
+                    Text(name).font(Theme.grotesk(12, .regular)).lineLimit(1)
+                    Text(status.0).font(Theme.grotesk(12, .light)).foregroundStyle(status.1).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(deck.smoothedError.map { String(format: "Δ %+.1f", $0) } ?? "")
+                        .font(Theme.mono(9)).foregroundStyle(Theme.quiet)
+                }
+                .padding(.horizontal, 10)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .background(deck.isLost ? Theme.signal.opacity(0.12) : Theme.fill)
+            case .compact:
+                HStack(spacing: 6) {
+                    Rectangle().fill(status.1).frame(width: 3, height: 14)
+                    number
+                    Text(name).font(Theme.grotesk(11, .regular)).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 6)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .background(deck.isLost ? Theme.signal.opacity(0.12) : Theme.fill)
+            case .square:
+                // Just the number on the status colour: grey when idle or not there.
+                let quiet = status.1 == Theme.quiet || status.1 == Theme.grey
+                Text("\(deck.id + 1)")
+                    .font(Theme.mono(10, bold: true))
+                    .foregroundStyle(quiet ? Theme.grey : Theme.ink)
+                    .frame(width: 28, height: 28)
+                    .background(Rectangle().fill(quiet ? Theme.fill : status.1))
+            }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(deck.isLost ? Theme.signal.opacity(0.12) : Theme.fill)
         .overlay(Rectangle().strokeBorder(deck.isLost ? Theme.signal : Color.clear, lineWidth: 1))
-        .help("\(config.name) · \(status.text)")
+        .contentShape(Rectangle())
+        .help(details(status.0))
+    }
+
+    private var assigned: Bool { !config.host.trimmingCharacters(in: .whitespaces).isEmpty }
+    private var name: String { config.name.trimmingCharacters(in: .whitespaces) }
+
+    private var number: some View {
+        Text(String(format: "%02d", deck.id + 1)).font(Theme.mono(10)).foregroundStyle(Theme.grey)
+    }
+
+    /// The hover card: everything the Record screen shows for this deck, in a few lines.
+    private func details(_ state: String) -> String {
+        var lines = ["\(String(format: "%02d", deck.id + 1))  \(name.isEmpty ? "Deck \(deck.id + 1)" : name)  ·  \(state)"]
+        guard assigned else { return (lines + ["No address: assign it on Record (⌘3) › Assign decks."]).joined(separator: "\n") }
+        lines.append(config.host)
+        if deck.isConnected {
+            if let tc = deck.transport.displayTimecode { lines.append("Timecode \(tc.description)") }
+            if deck.transport.reportsInput { lines.append("Input \(deck.transport.inputVideoFormat ?? "NO SIGNAL")") }
+            switch deck.transport.referenceLocked {
+            case true?: lines.append("Reference locked")
+            case false?: lines.append("Reference NOT locked")
+            case nil: break
+            }
+            lines.append("Media left \(MediaTime.text(deck.mediaSecondsLeft))")
+            if let e = deck.smoothedError { lines.append(String(format: "Error Δ %+.1f frames", e)) }
+        }
+        if let error = deck.lastError { lines.append(error) }
+        return lines.joined(separator: "\n")
     }
 }
 

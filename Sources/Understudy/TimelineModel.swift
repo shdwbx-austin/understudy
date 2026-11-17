@@ -30,6 +30,7 @@ final class TimelineModel: ObservableObject {
     }
     /// Loop the current song or a section.
     @Published var loop = LoopSetting() {
+        willSet { if newValue != loop { checkpoint("Loop") } }
         didSet { if loop != oldValue { save() } }
     }
     /// Beat lines on the current song (for songs with a tempo).
@@ -50,8 +51,22 @@ final class TimelineModel: ObservableObject {
     @Published var snapNote: NoteValue = NoteValue(rawValue: UserDefaults.standard.string(forKey: "understudy.snapNote") ?? "") ?? .quarter {
         didSet { UserDefaults.standard.set(snapNote.rawValue, forKey: "understudy.snapNote") }
     }
+    /// Seconds across the current-song view when zoomed in (nil: each song fits the width). Held
+    /// in seconds, not as a multiple, so every song is drawn at the same scale when you move
+    /// between them: markers pasted into another song look exactly as far apart as they are.
+    @Published var detailSpan: Double?
     /// The current song's zoom (1 = the whole song across the width).
-    @Published var detailZoom: Double = 1
+    var detailZoom: Double { zoom(forSongSpan: currentSongSpan) }
+    /// Length of the current song with its lead-in, seconds.
+    var currentSongSpan: Double {
+        guard let i = currentIndex ?? (layout.items.isEmpty ? nil : 0), layout.items.indices.contains(i) else { return 1 }
+        return max(1, layout.items[i].timelineEnd - (layout.items[i].timelineStart - gap))
+    }
+    /// The zoom a song of length `span` is drawn at.
+    func zoom(forSongSpan span: Double) -> Double {
+        guard let detailSpan, detailSpan < span else { return 1 }
+        return min(Self.maxZoom, span / detailSpan)
+    }
     static let maxZoom = 32.0
     /// Saved sets. The current one follows every change to the set.
     @Published private(set) var setlists: [Setlist] = []
@@ -90,7 +105,9 @@ final class TimelineModel: ObservableObject {
     private var scrubSettle: Task<Void, Never>?
     @Published private(set) var isPlaying = false
     /// Markers, on show code (they stay with their song in any set order).
-    @Published private(set) var markers: [Marker] = []
+    @Published private(set) var markers: [Marker] = [] {
+        willSet { checkpoint("Marker Change") }
+    }
     /// Marker types hidden on the timeline and in the list.
     @Published var hiddenMarkerKinds: Set<MarkerKind> = [] {
         didSet { if hiddenMarkerKinds != oldValue { save() } }
@@ -731,7 +748,8 @@ final class TimelineModel: ObservableObject {
     /// The current song's zoom, 1 (whole song) to `maxZoom`.
     func setZoom(_ z: Double) {
         let clamped = min(max(1, z), Self.maxZoom)
-        if abs(clamped - detailZoom) > 0.001 { detailZoom = clamped }
+        let span: Double? = clamped <= 1.0001 ? nil : currentSongSpan / clamped
+        if span != detailSpan { detailSpan = span }
     }
 
     // MARK: Loops
@@ -807,6 +825,7 @@ final class TimelineModel: ObservableObject {
     /// Adds a marker at the playhead (its show code). Returns it, or nil off the set.
     @discardableResult
     func addMarker(_ kind: MarkerKind? = nil, label: String = "") -> Marker? {
+        checkpoint("Add Marker")
         let kind = kind ?? lastMarkerKind
         lastKind = kind
         // While playing, the transport is ahead of the last UI refresh: read it now.
@@ -840,6 +859,7 @@ final class TimelineModel: ObservableObject {
     }
 
     func updateMarker(_ id: UUID, kind: MarkerKind? = nil, label: String? = nil, frame: Int? = nil) {
+        checkpoint(kind != nil ? "Change Type" : label != nil ? "Rename Marker" : "Move Marker")
         guard let i = markers.firstIndex(where: { $0.id == id }) else { return }
         if let kind { markers[i].kind = kind; lastKind = kind }
         if let label { markers[i].label = label }
@@ -849,6 +869,7 @@ final class TimelineModel: ObservableObject {
     }
 
     func removeMarker(_ id: UUID) {
+        checkpoint("Delete Marker")
         markers.removeAll { $0.id == id }
         selectedMarkerIDs.remove(id)
         if selectedMarkerID == id { selectedMarkerID = nil }
@@ -872,6 +893,7 @@ final class TimelineModel: ObservableObject {
     }
 
     func setTempo(_ id: UUID, bpm: Double?, beatsPerBar: Int? = nil) {
+        checkpoint("Tempo")
         guard let i = songs.firstIndex(where: { $0.id == id }) else { return }
         songs[i].bpm = bpm.flatMap { $0 > 0 ? $0 : nil }
         if let beatsPerBar { songs[i].beatsPerBar = beatsPerBar == 4 ? nil : max(1, beatsPerBar) }
@@ -890,6 +912,7 @@ final class TimelineModel: ObservableObject {
 
     /// The bar starts on the playhead (lines the grid up with the music).
     func setDownbeatAtPlayhead() {
+        checkpoint("Set Downbeat")
         guard let index = currentIndex, layout.items.indices.contains(index) else { return }
         let item = layout.items[index]
         guard let i = songs.firstIndex(where: { $0.id == item.song.id }) else { return }
@@ -937,6 +960,7 @@ final class TimelineModel: ObservableObject {
             message = "No room for hits there before the \(extent == .nextMarker ? "next marker" : "end")."
             return 0
         }
+        checkpoint("Array Markers")
         let id = UUID()
         let hits = frames.map { Marker(frame: $0, kind: anchor.kind, label: anchor.label, arrayID: id, arrayStep: note.short) }
         markers += hits
@@ -963,6 +987,7 @@ final class TimelineModel: ObservableObject {
     }
 
     func clearArray(_ id: UUID) {
+        checkpoint("Clear Array")
         let ids = Set(markers.filter { $0.arrayID == id }.map(\.id))
         removeMarkers(ids)
         message = "Cleared \(ids.count) arrayed markers."
@@ -975,6 +1000,77 @@ final class TimelineModel: ObservableObject {
         }.map(\.id))
         removeMarkers(ids)
         message = ids.isEmpty ? nil : "Cleared \(ids.count) arrayed markers."
+    }
+
+    // MARK: Undo
+
+    /// What undo puts back: markers, the loop, and songs' tempos and downbeats.
+    private struct EditState {
+        var markers: [Marker]
+        var loop: LoopSetting
+        var tempos: [UUID: (bpm: Double?, beatsPerBar: Int?, downbeat: Double?, detected: Bool?)]
+    }
+
+    private var undoStack: [(name: String, state: EditState)] = []
+    private var redoStack: [(name: String, state: EditState)] = []
+    /// Changes made in one go (one key, one drag, one menu item) undo together: the first change
+    /// in a run-loop turn takes the snapshot, the rest join it.
+    private var checkpointOpen = false
+    private var restoring = false
+
+    private var editState: EditState {
+        EditState(markers: markers, loop: loop,
+                  tempos: Dictionary(uniqueKeysWithValues: songs.map { ($0.id, ($0.bpm, $0.beatsPerBar, $0.downbeat, $0.bpmDetected)) }))
+    }
+
+    /// Call before a change; `name` is what Edit › Undo shows ("Undo Paste Markers").
+    func checkpoint(_ name: String) {
+        guard !loading, !restoring else { return }
+        if checkpointOpen {
+            // A more specific name from the same action wins over the generic one.
+            if name != "Marker Change", name != "Loop", let last = undoStack.indices.last { undoStack[last].name = name }
+            return
+        }
+        undoStack.append((name, editState))
+        if undoStack.count > 200 { undoStack.removeFirst() }
+        redoStack.removeAll()
+        checkpointOpen = true
+        Task { @MainActor [weak self] in self?.checkpointOpen = false }
+    }
+
+    var undoName: String? { undoStack.last?.name }
+    var redoName: String? { redoStack.last?.name }
+
+    func undo() {
+        guard let step = undoStack.popLast() else { message = "Nothing to undo."; return }
+        redoStack.append((step.name, editState))
+        restore(step.state)
+        message = "Undid \(step.name)."
+    }
+
+    func redo() {
+        guard let step = redoStack.popLast() else { message = "Nothing to redo."; return }
+        undoStack.append((step.name, editState))
+        restore(step.state)
+        message = "Redid \(step.name)."
+    }
+
+    private func restore(_ state: EditState) {
+        restoring = true
+        defer { restoring = false }
+        markers = state.markers
+        loop = state.loop
+        for i in songs.indices {
+            if let t = state.tempos[songs[i].id] {
+                songs[i].bpm = t.bpm; songs[i].beatsPerBar = t.beatsPerBar
+                songs[i].downbeat = t.downbeat; songs[i].bpmDetected = t.detected
+            }
+        }
+        let present = Set(markers.map(\.id))
+        selectedMarkerIDs.formIntersection(present)
+        if let id = selectedMarkerID, !present.contains(id) { selectedMarkerID = nil }
+        songDetailsChanged()
+        objectWillChange.send()
     }
 
     // MARK: Copy and paste
@@ -1001,6 +1097,7 @@ final class TimelineModel: ObservableObject {
 
     /// ⌘X: copy, then delete.
     func cutMarkers() {
+        checkpoint("Cut Markers")
         let ids = currentSelection
         guard copyMarkers(ids) > 0 else { return }
         removeMarkers(ids)
@@ -1011,6 +1108,7 @@ final class TimelineModel: ObservableObject {
     /// their spacing; arrays stay arrays (new ones, so the copies clear separately). Any song.
     @discardableResult
     func pasteMarkers() -> Int {
+        checkpoint("Paste Markers")
         guard !clipboard.isEmpty else {
             message = "Nothing copied yet: select markers and ⌘C."
             return 0
@@ -1033,6 +1131,15 @@ final class TimelineModel: ObservableObject {
         selectedMarkerID = pasted.first?.id
         save()
         message = "Pasted \(pasted.count) marker\(pasted.count == 1 ? "" : "s") at \(Timecode(frameIndex: at, rate: rate.ltcRate).description) (selected: drag one to move them all)."
+        // Ones that land past the song's end aren't on the set, so they don't show: say so.
+        if let i = layout.index(at: t) {
+            let item = layout.items[i]
+            let end = Int(((item.showStart + item.duration) * rate.ltcRate.exact).rounded(.down))
+            let past = pasted.filter { $0.frame >= end }.count
+            if past > 0 {
+                message! += " \(past) landed past the end of \(item.song.name) and won't show there: ⌘Z, then paste earlier."
+            }
+        }
         return pasted.count
     }
 
@@ -1063,6 +1170,59 @@ final class TimelineModel: ObservableObject {
     /// Every marker of an array.
     func arrayMembers(_ id: UUID) -> Set<UUID> { Set(markers.filter { $0.arrayID == id }.map(\.id)) }
 
+    // MARK: Selecting several
+
+    /// Markers between two timeline times (⇧-drag on the song); `adding` keeps what's selected.
+    func selectMarkers(from a: Double, to b: Double, adding: Bool = false) {
+        let lo = min(a, b), hi = max(a, b)
+        let ids = placedMarkers.filter { $0.time >= lo && $0.time <= hi }.map(\.marker.id)
+        if adding { selectedMarkerIDs.formUnion(ids); if selectedMarkerID == nil { selectedMarkerID = ids.first } } else { selectMarkers(ids) }
+        message = ids.isEmpty ? "No markers there." : "Selected \(selectedMarkerIDs.count) marker\(selectedMarkerIDs.count == 1 ? "" : "s")."
+    }
+
+    /// ⇧-click a type: all of its markers in the song under the playhead (⌘ adds to the selection).
+    func selectMarkers(ofKind kind: MarkerKind, adding: Bool = false) {
+        guard let i = currentIndex, layout.items.indices.contains(i) else { return }
+        let item = layout.items[i]
+        let ids = placedMarkers.filter { $0.marker.kind == kind && $0.time >= item.timelineStart - gap && $0.time < item.timelineEnd }.map(\.marker.id)
+        if adding { selectedMarkerIDs.formUnion(ids) } else { selectMarkers(ids) }
+        message = "Selected \(ids.count) \(markerTypes.name(kind)) marker\(ids.count == 1 ? "" : "s") in \(item.song.name)."
+    }
+
+    /// Songs picked in the playlist with ⇧-click (a run) or ⌘-click (one more).
+    @Published var selectedSongIDs: Set<UUID> = []
+    private var songAnchor: UUID?
+
+    /// The playlist as it's shown: the set, then the library.
+    private var playlistOrder: [UUID] { setSongs.map(\.id) + librarySongs.map(\.id) }
+
+    func selectSong(_ id: UUID, toggle: Bool = false, range: Bool = false) {
+        if range, let anchor = songAnchor, let a = playlistOrder.firstIndex(of: anchor), let b = playlistOrder.firstIndex(of: id) {
+            selectedSongIDs.formUnion(playlistOrder[min(a, b)...max(a, b)])
+        } else if toggle {
+            if selectedSongIDs.contains(id) { selectedSongIDs.remove(id) } else { selectedSongIDs.insert(id) }
+            songAnchor = id
+        } else {
+            selectedSongIDs = [id]
+            songAnchor = id
+        }
+    }
+
+    func clearSongSelection() { selectedSongIDs = [] }
+
+    /// Several songs at once.
+    func addToSet(_ ids: Set<UUID>) { for id in playlistOrder where ids.contains(id) { addToSet(id) } }
+    func removeFromSet(_ ids: Set<UUID>) { for id in ids { removeFromSet(id) } }
+    func removeAudio(from ids: Set<UUID>) { for id in ids { removeAudio(from: id) } }
+    func setTempo(_ ids: Set<UUID>, bpm: Double?) {
+        checkpoint("Tempo")
+        for id in ids { setTempo(id, bpm: bpm) }
+    }
+    func remove(_ ids: Set<UUID>) {
+        for id in ids { remove(id) }
+        selectedSongIDs.subtract(ids)
+    }
+
     // MARK: Snap and quantize
 
     /// The grid of the set song that show second `show` falls in (nil: not on the set, or no tempo).
@@ -1089,6 +1249,7 @@ final class TimelineModel: ObservableObject {
     /// A dragged marker dropped at `frame` (snapped when Snap is on). Dragging one of a selection
     /// moves them all by the same amount, so they keep their spacing.
     func drop(_ id: UUID, at frame: Int) {
+        checkpoint("Move Markers")
         guard let marker = markers.first(where: { $0.id == id }) else { return }
         let delta = snapped(frame) - marker.frame
         guard delta != 0 else { return }
@@ -1106,6 +1267,7 @@ final class TimelineModel: ObservableObject {
     /// without a tempo stay put. Returns how many moved.
     @discardableResult
     func quantize(_ ids: Set<UUID>, note: NoteValue? = nil, strength: Double = 1) -> Int {
+        checkpoint("Quantize")
         let note = note ?? snapNote
         var moved = 0, noGrid = 0
         for i in markers.indices where ids.contains(markers[i].id) {
@@ -1165,6 +1327,7 @@ final class TimelineModel: ObservableObject {
     /// Change the type, the label, or move by whole frames, for every one of `ids` at once.
     func updateMarkers(_ ids: Set<UUID>, kind: MarkerKind? = nil, label: String? = nil, moveFrames: Int = 0) {
         guard !ids.isEmpty else { return }
+        checkpoint(kind != nil ? "Change Type" : label != nil ? "Label Markers" : "Move Markers")
         for i in markers.indices where ids.contains(markers[i].id) {
             if let kind { markers[i].kind = kind }
             if let label { markers[i].label = label }
@@ -1176,6 +1339,7 @@ final class TimelineModel: ObservableObject {
     }
 
     func removeMarkers(_ ids: Set<UUID>) {
+        checkpoint("Delete Markers")
         markers.removeAll { ids.contains($0.id) }
         selectedMarkerIDs.subtract(ids)
         if let id = selectedMarkerID, ids.contains(id) { selectedMarkerID = nil }
@@ -1275,10 +1439,12 @@ final class TimelineModel: ObservableObject {
         markers = stored.markers ?? []
         hiddenMarkerKinds = Set(stored.hiddenMarkerKinds ?? [])
         markerTypes = stored.markerTypes ?? .defaults
+        undoStack = []
+        redoStack = []
         downtime = stored.downtime ?? 0
         stopAfterSong = stored.stopAfterSong ?? false
         loop = stored.loop ?? LoopSetting()
-        detailZoom = 1
+        detailSpan = nil
         lastKind = nil
         selectedMarkerID = nil
         selectedMarkerIDs = []
