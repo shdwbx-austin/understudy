@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 — 2026-11-16
 
 - **Undo and redo** (⌘Z, ⇧⌘Z) for marker changes (add, move, paste, cut, quantize, array, delete, rename, type), loops and tempos. Edit › Undo names the change; while typing in a field they undo the typing.
 - **Pasted markers look as far apart as they are.** Pasting kept the exact spacing, but each song was drawn fitted to the width, so the same gap looked narrower in a longer song. Zoomed in, every song is now drawn at the same scale (the zoom is held in seconds). Pasting where some markers land past the song's end now says so.
