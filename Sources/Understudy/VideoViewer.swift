@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import CoreMedia
 import Foundation
 import os
@@ -54,6 +55,10 @@ final class VideoViewer: ObservableObject {
     private var lastCheck: [Int: Double] = [:]
     private var running: Set<Int> = []
     private let pump = NDIPump()
+    /// A deck whose file can't be played: why (shown on its picture, in the NDI line and on its feed).
+    @Published private(set) var playProblems: [Int: String] = [:]
+    private var tracks: [Int: TrackInfo] = [:]
+    private var statusWatch: [Int: AnyCancellable] = [:]
 
     init() {
         ndiEnabled = UserDefaults.standard.bool(forKey: "understudy.ndiEnabled")
@@ -79,18 +84,26 @@ final class VideoViewer: ObservableObject {
                     player.isMuted = true
                     player.replaceCurrentItem(with: item)
                     players[entry.deckID] = player
-                    attachOutput(to: item, deck: entry.deckID)
+                    playProblems[entry.deckID] = nil
+                    watchStatus(of: item, deck: entry.deckID, file: url.lastPathComponent)
                     applyGrade(deck: entry.deckID)
                     let deck = entry.deckID
+                    // The output goes on once the track is known (size, pixel aspect, fields); the
+                    // feed keeps sending its last frame meanwhile.
                     Task { @MainActor [weak self] in
-                        let rate = try? await AVURLAsset(url: url).loadTracks(withMediaType: .video).first?.load(.nominalFrameRate)
-                        let fps = Double(rate ?? 30)
-                        self?.fps[deck] = fps
-                        self?.pump.setFPS(fps, for: deck)   // NDI says 29.97 as 30000/1001
+                        let info = await TrackInfo.load(AVURLAsset(url: url))
+                        guard let self, self.players[deck]?.currentItem === item else { return }
+                        self.tracks[deck] = info
+                        self.fps[deck] = info.fps
+                        self.pump.setFPS(info.fps, for: deck)   // NDI says 29.97 as 30000/1001
+                        self.pump.setFormat(.init(aspect: info.displayAspect, interlaced: info.interlaced), for: deck)
+                        self.attachOutput(to: item, deck: deck)
                     }
                 } else {
                     players[entry.deckID]?.replaceCurrentItem(with: nil)
                     pump.setOutput(nil, for: entry.deckID)
+                    statusWatch[entry.deckID] = nil
+                    playProblems[entry.deckID] = nil
                 }
             }
         }
@@ -98,6 +111,8 @@ final class VideoViewer: ObservableObject {
             players[gone.deckID]?.pause()
             players[gone.deckID] = nil
             pump.setOutput(nil, for: gone.deckID)
+            statusWatch[gone.deckID] = nil
+            playProblems[gone.deckID] = nil
         }
         if entries != slots { slots = entries }
         if let s = solo, !slots.contains(where: { $0.deckID == s }) { solo = nil }
@@ -108,17 +123,40 @@ final class VideoViewer: ObservableObject {
     func attachDisplay(_ layer: AVSampleBufferDisplayLayer, deck: Int) { pump.addDisplay(layer, for: deck) }
     func detachDisplay(_ layer: AVSampleBufferDisplayLayer) { pump.removeDisplay(layer) }
 
+    /// The output NDI and the viewer read: BGRA, converted to Rec.709 (HDR and wide-gamut files
+    /// without a Playback LUT are tone-mapped/converted here; with one, the LUT already made
+    /// Rec.709). Light mode only scales down, to 1080 lines, keeping the aspect; smaller files
+    /// go at their own size.
     private func attachOutput(to item: AVPlayerItem, deck: Int) {
-        var attrs: [String: any Sendable] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-                                             kCVPixelBufferIOSurfacePropertiesKey as String: [String: String]()]
-        if !ndiFullSize {
-            attrs[kCVPixelBufferWidthKey as String] = 1920
-            attrs[kCVPixelBufferHeightKey as String] = 1080
+        var settings: [String: any Sendable] = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferIOSurfacePropertiesKey as String: [String: String](),
+            AVVideoColorPropertiesKey: [AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                                        AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+                                        AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2],
+        ]
+        if !ndiFullSize, let info = tracks[deck], let (w, h) = info.lightSize {
+            settings[kCVPixelBufferWidthKey as String] = w
+            settings[kCVPixelBufferHeightKey as String] = h
         }
         item.outputs.forEach { item.remove($0) }
-        let output = AVPlayerItemVideoOutput(pixelBufferAttributes: attrs)
+        let output = AVPlayerItemVideoOutput(outputSettings: settings)
         item.add(output)
         pump.setOutput(output, for: deck)
+        redraw(deck)
+    }
+
+    /// A file that won't play says so (instead of "Loading…" for ever).
+    private func watchStatus(of item: AVPlayerItem, deck: Int, file: String) {
+        statusWatch[deck] = item.publisher(for: \.status).receive(on: DispatchQueue.main).sink { [weak self, weak item] status in
+            MainActor.assumeIsolated {
+                guard let self, let item, status == .failed, self.players[deck]?.currentItem === item else { return }
+                let reason = item.error?.localizedDescription ?? "unknown error"
+                self.playProblems[deck] = "Can't play \(file) (\(reason))"
+                self.pump.setOutput(nil, for: deck)
+                self.rebuildSenders()
+            }
+        }
     }
 
     // MARK: Input transforms
@@ -266,7 +304,7 @@ final class VideoViewer: ObservableObject {
         return slots.map { slot in
             let name = slot.name.trimmingCharacters(in: .whitespaces)
             return Feed(deckID: slot.deckID, source: "Understudy " + (name.isEmpty ? "Deck \(slot.deckID + 1)" : name),
-                        note: slot.url == nil ? slot.status : nil)
+                        note: slot.url == nil ? slot.status : playProblems[slot.deckID])
         }
     }
 
@@ -281,7 +319,10 @@ final class VideoViewer: ObservableObject {
             if !failed.isEmpty {
                 ndiStatus = "NDI couldn't start " + failed.map(\.source).joined(separator: ", ")
             } else {
-                ndiStatus = "Sending " + feeds.map { $0.source + ($0.note == nil ? "" : " (test pattern)") }.joined(separator: ", ")
+                ndiStatus = "Sending " + feeds.map { feed in
+                    if let problem = playProblems[feed.deckID] { return feed.source + " (" + problem + ")" }
+                    return feed.source + (feed.note == nil ? "" : " (test pattern)")
+                }.joined(separator: ", ")
             }
         }
     }
@@ -298,6 +339,39 @@ final class VideoViewer: ObservableObject {
         }
         pump.setSenders(senders, fps: fps, cards: notes)
         refreshNDIStatus()
+    }
+}
+
+/// What the output needs to know about a file's video track.
+struct TrackInfo: Sendable {
+    var width = 1920, height = 1080
+    /// Width / height as shown (pixel aspect and clean aperture included).
+    var displayAspect: Float?
+    var interlaced = false
+    var fps = 30.0
+
+    /// Light mode: scaled down to 1080 lines keeping the pixel aspect, or nil (own size).
+    var lightSize: (Int, Int)? {
+        guard height > 1080 else { return nil }
+        let w = (Double(width) * 1080 / Double(height) / 2).rounded() * 2
+        return (Int(w), 1080)
+    }
+
+    static func load(_ asset: AVURLAsset) async -> TrackInfo {
+        var info = TrackInfo()
+        guard let track = try? await asset.loadTracks(withMediaType: .video).first else { return info }
+        if let rate = try? await track.load(.nominalFrameRate), rate > 0 { info.fps = Double(rate) }
+        if let desc = try? await track.load(.formatDescriptions).first {
+            let dims = CMVideoFormatDescriptionGetDimensions(desc)
+            info.width = Int(dims.width)
+            info.height = Int(dims.height)
+            let shown = CMVideoFormatDescriptionGetPresentationDimensions(desc, usePixelAspectRatio: true, useCleanAperture: true)
+            if shown.height > 0 { info.displayAspect = Float(shown.width / shown.height) }
+            if let fields = CMFormatDescriptionGetExtension(desc, extensionKey: kCMFormatDescriptionExtension_FieldCount) as? NSNumber {
+                info.interlaced = fields.intValue == 2
+            }
+        }
+        return info
     }
 }
 

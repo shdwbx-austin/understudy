@@ -100,7 +100,10 @@ struct VideoPane: View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack {
                 Rectangle().fill(Theme.fill)
-                if slot.url != nil {
+                if let problem = viewer.playProblems[slot.deckID] {
+                    Text(problem).font(Theme.grotesk(13, .light)).foregroundStyle(Theme.amber)
+                        .multilineTextAlignment(.center).padding()
+                } else if slot.url != nil {
                     FrameLayerView(viewer: viewer, deckID: slot.deckID)
                 } else {
                     Text(slot.status).font(Theme.grotesk(13, .light)).foregroundStyle(Theme.grey)
