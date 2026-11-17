@@ -288,6 +288,7 @@ Runs on macOS 13+. Building needs Swift 6 (Xcode 16 or its Command Line Tools).
 ```sh
 ./scripts/test.sh          # core logic tests (Swift Testing; works without Xcode)
 ./scripts/recorder-harness.sh  # records from NDI loopbacks (BGRA, UYVY, SD interlaced), generated and 10-bit frames; checks frames, timecode, colour and field tags, decoded colours (temp store)
+./scripts/waveform-harness.sh  # renders a generated song's waveform at whole-song, 8× and 32× zoom to PNGs; checks an older cached analysis is upgraded in place; times drawing a 2-hour show (temp store)
 swift run Understudy         # run unbundled while developing
 ./scripts/build-app.sh     # dist/Understudy.app + zip (ad-hoc signed)
 ```

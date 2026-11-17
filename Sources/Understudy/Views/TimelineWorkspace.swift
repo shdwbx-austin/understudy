@@ -414,18 +414,14 @@ struct SongDetailTrack: View {
                             .allowsHitTesting(false)
                     }
                     // Waveform: only the part on screen, so zooming in stays light.
-                    if let path = item.song.audioPath, let peaks = timeline.waveforms[path], !peaks.isEmpty,
+                    if let path = item.song.audioPath, let peaks = timeline.waveform(for: path),
                        let audio = item.song.audioDuration, audio > 0 {
                         let audioStart = item.timelineStart + max(-gap, item.song.audioOffset ?? 0)
                         let a0 = max(0, start - audioStart), a1 = min(audio, end - audioStart)
                         if a1 > a0 {
-                            let n = Double(peaks.count)
-                            let lo = max(0, min(peaks.count - 1, Int((a0 / audio * n).rounded(.down))))
-                            let hi = max(lo + 1, min(peaks.count, Int((a1 / audio * n).rounded(.up))))
-                            let t0 = Double(lo) / n * audio, t1 = Double(hi) / n * audio
-                            WaveformView(peaks: Array(peaks[lo..<hi]), color: Theme.paper.opacity(0.32)).equatable()
-                                .frame(width: max(1, (t1 - t0) * scale), height: (height - 22) * 0.62)
-                                .offset(x: x(audioStart + t0), y: 22 + (height - 22) * 0.3)
+                            WaveformView(peaks: peaks, from: a0, to: a1, color: Theme.paper.opacity(0.32)).equatable()
+                                .frame(width: max(1, (a1 - a0) * scale), height: (height - 22) * 0.62)
+                                .offset(x: x(audioStart + a0), y: 22 + (height - 22) * 0.3)
                         }
                     }
                     // Song outline (its ends run off screen when zoomed in).
@@ -947,33 +943,6 @@ struct HorizontalScrollReader: NSViewRepresentable {
 
         /// Never takes clicks; the monitor is removed when the view leaves its window.
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    }
-}
-
-// MARK: - Waveform
-
-/// A song's waveform, mirrored about the centre line, one bar per point of width.
-struct WaveformView: View, Equatable {
-    let peaks: [Float]
-    var color: Color = Theme.paper.opacity(0.35)
-
-    var body: some View {
-        Canvas { context, size in
-            guard !peaks.isEmpty, size.width > 0 else { return }
-            let mid = size.height / 2
-            let columns = max(1, Int(size.width))
-            var path = Path()
-            for x in 0..<columns {
-                let lo = x * peaks.count / columns
-                let hi = max(lo + 1, (x + 1) * peaks.count / columns)
-                var peak: Float = 0
-                for i in lo..<min(hi, peaks.count) { peak = max(peak, peaks[i]) }
-                let h = max(0.5, CGFloat(peak) * mid)
-                path.addRect(CGRect(x: CGFloat(x), y: mid - h, width: 1, height: h * 2))
-            }
-            context.fill(path, with: .color(color))
-        }
-        .allowsHitTesting(false)
     }
 }
 

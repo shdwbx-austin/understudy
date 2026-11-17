@@ -156,9 +156,9 @@ struct TimelineTrack: View {
                     // Song.
                     ZStack(alignment: .topLeading) {
                         Rectangle().fill(current ? Theme.paper.opacity(0.14) : Theme.ink)
-                        if let path = item.song.audioPath, let peaks = timeline.waveforms[path], let audio = item.song.audioDuration {
+                        if let path = item.song.audioPath, let peaks = timeline.waveform(for: path), let audio = item.song.audioDuration {
                             let offset = item.song.audioOffset ?? 0
-                            WaveformView(peaks: peaks, color: Theme.paper.opacity(current ? 0.35 : 0.22)).equatable()
+                            WaveformView(peaks: peaks, from: 0, to: audio, color: Theme.paper.opacity(current ? 0.35 : 0.22)).equatable()
                                 .frame(width: max(1, audio * scale), height: (geo.size.height - 28) * 0.42)
                                 .offset(x: offset * scale, y: (geo.size.height - 28) * 0.56)
                                 .frame(width: w, alignment: .leading)
