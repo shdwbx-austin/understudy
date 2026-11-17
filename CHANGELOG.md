@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.13.1 — 2026-11-17
 
 - **Fixed: LTC out also sounded on channel 1.** With LTC on channel 3 of a 4-channel device (or Dante out's channel 3), the timecode also came out on channel 1, on top of the songs. Understudy now drives the device's full channel width, so each output lands only where it's routed; measured on a 4-channel Loopback device with songs on 1–2 or 3–4 and LTC on 1, 3 or 4.
 
