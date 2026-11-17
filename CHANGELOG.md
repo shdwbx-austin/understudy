@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.0 — 2026-11-16
 
 - **NDI shows up as soon as it's on.** Each deck in the viewer is an NDI source (*Understudy ME 1*…) whether or not its take has video, and with no decks at all there's one, *Understudy*. A feed with no video sends colour bars with its name, why there's no picture and a running clock; a paused or parked video keeps sending its frame, so a receiver that connects late still gets a picture. Understudy now also declares NDI's network service to macOS, so local network privacy doesn't hide the sources.
 - **Song audio to more than one output.** Settings › Audio › *Add another output for song audio* plays the songs to more devices (and channel pairs) at the same time, e.g. the PA feed and your headphones, with or without Dante out. An unplugged extra output is skipped and the others keep playing.
