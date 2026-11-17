@@ -121,6 +121,8 @@ final class TimelineModel: ObservableObject {
     @Published var selectedMarkerIDs: Set<UUID> = []
     /// The marker type editor is open (from the marker bar, a chip, or Markers › Edit Marker Types…).
     @Published var editingMarkerTypes = false
+    /// The marker export sheet is open (Send / Export › Export Markers…, Markers › Export Markers…).
+    @Published var exportingMarkers = false
     /// The project's marker types: names, colours, order (keys 1–9).
     @Published var markerTypes: MarkerTypes = .defaults {
         didSet { if markerTypes != oldValue { save() } }

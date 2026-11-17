@@ -417,9 +417,9 @@ private struct ShowControlSettings: View {
             TextField("Console IP", text: $model.settings.ma3Host, prompt: Text("e.g. 192.168.1.50"))
             TextField("OSC port", value: $model.settings.ma3Port, format: .number.grouping(.never))
             TextField("OSC prefix", text: $model.settings.ma3Prefix, prompt: Text("none"))
-            Stepper("Markers sequence \(String(model.settings.ma3Sequence))", value: $model.settings.ma3Sequence, in: 1...9999)
-            Stepper("Markers timecode show \(String(model.settings.ma3Timecode))", value: $model.settings.ma3Timecode, in: 1...9999)
-            Text("On the console: Menu › In & Out › OSC, add a line with Destination IP of this Mac, the port and prefix above, Mode UDP, and turn on Enable Input, Receive and Receive Command. Send to grandMA3 replaces the sequence and timecode show numbered here.")
+            Stepper("First markers sequence \(String(model.settings.ma3Sequence))", value: $model.settings.ma3Sequence, in: 1...9999)
+            Stepper("First markers timecode show \(String(model.settings.ma3Timecode))", value: $model.settings.ma3Timecode, in: 1...9999)
+            Text("On the console: Menu › In & Out › OSC, add a line with Destination IP of this Mac, the port and prefix above, Mode UDP, and turn on Enable Input, Receive and Receive Command. Pages, executors and how sequences are split are in Markers › Export Markers… (⇧⌘E). Sending only adds: what Understudy didn't make is left alone.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         Section("Show control: disguise") {
@@ -434,11 +434,8 @@ private struct ShowControlSettings: View {
                 .onTapGesture { fetchTracks() }
                 Button("Fetch") { fetchTracks() }.disabled(model.settings.d3Host.isEmpty)
             }
-            Picker("Write markers as", selection: $model.settings.d3Style) {
-                ForEach(D3Push.Style.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
             TextField("Track start (if it has no TC tags)", text: $model.settings.d3TrackStart)
-            Text("Markers are placed on the track through its TC tags when it has them (so each song's markers land on that song), otherwise from the track start above. Designer needs its API reachable on port 80.")
+            Text("Track and start are for sending every marker to one track. By default each song's markers go on the track with its name; that, and notes or sections per marker type, are in Markers › Export Markers… (⇧⌘E). Markers are placed through each track's TC tags when it has them. Designer needs its API reachable on port 80.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

@@ -231,6 +231,8 @@ private struct MarkerCommands: View {
     var body: some View {
         Button("Edit Marker Types…") { timeline.editingMarkerTypes = true }
             .keyboardShortcut("m", modifiers: [.command, .option])
+        Button("Export Markers…") { timeline.exportingMarkers = true }
+            .keyboardShortcut("e", modifiers: [.command, .shift])
         Divider()
         Toggle("Name New Markers", isOn: $timeline.nameNewMarkers)
         Button("Name Selected Marker   ↩") { timeline.nameSelectedMarker() }

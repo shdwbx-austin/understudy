@@ -166,7 +166,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var ma3Port = 8000
     /// The OSC prefix set on the MA3's OSC line ("gma3" → /gma3/cmd); empty = none.
     public var ma3Prefix = "gma3"
-    /// Sequence and timecode show the deploy replaces.
+    /// First sequence pool number and timecode show for marker exports.
     public var ma3Sequence = 1001
     public var ma3Timecode = 101
     /// disguise director (or the machine running Designer) for pushing markers to a track.
@@ -176,6 +176,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var d3Style: D3Push.Style = .notes
     /// For tracks without TC tags: the show timecode at the track's start.
     public var d3TrackStart = "00:00:00:00"
+    /// Marker export: types, songs, pages, executors, timecode shows, disguise placements.
+    public var markerExport = MarkerExportSetup()
     /// Stop the Mac sleeping while Understudy is open (a dedicated show machine).
     public var keepAwake = true
     /// After a restart or crash, go back to the mode Understudy was in (Record or Play) instead of Stop.
@@ -242,6 +244,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         d3Track = (try? c.decodeIfPresent(String.self, forKey: .d3Track)) ?? d.d3Track
         d3Style = (try? c.decodeIfPresent(D3Push.Style.self, forKey: .d3Style)) ?? d.d3Style
         d3TrackStart = (try? c.decodeIfPresent(String.self, forKey: .d3TrackStart)) ?? d.d3TrackStart
+        markerExport = (try? c.decodeIfPresent(MarkerExportSetup.self, forKey: .markerExport)) ?? d.markerExport
         keepAwake = (try? c.decodeIfPresent(Bool.self, forKey: .keepAwake)) ?? d.keepAwake
         resumeLastMode = (try? c.decodeIfPresent(Bool.self, forKey: .resumeLastMode)) ?? d.resumeLastMode
         normalizeDecks()

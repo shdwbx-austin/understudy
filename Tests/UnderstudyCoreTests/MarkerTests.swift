@@ -34,7 +34,8 @@ struct MarkerTests {
         #expect(m.displayName(in: t) == "Camera Move")
         #expect(MarkerExport.csv([m], rate: rate, types: t).contains("01:00:24:16,Camera Move,,"))
         #expect(MA3Deploy.cueName(m, rate: rate, types: t) == "01:00:24:16 Camera Move")
-        #expect(D3Push.script([m], rate: rate, trackName: nil, style: .notes, trackStartSeconds: 0, types: t).contains("'Camera Move'"))
+        let rows = D3Row.rows([m], songs: [], rate: rate, types: t, settings: D3ExportSettings(), singleTrack: nil, singleStart: 0).rows
+        #expect(D3Push.script(rows, rate: rate).contains("'Camera Move'"))
         #expect(RemoteControl.command(for: OSCMessage("/understudy/marker/1"), types: t) == .addMarker(cam, label: ""))
         #expect(RemoteControl.command(for: OSCMessage("/understudy/marker", [.string("Camera Move"), .string("Push in")]), types: t)
                 == .addMarker(cam, label: "Push in"))
@@ -77,53 +78,7 @@ struct MarkerTests {
         #expect(lines[2] == "01:00:47:16,Lighting,\"Chorus, big\",All's Well That Ends,3647.533")
     }
 
-    @Test func ma3StepsBuildSequenceAndTimecode() {
-        let ms = [Marker(frame: frame("01:00:47:16"), kind: .lighting, label: "Drop \"big\""),
-                  Marker(frame: frame("01:00:24:16"), kind: .choreo)]
-        let steps = MA3Deploy.steps(ms, rate: rate, sequence: 201, timecode: 3, name: "RKS markers").map(\.command)
-        #expect(steps.contains("Store Sequence 201 Cue 1 /NoConfirmation"))
-        #expect(steps.contains("Label Sequence 201 Cue 1 \"01:00:24:16 Choreo\""))
-        #expect(steps.contains("Label Sequence 201 Cue 2 \"01:00:47:16 Lighting – Drop 'big'\""))
-        #expect(steps.contains("Store Timecode 3 /NoConfirmation"))
-        // Every Lua line is a single double-quoted command with no inner double quotes.
-        for s in steps where s.hasPrefix("Lua ") {
-            #expect(s.hasPrefix("Lua \"") && s.hasSuffix("\""))
-            #expect(s.dropFirst(5).dropLast().contains("\"") == false)
-        }
-        let events = steps.last!
-        // 01:00:24:16 = 3624.5333 s → raw = s × 2^24.
-        #expect(events.contains("ev(\(MA3Deploy.rawTime(3624 + 16.0 / 30)),1)"))
-        #expect(events.contains("ev(\(MA3Deploy.rawTime(3647 + 16.0 / 30)),2)"))
-        #expect(events.contains("e:Set('Token','Goto')"))
-        // Large sets go in batches.
-        let many = (0..<60).map { Marker(frame: 108_000 + $0 * 30, kind: .notes) }
-        #expect(MA3Deploy.steps(many, rate: rate, sequence: 1, timecode: 1, name: "x", batch: 25).filter { $0.command.contains("ev(") }.count == 3)
-        #expect(MA3Deploy.rawTime(1) == 16_777_216)
-    }
-
-    @Test func ma3PluginIsSelfContained() {
-        let lua = MA3Deploy.pluginLua([Marker(frame: frame("01:00:24:16"), kind: .choreo, label: "It's on")], rate: rate,
-                                      sequence: 201, timecode: 3, name: "RKS")
-        #expect(lua.contains("{raw=\(MA3Deploy.rawTime(3624 + 16.0 / 30)), name='01:00:24:16 Choreo – It\\'s on'}"))
-        #expect(lua.contains("return function()"))
-        let xml = MA3Deploy.pluginXML(name: "Understudy markers", luaFile: "understudy_markers.lua")
-        #expect(xml.contains("FileName=\"understudy_markers.lua\""))
-    }
-
-    @Test func d3ScriptPlacesThroughTCTags() {
-        let script = D3Push.script([Marker(frame: frame("01:00:24:16"), kind: .choreo, label: "Verse 'two'")], rate: rate,
-                                   trackName: "All's Well", style: .cueTags, trackStartSeconds: 3600)
-        #expect(script.contains("markers = [(3624.533333, 'Choreo', 'Verse \\'two\\'')]"))
-        #expect(script.contains("wanted = 'All\\'s Well'"))
-        #expect(script.contains("track.setNoteAtBeat(beat, text)"))
-        #expect(script.contains("track.setTagAtBeat(beat, Tag(TagType.CUE, str(number)))"))
-        #expect(script.contains("t = sec - 3600.000000"))
-        #expect(script.contains("return {'track': str(track.name)"))
-        let notes = D3Push.script([], rate: rate, trackName: nil, style: .notes, trackStartSeconds: 0)
-        #expect(notes.contains("wanted = None") && !notes.contains("setTagAtBeat") && !notes.contains("splitSectionAtBeat"))
-        let body = try! JSONSerialization.jsonObject(with: D3Push.body(script: "return 1")) as! [String: String]
-        #expect(body == ["script": "return 1"])
-    }
+    // grandMA3 and disguise exports: MarkerExportTests.
 }
 
 @Suite("OSC")
