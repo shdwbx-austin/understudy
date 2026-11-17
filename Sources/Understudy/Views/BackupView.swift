@@ -69,6 +69,11 @@ struct BackupView: View {
                 }
             }
             .padding(.vertical, 12)
+            if !backup.jobs.isEmpty, backup.route != .automatic {
+                Text("Copying through \(backup.route.summary)")
+                    .font(Theme.mono(10)).foregroundStyle(backup.route.isProblem ? Theme.amber : Theme.grey)
+                    .padding(.bottom, 8)
+            }
 
             ScrollView {
                 VStack(spacing: 0) {

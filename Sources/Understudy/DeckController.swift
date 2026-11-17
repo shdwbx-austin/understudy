@@ -24,6 +24,10 @@ final class DeckController: ObservableObject, Identifiable {
     var owesStop = false
     /// Has connected at least once to the current address, so a drop now is a fault.
     @Published private(set) var everConnected = false
+    /// Where this deck's control connection goes: the deck port, or the system's routing.
+    @Published private(set) var route: PortRoute = .automatic
+    /// The deck port (BSD name) chosen in Settings; nil = automatic.
+    private(set) var interface: String?
 
     /// Was connected to this address and isn't any more.
     var isLost: Bool { everConnected && !isConnected }
@@ -92,7 +96,8 @@ final class DeckController: ObservableObject, Identifiable {
 
     // MARK: Connection
 
-    func connect(host: String) {
+    func connect(host: String, interface: String? = nil) {
+        self.interface = interface
         detachRecorder()
         client?.disconnect()
         client = nil
@@ -109,7 +114,11 @@ final class DeckController: ObservableObject, Identifiable {
             connection = .disconnected
             return
         }
-        let client = HyperDeckClient(host: trimmed)
+        let client = HyperDeckClient(host: trimmed, interface: interface)
+        client.onRoute = { [weak self, weak client] route in
+            guard let self, let client, self.client === client else { return }
+            if self.route != route { self.route = route }
+        }
         // Ignore anything still arriving from a previous client (e.g. its `.disconnected`
         // landing after the new one has connected).
         client.onState = { [weak self, weak client] state in
@@ -122,6 +131,19 @@ final class DeckController: ObservableObject, Identifiable {
         }
         self.client = client
         client.connect()
+    }
+
+    /// The deck port changed in Settings. A deck that isn't recording reconnects through the new
+    /// port now; a recording deck keeps its connection and uses the new port when it next reconnects.
+    func setInterface(_ bsd: String?, host: String) {
+        guard bsd != interface, !isRecorder else { return }
+        interface = bsd
+        if client == nil { return }
+        if transport.status == .record {
+            client?.setInterface(bsd)
+        } else {
+            connect(host: host, interface: bsd)
+        }
     }
 
     /// Deliberate disconnect (slot switched off or emptied): not a fault.

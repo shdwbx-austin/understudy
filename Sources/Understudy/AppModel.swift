@@ -100,6 +100,8 @@ final class AppModel: ObservableObject {
     @Published var linkMessage: String?
     @Published private(set) var linkBusy = false
     let osc = OSCServer()
+    /// This Mac's network ports, refreshed every few seconds (for Settings' port warnings).
+    @Published private(set) var portStates: [NetworkPortState] = []
     let projects = ProjectManager()
     /// Recordings played in Understudy, locked to the timeline, and sent out over NDI.
     let viewer = VideoViewer()
@@ -172,6 +174,7 @@ final class AppModel: ObservableObject {
     private var rateDetector = LTCRateDetector()
     private let audio = AudioLTCInput()
     private var loop: Task<Void, Never>?
+    private var portWatch: Task<Void, Never>?
     private var lastPoll = 0.0
     private var lastInfoUpdate = 0.0
     private var takeRefreshScheduled = false
@@ -217,6 +220,12 @@ final class AppModel: ObservableObject {
         osc.onState = { [weak self] in self?.refreshOSCStatus() }
         applyOSC()
         applyAES67()
+        portWatch = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                self?.watchNetworkPorts()
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+            }
+        }
         // Back into Record or Play after a restart, if asked. Decks are brought into the mode as
         // they connect (deckReady); a deck that kept recording through the restart is left alone.
         if loaded.resumeLastMode,
@@ -479,7 +488,7 @@ final class AppModel: ObservableObject {
         if config.enabled, config.isRecorder {
             decks[id].attachRecorder(config.recorder, dropFrame: ltcRate.isDropFrame)
         } else if config.enabled {
-            decks[id].connect(host: config.host)
+            decks[id].connect(host: config.host, interface: settings.discoveryInterface)
         } else {
             decks[id].disconnect()
         }
@@ -553,7 +562,7 @@ final class AppModel: ObservableObject {
                 fileName: clip.name
             )
         }
-        backup.start(items, into: URL(fileURLWithPath: folder, isDirectory: true))
+        backup.start(items, into: URL(fileURLWithPath: folder, isDirectory: true), interface: settings.discoveryInterface)
     }
 
     func chooseBackupFolder() {
@@ -873,7 +882,9 @@ final class AppModel: ObservableObject {
         if settings.chase != old.chase || settings.deckTimecodeAtVideoRate != old.deckTimecodeAtVideoRate {
             decks.forEach { $0.resetChase() }
         }
-        if settings.oscEnabled != old.oscEnabled || settings.oscPort != old.oscPort { applyOSC() }
+        if settings.oscEnabled != old.oscEnabled || settings.oscPort != old.oscPort
+            || settings.interfaces.oscIn != old.interfaces.oscIn { applyOSC() }
+        if settings.discoveryInterface != old.discoveryInterface { applyDeckInterface() }
         if settings.aes67Enabled != old.aes67Enabled || settings.aes67Interface != old.aes67Interface
             || settings.aes67Multicast != old.aes67Multicast || settings.aes67Name != old.aes67Name { applyAES67() }
         if settings.decks != old.decks || settings.recordNaming != old.recordNaming || targets(of: settings) != targets(of: old)
@@ -1197,13 +1208,33 @@ final class Readout: ObservableObject {
 
 extension AppModel {
     func applyOSC() {
-        if settings.oscEnabled { osc.listen(on: settings.oscPort) } else { osc.stop() }
+        if settings.oscEnabled { osc.listen(on: settings.oscPort, interface: settings.interfaces.oscIn) } else { osc.stop() }
         refreshOSCStatus()
     }
 
     func refreshOSCStatus() {
-        let status = !settings.oscEnabled ? "Off" : (osc.problem ?? "Listening on UDP \(settings.oscPort)")
+        let on = osc.route == .automatic ? "all network ports" : osc.route.summary
+        let status = !settings.oscEnabled ? "Off" : (osc.problem ?? "Listening on UDP \(settings.oscPort) · \(on)")
         if status != oscStatus { oscStatus = status }
+    }
+
+    /// The deck port changed: decks reconnect through it (a recording deck when it next reconnects),
+    /// and Bonjour browsing moves to it.
+    func applyDeckInterface() {
+        for (id, config) in settings.decks.enumerated() where id < decks.count && config.enabled {
+            guard let host = config.networkHost else { continue }
+            decks[id].setInterface(settings.discoveryInterface, host: host)
+        }
+        discovery.restartBrowsingIfNeeded()
+    }
+
+    /// Ports coming and going (a cable pulled, an adaptor plugged in, DHCP): Settings' warnings
+    /// follow, and the OSC listener moves onto or off its chosen port. Senders pick the route
+    /// up on their next connection.
+    func watchNetworkPorts() {
+        let states = NetworkPorts.states()
+        if states != portStates { portStates = states }
+        if settings.oscEnabled, PortRoute.resolve(settings.interfaces.oscIn, ports: states) != osc.route { applyOSC() }
     }
 
     /// A Stream Deck, MA3 or anything else asked for something.
@@ -1283,7 +1314,7 @@ extension AppModel {
     func deployMarkersToMA3(confirm: Bool = true) {
         let markers = markersToSend
         guard !markers.isEmpty else { linkMessage = "No markers to send."; return }
-        guard let sender = OSCSender(host: settings.ma3Host, port: settings.ma3Port) else {
+        guard let sender = OSCSender(host: settings.ma3Host, port: settings.ma3Port, interface: settings.interfaces.ma3) else {
             linkMessage = "Set the grandMA3's IP in Settings › Show control."
             return
         }
@@ -1299,16 +1330,17 @@ extension AppModel {
                                     name: markerSetName, types: timeline.markerTypes)
         let address = settings.ma3Prefix.isEmpty ? "/cmd" : "/\(settings.ma3Prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/cmd"
         let (seq, tc) = (settings.ma3Sequence, settings.ma3Timecode)
+        let via = " (via \(sender.route.summary))"
         linkBusy = true
-        linkMessage = "Sending to grandMA3…"
+        linkMessage = "Sending to grandMA3…" + via
         Task { @MainActor [weak self] in
             do {
                 for (i, step) in steps.enumerated() {
                     try await sender.send(OSCMessage(address, [.string(step.command)]))
                     if step.pause > 0 { try await Task.sleep(nanoseconds: UInt64(step.pause * 1e9)) }
-                    if i % 10 == 0 { self?.linkMessage = "Sending to grandMA3… \(i + 1)/\(steps.count)" }
+                    if i % 10 == 0 { self?.linkMessage = "Sending to grandMA3… \(i + 1)/\(steps.count)" + via }
                 }
-                self?.linkMessage = "Sent \(markers.count) markers to grandMA3: Sequence \(seq) and Timecode \(tc). (OSC can't confirm; check the console.)"
+                self?.linkMessage = "Sent \(markers.count) markers to grandMA3: Sequence \(seq) and Timecode \(tc)\(via). (OSC can't confirm; check the console.)"
             } catch {
                 self?.linkMessage = "grandMA3: \(error.localizedDescription)"
             }
@@ -1328,11 +1360,13 @@ extension AppModel {
         let script = D3Push.script(markers, rate: ltcRate, trackName: settings.d3Track.isEmpty ? nil : settings.d3Track,
                                    style: settings.d3Style, trackStartSeconds: start, types: timeline.markerTypes)
         let host = settings.d3Host
+        let interface = settings.interfaces.d3
+        let via = " (via \(NetworkPorts.route(interface).summary))"
         linkBusy = true
-        linkMessage = "Sending to disguise…"
+        linkMessage = "Sending to disguise…" + via
         Task { @MainActor [weak self] in
             do {
-                let result = try await D3Client.execute(host: host, script: script)
+                let result = try await D3Client.execute(host: host, script: script, interface: interface)
                 if let code = result.status?.code, code != 0 {
                     self?.linkMessage = "disguise: \(result.status?.message ?? "error \(code)")"
                 } else if let inner = D3Client.resultDictionary(result.returnValue) {
@@ -1341,12 +1375,12 @@ extension AppModel {
                     let track = inner["track"] as? String ?? "?"
                     let tags = inner["tcTags"] as? Int ?? 0
                     self?.linkMessage = "disguise: \(placed) markers on “\(track)”" + (tags > 0 ? " (placed by its \(tags) TC tag\(tags == 1 ? "" : "s"))" : "")
-                        + (skipped.isEmpty ? "." : "; \(skipped.count) outside the track.")
+                        + (skipped.isEmpty ? "" : "; \(skipped.count) outside the track") + via + "."
                 } else {
                     self?.linkMessage = "disguise answered: \(result.returnValue ?? result.pythonLog ?? "no result")"
                 }
             } catch {
-                self?.linkMessage = "disguise: \(error.localizedDescription)"
+                self?.linkMessage = "disguise: \(error.localizedDescription)" + via
             }
             self?.linkBusy = false
         }

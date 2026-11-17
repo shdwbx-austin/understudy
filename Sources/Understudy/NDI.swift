@@ -1,7 +1,9 @@
 import CNDI
 import CoreVideo
 import Darwin
+import os
 import Foundation
+import UnderstudyCore
 
 /// NDI, loaded at run time: libndi.dylib bundled in the app (Contents/Frameworks), else an
 /// installed NDI runtime or SDK. `UNDERSTUDY_LIBNDI` points at another copy (testing).
@@ -36,6 +38,11 @@ final class NDILibrary: @unchecked Sendable {
 
     var isAvailable: Bool { sendCreate != nil && sendVideo != nil }
 
+    /// The network port NDI was started on (Settings › Network › NDI, read once at launch), and
+    /// where its traffic goes. NDI reads its adapter list only when the library starts.
+    let chosenInterface: String?
+    let route: PortRoute
+
     static var candidates: [String] {
         var list: [String] = []
         if let env = ProcessInfo.processInfo.environment["UNDERSTUDY_LIBNDI"], !env.isEmpty { list.append(env) }
@@ -46,6 +53,11 @@ final class NDILibrary: @unchecked Sendable {
     }
 
     private init() {
+        let chosen = AppSettings.load().interfaces.ndi
+        let route = Self.prepareAdapters(chosen)
+        chosenInterface = chosen
+        self.route = route
+        Self.started.withLock { $0 = Started(interface: chosen, route: route) }
         var handle: UnsafeMutableRawPointer?
         var found: String?
         for p in Self.candidates where FileManager.default.fileExists(atPath: p) {
@@ -68,6 +80,47 @@ final class NDILibrary: @unchecked Sendable {
         recvCapture = sym("NDIlib_recv_capture_v2", RecvCapture.self)
         recvFreeVideo = sym("NDIlib_recv_free_video_v2", RecvFreeVideo.self)
         recvDestroy = sym("NDIlib_recv_destroy", RecvDestroy.self)
+    }
+}
+
+extension NDILibrary {
+    struct Started: Sendable {
+        var interface: String?
+        var route: PortRoute
+    }
+
+    /// What NDI was started with, or nil while it hasn't been (so asking never starts it).
+    static var startedWith: Started? { started.withLock { $0 } }
+    private static let started = OSAllocatedUnfairLock<Started?>(initialState: nil)
+
+    /// Restricts NDI (senders, finder and receivers) to one port's addresses: Understudy's own copy
+    /// of the user's `ndi-config.v1.json` with `ndi.adapters.allowed` set, and `NDI_CONFIG_DIR`
+    /// pointing at it for this process only (Access Manager's settings and other NDI apps are
+    /// untouched). Must run before the library initialises. Does nothing unless a usable port is chosen.
+    static func prepareAdapters(_ chosen: String?) -> PortRoute {
+        let ports = NetworkPorts.states()
+        let route = PortRoute.resolve(chosen, ports: ports)
+        guard let bsd = route.interface, let port = ports.first(where: { $0.bsd == bsd }) else { return route }
+        let fm = FileManager.default
+        let ours = TimelineModel.storeDirectory.appendingPathComponent("ndi", isDirectory: true)
+        // The config NDI would otherwise read: NDI_CONFIG_DIR if the user set one, else ~/.ndi.
+        let userDir = ProcessInfo.processInfo.environment["NDI_CONFIG_DIR"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+            ?? fm.homeDirectoryForCurrentUser.appendingPathComponent(".ndi", isDirectory: true)
+        let existing = try? Data(contentsOf: userDir.appendingPathComponent(NDIAdapterConfig.fileName))
+        let config = NDIAdapterConfig.merged(existing, allowed: port.addresses.map(\.dottedAddress))
+        do {
+            try fm.createDirectory(at: ours, withIntermediateDirectories: true)
+            try config.write(to: ours.appendingPathComponent(NDIAdapterConfig.fileName), options: .atomic)
+            // NDI reads plugins from the same folder; keep the user's.
+            let plugins = "ndi-plugins.v1.json"
+            let theirs = userDir.appendingPathComponent(plugins), mine = ours.appendingPathComponent(plugins)
+            try? fm.removeItem(at: mine)
+            if fm.fileExists(atPath: theirs.path) { try? fm.copyItem(at: theirs, to: mine) }
+        } catch {
+            return .fallback(bsd: bsd, problem: .missing)
+        }
+        setenv("NDI_CONFIG_DIR", ours.path, 1)
+        return route
     }
 }
 

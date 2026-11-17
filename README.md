@@ -163,6 +163,26 @@ Only one copy runs at a time: a second launch hands over to the running one.
 
 On the Mac itself: System Settings › Energy › *Start up automatically after a power failure*, automatic login, and Screen Sharing so you can watch and drive it from your laptop. Put it on a small UPS, and give LTC its own USB audio interface (the Mac mini's headphone jack is output only).
 
+## Network ports (a Mac on several networks)
+
+A show Mac often has several ports: the show network, Dante, the internet, an NDI or video network. **Settings › Network** picks the port for each kind of traffic. *Automatic (system routing)*, the default, leaves it to macOS: traffic for a network goes out of the port on that network, the rest out of the top port in System Settings › Network.
+
+| Traffic | What uses the port |
+|---|---|
+| **Deck control** | HyperDeck control (TCP 9993), finding decks (Bonjour and the subnet scan) and FTP backups. The same choice as **Assign decks › On:**. |
+| **grandMA3** | OSC to the console (Send to grandMA3). |
+| **disguise** | HTTP to Designer (Push to disguise, the track list). |
+| **NDI** | NDI out (*Understudy ME n*) and NDI in for the Understudy recorder. |
+| **OSC in** | The OSC control port listens only on this port (Companion, a console). |
+
+Each picker lists the Mac's ports with their address and subnet (or *no link*). Under it, **Now** says where the traffic is going: `en8 · 10.0.0.5`, *system routing*, or why the chosen port isn't in use. A chosen port is used while it has a link and an IPv4 address; until then that traffic follows the system's routing rather than stopping, and **Now** says so in amber. Settings also warns when a deck, console or Designer address isn't on the chosen port's subnet (it's then reached only if that network has a router to it).
+
+How it's applied: connections are pinned to the port's interface (Network.framework's `requiredInterface`, the equivalent of `IP_BOUND_IF`), so they can't leave by another port; FTP copies run curl with `--interface`. A deck that isn't recording reconnects through a newly chosen port at once; a recording deck keeps its connection and moves when it next reconnects. The status lines say which port is in use: OSC in's status, the grandMA3 and disguise messages, the NDI line in View, and Backup.
+
+NDI chooses its network adapters only when it starts, from its config file. Understudy writes its own copy of your NDI config (from `~/.ndi/ndi-config.v1.json`, as NDI Access Manager saves it) with `adapters.allowed` set to the port's addresses, and points NDI at it for Understudy only, so other NDI apps and Access Manager's settings aren't changed. A new NDI port takes effect the next time Understudy opens; Settings says so until then. If the port's address changes (DHCP), reopen Understudy too.
+
+Dante out and AES67 out keep their own **Network port** pickers on the Audio out tab.
+
 ## Backing up takes
 
 **Backup** copies the selected take off every connected deck into a folder on the Mac, by FTP, which HyperDecks serve on port 21 with no login. Choose a folder inside Dropbox and Dropbox syncs the files.
@@ -287,6 +307,7 @@ Runs on macOS 13+. Building needs Swift 6 (Xcode 16 or its Command Line Tools).
 
 ```sh
 ./scripts/test.sh          # core logic tests (Swift Testing; works without Xcode)
+./scripts/network-harness.sh   # pins deck control, discovery, OSC in/out, disguise HTTP, curl and NDI to lo0 and en0 against stand-ins on 127.0.0.1 and 10.255.255.1; checks where the bytes go (temp store)
 ./scripts/recorder-harness.sh  # records from NDI loopbacks (BGRA, UYVY, SD interlaced), generated and 10-bit frames; checks frames, timecode, colour and field tags, decoded colours (temp store)
 swift run Understudy         # run unbundled while developing
 ./scripts/build-app.sh     # dist/Understudy.app + zip (ad-hoc signed)

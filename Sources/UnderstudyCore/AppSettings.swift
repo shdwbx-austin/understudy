@@ -105,8 +105,11 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var recordMode: RecordMode = .continuous
     /// Seconds the show clock keeps counting after LTC disappears.
     public var freewheelSeconds: Double = 2.0
-    /// Network interface (BSD name, e.g. "en7") that deck discovery looks on; nil = all.
+    /// Network port (BSD name, e.g. "en7") for deck control: discovery looks only there, and
+    /// HyperDeck control and FTP copies go out of it; nil = all ports / the system's routing.
     public var discoveryInterface: String?
+    /// Network port for each other kind of traffic (grandMA3, disguise, NDI, OSC in); nil = automatic.
+    public var interfaces = NetworkInterfaceSettings()
     /// Folder that take backups are copied into (e.g. inside Dropbox); nil until chosen.
     public var backupFolder: String?
     /// Confidence monitor: pictures of the decks from a capture device (e.g. a quad multiviewer).
@@ -195,6 +198,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         recordMode = (try? c.decodeIfPresent(RecordMode.self, forKey: .recordMode)) ?? d.recordMode
         freewheelSeconds = (try? c.decodeIfPresent(Double.self, forKey: .freewheelSeconds)) ?? d.freewheelSeconds
         discoveryInterface = (try? c.decodeIfPresent(String.self, forKey: .discoveryInterface)) ?? d.discoveryInterface
+        interfaces = (try? c.decodeIfPresent(NetworkInterfaceSettings.self, forKey: .interfaces)) ?? d.interfaces
         backupFolder = (try? c.decodeIfPresent(String.self, forKey: .backupFolder)) ?? d.backupFolder
         confidenceEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .confidenceEnabled)) ?? d.confidenceEnabled
         confidenceDeviceID = (try? c.decodeIfPresent(String.self, forKey: .confidenceDeviceID)) ?? d.confidenceDeviceID
