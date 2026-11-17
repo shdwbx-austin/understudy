@@ -252,22 +252,12 @@ struct TransportBar: View {
     var body: some View {
         HStack(spacing: 18) {
             TransportButton(symbol: "backward.end.fill", help: "Previous song (⌥←)") { timeline.previousSong() }
-                .keyboardShortcut(.leftArrow, modifiers: .option)
             TransportButton(symbol: "backward.frame.fill", help: "Back one frame (←); ⇧← one second") { timeline.step(frames: -1) }
-                .keyboardShortcut(.leftArrow, modifiers: [])
             TransportButton(symbol: timeline.isPlaying ? "pause.fill" : "play.fill", help: "Play / pause (space)", large: true) {
                 timeline.togglePlay()
             }
-            .keyboardShortcut(.space, modifiers: [])
             TransportButton(symbol: "forward.frame.fill", help: "Forward one frame (→); ⇧→ one second") { timeline.step(frames: 1) }
-                .keyboardShortcut(.rightArrow, modifiers: [])
             TransportButton(symbol: "forward.end.fill", help: "Next song (⌥→)") { timeline.nextSong() }
-                .keyboardShortcut(.rightArrow, modifiers: .option)
-            // One-second steps.
-            Button("") { timeline.step(frames: -Int(timeline.rate.exact.rounded())) }
-                .keyboardShortcut(.leftArrow, modifiers: .shift).opacity(0).frame(width: 0)
-            Button("") { timeline.step(frames: Int(timeline.rate.exact.rounded())) }
-                .keyboardShortcut(.rightArrow, modifiers: .shift).opacity(0).frame(width: 0)
 
             PlayheadTime(head: timeline.head, total: timeline.layout.totalDuration)
             DowntimeReadout(timeline: timeline, head: timeline.head)
@@ -284,6 +274,66 @@ struct TransportBar: View {
                 TextButton(title: "Import CSV…") { timeline.chooseCSV() }
             }
         }
+        .background(TransportKeys(timeline: timeline))
+    }
+}
+
+/// Space, ← →, ⇧← ⇧→ and ⌥← ⌥→ for the transport, read straight off the window's key events like
+/// the marker keys: SwiftUI shortcuts mixed up the plain and ⇧ arrows. Left alone while a text
+/// field is being typed in.
+struct TransportKeys: NSViewRepresentable {
+    let timeline: TimelineModel
+
+    enum Key: Equatable { case playPause, step(Int), second(Int), song(Int) }
+
+    static func key(keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Key? {
+        let mods = modifiers.intersection([.command, .control, .option, .shift])
+        switch keyCode {
+        case 49: return mods.isEmpty ? .playPause : nil
+        case 123, 124:
+            let dir = keyCode == 123 ? -1 : 1
+            if mods.isEmpty { return .step(dir) }
+            if mods == .shift { return .second(dir) }
+            if mods == .option { return .song(dir) }
+            return nil
+        default: return nil
+        }
+    }
+
+    func makeNSView(context: Context) -> Catcher {
+        let view = Catcher()
+        view.timeline = timeline
+        return view
+    }
+
+    func updateNSView(_ view: Catcher, context: Context) { view.timeline = timeline }
+
+    final class Catcher: NSView {
+        weak var timeline: TimelineModel?
+        private var monitor: Any?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, let window = self.window, event.window === window,
+                      !(window.firstResponder is NSText),
+                      let timeline = self.timeline,
+                      let key = TransportKeys.key(keyCode: event.keyCode, modifiers: event.modifierFlags)
+                else { return event }
+                switch key {
+                case .playPause: if !event.isARepeat { timeline.togglePlay() }
+                case .step(let d): timeline.step(frames: d)
+                case .second(let d): timeline.step(frames: d * Int(timeline.rate.exact.rounded()))
+                case .song(let d): if d < 0 { timeline.previousSong() } else { timeline.nextSong() }
+                }
+                return nil
+            }
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
 

@@ -1338,6 +1338,18 @@ final class TimelineModel: ObservableObject {
         save()
     }
 
+    /// Delete (⌫): the selected markers. False when nothing's selected (the key goes on its way).
+    @discardableResult
+    func deleteSelectedMarkers() -> Bool {
+        var ids = selectedMarkerIDs
+        if let id = selectedMarkerID { ids.insert(id) }
+        ids.formIntersection(markers.map(\.id))
+        guard !ids.isEmpty else { return false }
+        removeMarkers(ids)
+        message = ids.count == 1 ? "Deleted a marker (⌘Z brings it back)." : "Deleted \(ids.count) markers (⌘Z brings them back)."
+        return true
+    }
+
     func removeMarkers(_ ids: Set<UUID>) {
         checkpoint("Delete Markers")
         markers.removeAll { ids.contains($0.id) }

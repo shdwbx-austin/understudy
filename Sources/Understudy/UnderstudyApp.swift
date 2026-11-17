@@ -237,6 +237,8 @@ private struct MarkerCommands: View {
         Button("Cut Selected Markers   ⌘X") { timeline.cutMarkers() }
         Button("Paste Markers at Playhead   ⌘V") { timeline.pasteMarkers() }
         Button("Select This Song's Markers   ⌘A") { timeline.selectSongMarkers() }
+        Button("Delete Selected Markers   ⌫") { timeline.deleteSelectedMarkers() }
+            .disabled(timeline.selectedMarkerID == nil && timeline.selectedMarkerIDs.isEmpty)
         Divider()
         Toggle("Snap to Grid", isOn: $timeline.snap)
         Button("Quantize Selected Markers   Q") { timeline.quantizeSelection() }
