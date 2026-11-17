@@ -347,14 +347,13 @@ final class AppModel: ObservableObject {
             .appendingPathComponent(ProjectManager.folderName(deck), isDirectory: true)
     }
 
-    /// What the recorder stamps a take with: show code at host time `host` as timecode-of-day
-    /// seconds, or the time of day when there's no (trusted) show code, as a deck's own clock would.
-    func recorderStartSeconds(at host: Double) -> Double {
+    /// What the recorder stamps a take with: show code at host time `host`, or the time of day
+    /// when there's no (trusted) show code, as a deck's own clock would.
+    func recorderStartCode(at host: Double) -> RecorderStartCode {
         if rateKnown || showCodeFromTimeline, let frames = showPosition(at: host) {
-            return frames / ltcRate.exact
+            return RecorderStartCode(seconds: frames / ltcRate.exact, isClockTime: false)
         }
-        let now = Date()
-        return now.timeIntervalSince(Calendar.current.startOfDay(for: now))
+        return .clock(Date())
     }
 
     /// A deck (re)connected: bring it into the current mode. A deck that's already recording is
@@ -383,7 +382,7 @@ final class AppModel: ObservableObject {
         deck.buildsTakeMaps = settings.recordMode == .continuous
         let id = deck.id
         deck.recorderFolder = { [unowned self] in self.recorderFolder(for: id) }
-        deck.recorderStartSeconds = { [unowned self] host in self.recorderStartSeconds(at: host) }
+        deck.recorderStartCode = { [unowned self] host in self.recorderStartCode(at: host) }
         deck.recorderTimecodeAtVideoRate = { [unowned self] in self.settings.deckTimecodeAtVideoRate }
         deck.onRecordingFinished = { [weak self] in self?.scheduleTakeRefresh() }
         deck.onClipsRefreshed = { [weak self, weak deck] in

@@ -2,6 +2,7 @@ import CNDI
 import CoreVideo
 import Foundation
 import os
+import UnderstudyCore
 
 /// NDI sources on the network (for the recorder's source list). One finder for the app's life;
 /// listing waits briefly for sources to answer, off the main thread.
@@ -45,7 +46,9 @@ final class NDIFinder: @unchecked Sendable {
 
 /// Receives video from one NDI source on its own thread and hands each frame over as a
 /// CVPixelBuffer (UYVY as 2vuy, or BGRA when the source has alpha), stamped with the sender's
-/// timestamp and the host time it arrived.
+/// timestamp and the host time it arrived, and tagged with NDI's colour convention (BT.709 at
+/// 720 lines and up, BT.601 below; 2vuy is video range) and its scan (interleaved = woven fields,
+/// field 0 on the top line first).
 final class NDIReceiver: @unchecked Sendable {
     struct Frame: @unchecked Sendable {
         let buffer: CVPixelBuffer
@@ -53,9 +56,19 @@ final class NDIReceiver: @unchecked Sendable {
         let sourceTime: Double?
         /// HostClock seconds when it arrived.
         let arrived: Double
-        /// Declared frame rate.
-        let fps: Double
+        /// Declared frame rate (nil when the sender says 0 or nothing usable).
+        let fps: Double?
+        let scan: RecorderScan
+        /// Arrived as BGRA: with UYVY_BGRA, NDI only sends BGRA for a source with alpha.
+        let hasAlpha: Bool
+        /// NDI de-interlaced it (the source sends separate fields).
+        let deinterlaced: Bool
     }
+
+    /// NDIlib_frame_format_type_interleaved: both fields woven into one frame, top field first.
+    private static let formatInterleaved: Int32 = 0
+    private static let formatField0: Int32 = 2
+    private static let formatField1: Int32 = 3
 
     /// NDIlib_recv_color_format_UYVY_BGRA: UYVY normally, BGRA when the picture has alpha. Half the
     /// bytes of BGRA, and what the encoders want anyway.
@@ -87,22 +100,19 @@ final class NDIReceiver: @unchecked Sendable {
         self.sourceName = sourceName
     }
 
+    /// Fields are received as sent (`allow_video_fields`), so interlaced video stays interlaced: an
+    /// interleaved frame is both fields woven, top first. A sender sending separate fields gets a
+    /// reconnect with fields off, and NDI de-interlaces it (`deinterlacing`).
+    private var allowFields = true
+    /// NDI is de-interlacing this source (it sends separate fields).
+    private(set) var deinterlacing = false
+
     /// Nil on success, else what's wrong.
     func start() -> String? {
-        guard let create = lib.recvCreate, lib.recvCapture != nil, lib.recvFreeVideo != nil else {
+        guard lib.recvCreate != nil, lib.recvCapture != nil, lib.recvFreeVideo != nil else {
             return NDILibrary.shared.path == nil ? "NDI isn't installed on this Mac." : "This NDI library can't receive."
         }
-        instance = sourceName.withCString { cName in
-            "Understudy recorder".withCString { recvName in
-                var settings = cndi_recv_create_v3_t(
-                    source_to_connect_to: cndi_source_t(p_ndi_name: cName, p_url_address: nil),
-                    color_format: Self.colorUYVYorBGRA,
-                    bandwidth: Int32(CNDI_RECV_BANDWIDTH_HIGHEST),
-                    allow_video_fields: false,
-                    p_ndi_recv_name: recvName)
-                return create(&settings)
-            }
-        }
+        instance = makeReceiver()
         guard instance != nil else { return "Couldn't connect to \(sourceName)." }
         running.withLock { $0 = true }
         let thread = Thread { [self] in loop() }
@@ -111,6 +121,22 @@ final class NDIReceiver: @unchecked Sendable {
         self.thread = thread
         thread.start()
         return nil
+    }
+
+    private func makeReceiver() -> OpaquePointer? {
+        guard let create = lib.recvCreate else { return nil }
+        let fields = allowFields
+        return sourceName.withCString { cName in
+            "Understudy recorder".withCString { recvName in
+                var settings = cndi_recv_create_v3_t(
+                    source_to_connect_to: cndi_source_t(p_ndi_name: cName, p_url_address: nil),
+                    color_format: Self.colorUYVYorBGRA,
+                    bandwidth: Int32(CNDI_RECV_BANDWIDTH_HIGHEST),
+                    allow_video_fields: fields,
+                    p_ndi_recv_name: recvName)
+                return create(&settings)
+            }
+        }
     }
 
     func stop() {
@@ -123,15 +149,29 @@ final class NDIReceiver: @unchecked Sendable {
         var frame = cndi_video_frame_v2_t()
         while running.withLock({ $0 }) {
             let type = capture(instance, &frame, nil, nil, 200)
+            if type == Self.frameTypeVideo, frame.frame_format_type == Self.formatField0 || frame.frame_format_type == Self.formatField1 {
+                // Separate fields: NDI doesn't say how tall each field's buffer is, so rather than
+                // weave them on a guess, reconnect asking NDI for progressive frames.
+                free(instance, &frame)
+                lib.recvDestroy?(instance)
+                allowFields = false
+                deinterlacing = true
+                instance = makeReceiver()
+                if instance == nil { onError?("Couldn't reconnect to \(sourceName).") }
+                continue
+            }
             if type == Self.frameTypeVideo {
                 let arrived = HostClock.now()
                 let copied = copy(frame)
-                let fps = frame.frame_rate_D > 0 ? Double(frame.frame_rate_N) / Double(frame.frame_rate_D) : 0
+                let fps = Self.frameRate(n: frame.frame_rate_N, d: frame.frame_rate_D)
                 // NDI timestamps are 100 ns ticks; 0 or INT64_MAX means "not sent".
                 let ts = frame.timestamp
                 let sourceTime: Double? = (ts == 0 || ts == Int64.max) ? nil : Double(ts) / 10_000_000
                 free(instance, &frame)
-                if let copied { onFrame?(Frame(buffer: copied, sourceTime: sourceTime, arrived: arrived, fps: fps)) }
+                if let copied {
+                    onFrame?(Frame(buffer: copied.buffer, sourceTime: sourceTime, arrived: arrived, fps: fps,
+                                   scan: copied.scan, hasAlpha: frame.FourCC == Self.fourCCBGRA, deinterlaced: deinterlacing))
+                }
             } else if type == Self.frameTypeError {
                 onError?("The NDI connection to \(sourceName) failed.")
             }
@@ -140,8 +180,16 @@ final class NDIReceiver: @unchecked Sendable {
         instance = nil
     }
 
-    /// Copies NDI's frame into a pooled pixel buffer (NDI owns its memory only until freed).
-    private func copy(_ frame: cndi_video_frame_v2_t) -> CVPixelBuffer? {
+    /// A declared rate, or nil when it's 0, negative or not a number.
+    static func frameRate(n: Int32, d: Int32) -> Double? {
+        guard n > 0, d > 0 else { return nil }
+        let fps = Double(n) / Double(d)
+        return fps.isFinite && fps > 0 ? fps : nil
+    }
+
+    /// Copies NDI's frame into a pooled pixel buffer (NDI owns its memory only until freed) and
+    /// tags it with NDI's colour and scan conventions.
+    private func copy(_ frame: cndi_video_frame_v2_t) -> (buffer: CVPixelBuffer, scan: RecorderScan)? {
         let w = Int(frame.xres), h = Int(frame.yres)
         guard w > 0, h > 0, let src = frame.p_data else { return nil }
         let format: OSType
@@ -165,7 +213,10 @@ final class NDIReceiver: @unchecked Sendable {
         } else {
             for y in 0..<h { memcpy(dst + y * dstStride, src + y * srcStride, rowBytes) }
         }
-        return buffer
+        RecorderColor.standard(height: h).attach(to: buffer)
+        let scan: RecorderScan = frame.frame_format_type == Self.formatInterleaved ? .topFieldFirst : .progressive
+        scan.attach(to: buffer)
+        return (buffer, scan)
     }
 
     private func pool(width: Int, height: Int, format: OSType) -> CVPixelBufferPool? {

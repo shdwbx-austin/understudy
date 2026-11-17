@@ -19,7 +19,7 @@ func deckPathChecks(out: URL) async {
         return (s, s + Double(clip.duration.durationFrames(nominal: rate.nominal)) / rate.exact)
     }
     deck.recorderFolder = { folder }
-    deck.recorderStartSeconds = { show($0) }
+    deck.recorderStartCode = { RecorderStartCode(seconds: show($0), isClockTime: false) }
     deck.recorderTimecodeAtVideoRate = { true }
     deck.buildsTakeMaps = true
     var finishedCount = 0

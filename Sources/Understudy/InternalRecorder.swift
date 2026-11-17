@@ -9,6 +9,8 @@ import VideoToolbox
 // AVAssetWriter, with a QuickTime timecode track stamped from show code at the start of each take.
 // Everything runs on one serial queue; the main thread drives it through `InternalRecorder`'s
 // methods and hears back through `onStatus` and `onTakeFinished`.
+// The recorder writes the source's pixels as they arrive: it never applies a LUT or any colour
+// change of its own (a viewer or NDI-out LUT must not reach it), only tags them (RecorderBufferTags).
 
 /// One frame from a recorder source.
 struct RecorderFrame: @unchecked Sendable {
@@ -17,8 +19,12 @@ struct RecorderFrame: @unchecked Sendable {
     let time: Double
     /// HostClock seconds when the frame was captured or arrived: what show code is compared at.
     let host: Double
-    /// Rate the source says it runs at (0: not said; measured instead).
-    let fps: Double
+    /// Rate the source says it runs at (nil: not said; measured instead).
+    let fps: Double?
+    /// The source sends alpha (which the recorder's codecs can't keep).
+    var hasAlpha = false
+    /// The source's fields were de-interlaced before they got here (NDI, separate fields).
+    var deinterlaced = false
 }
 
 /// Something that delivers frames on the recorder's queue.
@@ -40,10 +46,13 @@ final class CaptureFrameSource: NSObject, RecorderFrameSource, AVCaptureVideoDat
     private let output = AVCaptureVideoDataOutput()
     private let control = DispatchQueue(label: "understudy.recorder.capture", qos: .userInitiated)
     private var deliver: ((RecorderFrame) -> Void)?
-    private var fps: Double = 0
+    private var fps: Double?
+    /// Recording to ProRes: keep 4:2:2 (and 10 bits where the device sends them).
+    private let proRes: Bool
 
-    init(device: AVCaptureDevice) {
+    init(device: AVCaptureDevice, proRes: Bool) {
         self.device = device
+        self.proRes = proRes
         name = device.localizedName
     }
 
@@ -71,8 +80,13 @@ final class CaptureFrameSource: NSObject, RecorderFrameSource, AVCaptureVideoDat
             session.commitConfiguration()
             return error.localizedDescription
         }
-        // 4:2:0 video range: what the hardware encoders take without converting.
-        output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
+        // H.264/HEVC: 4:2:0 video range, what the hardware encoders take as is. ProRes: 4:2:2, and
+        // 10-bit when the device's own format is, so the codec gets everything the input has.
+        let native = CMFormatDescriptionGetMediaSubType(device.activeFormat.formatDescription)
+        let available = output.availableVideoPixelFormatTypes.map { UInt32($0) }
+        let format = RecorderPixelFormat.choose(native: native, available: available, proRes: proRes)
+            ?? kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: format]
         output.alwaysDiscardsLateVideoFrames = true
         output.setSampleBufferDelegate(self, queue: queue)
         guard session.canAddOutput(output) else {
@@ -82,7 +96,7 @@ final class CaptureFrameSource: NSObject, RecorderFrameSource, AVCaptureVideoDat
         session.addOutput(output)
         session.commitConfiguration()
         let d = device.activeVideoMinFrameDuration
-        fps = d.isValid && d.value > 0 ? Double(d.timescale) / Double(d.value) : 0
+        fps = d.isValid && d.value > 0 ? Double(d.timescale) / Double(d.value) : nil
         NotificationCenter.default.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil) { note in
             let error = note.userInfo?[AVCaptureSessionErrorKey] as? NSError
             fail(error?.localizedDescription ?? "Capture stopped.")
@@ -101,6 +115,11 @@ final class CaptureFrameSource: NSObject, RecorderFrameSource, AVCaptureVideoDat
         // Capture timestamps are on the host clock, the same clock as HostClock.
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         let t = pts.isValid ? pts.seconds : HostClock.now()
+        // Capture buffers carry the device's own colour and field tags; fill in what's missing.
+        if CVBufferCopyAttachment(buffer, kCVImageBufferYCbCrMatrixKey, nil) == nil
+            || CVBufferCopyAttachment(buffer, kCVImageBufferColorPrimariesKey, nil) == nil {
+            RecorderColor(buffer: buffer).attach(to: buffer)
+        }
         deliver?(RecorderFrame(buffer: buffer, time: t, host: t, fps: fps))
     }
 }
@@ -123,7 +142,8 @@ final class NDIFrameSource: RecorderFrameSource, @unchecked Sendable {
             // drop frames (counted as gaps) instead of frames piling up in memory.
             queue.sync {
                 deliver(RecorderFrame(buffer: frame.buffer, time: frame.sourceTime ?? frame.arrived,
-                                      host: frame.arrived, fps: frame.fps))
+                                      host: frame.arrived, fps: frame.fps, hasAlpha: frame.hasAlpha,
+                                      deinterlaced: frame.deinterlaced))
             }
         }
         receiver.onError = fail
@@ -154,6 +174,9 @@ final class TestPatternFrameSource: RecorderFrameSource, @unchecked Sendable {
         timer.setEventHandler { [pattern] in
             let now = HostClock.now()
             guard let buffer = pattern.frame() else { return }
+            // Drawn in sRGB (Rec. 709 primaries), progressive.
+            RecorderColor.rec709.attach(to: buffer)
+            RecorderScan.progressive.attach(to: buffer)
             deliver(RecorderFrame(buffer: buffer, time: now, host: now, fps: fps))
         }
         self.timer = timer
@@ -207,8 +230,8 @@ final class InternalRecorder: @unchecked Sendable {
         var url: URL
         var takeID: Int
         var codec: RecorderCodec
-        /// Timecode-of-day seconds (show code, or the time of day without it) at host time `startHost`.
-        var startSeconds: Double
+        /// Show code (or, without it, the time of day) at host time `startHost`.
+        var start: RecorderStartCode
         var startHost: Double
         /// Timecode at the video rate, or (50p/59.94p/60p) at its LTC rate.
         var timecodeAtVideoRate: Bool
@@ -221,6 +244,7 @@ final class InternalRecorder: @unchecked Sendable {
     private var sourceRef: RecorderSource?
     private var status = Status()
     private var dropFrame = false
+    private var openForProRes = false
     private var writer: TakeWriter?
     private var pending: TakeRequest?
     private var statusTimer: DispatchSourceTimer?
@@ -228,7 +252,16 @@ final class InternalRecorder: @unchecked Sendable {
     private var measuredFPS: Double?
     private var lastFrameTime: Double?
     /// Size and rate of the latest frame, so a take's file can open at REC rather than on its first frame.
-    private var lastFrameInfo: (width: Int, height: Int, rate: FrameRate)?
+    private var lastFrameInfo: FrameInfo?
+
+    /// What the latest frame was: what a take's file is set up for.
+    struct FrameInfo {
+        var width: Int
+        var height: Int
+        var rate: FrameRate
+        var color: RecorderColor
+        var scan: RecorderScan
+    }
     private var lastSize: (bytes: Int64, at: Double)?
     private var lastFreeCheck = -Double.infinity
     private var freeBytes: Int64?
@@ -260,13 +293,18 @@ final class InternalRecorder: @unchecked Sendable {
     func currentPosition() -> Position? { position.withLock { $0 } }
 
     /// Opens `source` (closing any other). `dropFrame`: count 29.97/59.94 drop-frame, as show code does.
-    func open(_ ref: RecorderSource, dropFrame: Bool, folder: URL?) {
+    /// `codec` picks a capture device's pixel format (4:2:2 for ProRes), so a capture source
+    /// reopens when it changes between ProRes and H.264/HEVC.
+    func open(_ ref: RecorderSource, codec: RecorderCodec, dropFrame: Bool, folder: URL?) {
         queue.async { [self] in
-            if sourceRef == ref, source != nil, status.state != .closed {
+            let sameFormat = ref.kind != .capture || openForProRes == codec.isProRes
+            if sourceRef == ref, sameFormat, source != nil, status.state != .closed {
                 self.dropFrame = dropFrame
                 return
             }
+            if writer != nil { finishTake() }
             closeSource()
+            openForProRes = codec.isProRes
             self.dropFrame = dropFrame
             self.folder = folder
             sourceRef = ref
@@ -276,7 +314,7 @@ final class InternalRecorder: @unchecked Sendable {
             openGeneration += 1
             publish()
             let generation = openGeneration
-            Self.makeSource(ref) { [weak self] made in
+            Self.makeSource(ref, proRes: codec.isProRes) { [weak self] made in
                 guard let self else { return }
                 self.queue.async { self.started(made, generation: generation) }
             }
@@ -317,19 +355,22 @@ final class InternalRecorder: @unchecked Sendable {
             lastSize = nil
             // A picture is coming in: open the file now, so the first frame isn't held up by it.
             if let info = lastFrameInfo, let last = lastFrameHost, HostClock.now() - last < RecorderHealth.noSignalAfter {
-                _ = openPendingTake(width: info.width, height: info.height, rate: info.rate)
+                _ = openPendingTake(info)
             }
             publish()
         }
     }
 
     /// Opens the pending take's file. False (and the take abandoned) if it can't be.
-    private func openPendingTake(width: Int, height: Int, rate: FrameRate) -> Bool {
+    private func openPendingTake(_ info: FrameInfo) -> Bool {
         guard let request = pending else { return writer != nil }
         do {
-            writer = try TakeWriter(request: request, width: width, height: height, videoRate: rate)
+            let writer = try TakeWriter(request: request, width: info.width, height: info.height, videoRate: info.rate,
+                                        color: info.color, scan: info.scan)
+            self.writer = writer
             pending = nil
             status.health.softwareEncoder = !TakeWriter.hasHardwareEncoder(request.codec)
+            status.health.interlacedAsProgressive = writer.interlacedAsProgressive
             return true
         } catch {
             pending = nil
@@ -351,7 +392,8 @@ final class InternalRecorder: @unchecked Sendable {
     // MARK: Opening (recorder queue)
 
     /// Builds the source. Capture devices may need permission first, so this calls back.
-    private static func makeSource(_ ref: RecorderSource, done: @escaping @Sendable (Result<RecorderFrameSource, RecorderError>) -> Void) {
+    private static func makeSource(_ ref: RecorderSource, proRes: Bool,
+                                   done: @escaping @Sendable (Result<RecorderFrameSource, RecorderError>) -> Void) {
         switch ref.kind {
         case .testPattern:
             done(.success(TestPatternFrameSource()))
@@ -363,7 +405,7 @@ final class InternalRecorder: @unchecked Sendable {
                     done(.failure(.failed("\(ref.name) isn't connected.")))
                     return
                 }
-                done(.success(CaptureFrameSource(device: device)))
+                done(.success(CaptureFrameSource(device: device, proRes: proRes)))
             }
             switch AVCaptureDevice.authorizationStatus(for: .video) {
             case .authorized:
@@ -438,20 +480,24 @@ final class InternalRecorder: @unchecked Sendable {
         }
         lastFrameTime = frame.time
         lastFrameHost = frame.host
-        let fps = frame.fps > 0 ? frame.fps : (measuredFPS ?? 0)
+        let fps = frame.fps ?? measuredFPS ?? 0
         let rate = FrameRate.nearest(fps: fps, dropFrame: dropFrame)
-        lastFrameInfo = rate.map { (w, h, $0) }
+        let scan = RecorderScan(buffer: frame.buffer)
+        let pixels = RecorderPixelFormat.name(CVPixelBufferGetPixelFormatType(frame.buffer))
+        lastFrameInfo = rate.map { FrameInfo(width: w, height: h, rate: $0, color: RecorderColor(buffer: frame.buffer), scan: scan) }
+        status.health.alphaDropped = frame.hasAlpha
+        status.health.sourceDeinterlaced = frame.deinterlaced
         if let rate {
-            let format = RecorderFormat.videoFormat(height: h, rate: rate)
+            let format = RecorderFormat.videoFormat(height: h, rate: rate, scan: scan)
             status.videoFormat = format
             status.lastVideoFormat = format
-            status.signal = "\(w)×\(h) \(rate.rawValue)"
+            status.signal = "\(w)×\(h)\(scan.isInterlaced ? "i" : "") \(rate.rawValue) · \(pixels)"
         } else {
-            status.signal = String(format: "%d×%d %.2f", w, h, fps)
+            status.signal = String(format: "%d×%d %.2f · %@", w, h, fps, pixels)
         }
 
         if writer == nil, pending != nil {
-            guard let rate else {
+            guard rate != nil else {
                 // A rate Understudy can't stamp timecode at: say so rather than record garbage.
                 pending = nil
                 recordingFlag.withLock { $0 = false }
@@ -460,7 +506,7 @@ final class InternalRecorder: @unchecked Sendable {
                 publish()
                 return
             }
-            guard openPendingTake(width: w, height: h, rate: rate) else { return }
+            guard let info = lastFrameInfo, openPendingTake(info) else { return }
         }
 
         guard let writer else { return }
@@ -578,7 +624,12 @@ final class TakeWriter: @unchecked Sendable {
     private let width: Int
     private let height: Int
 
-    init(request: InternalRecorder.TakeRequest, width: Int, height: Int, videoRate: FrameRate) throws {
+    /// The source is interlaced but the codec codes progressive frames (H.264/HEVC here).
+    let interlacedAsProgressive: Bool
+    let scan: RecorderScan
+
+    init(request: InternalRecorder.TakeRequest, width: Int, height: Int, videoRate: FrameRate,
+         color: RecorderColor, scan: RecorderScan) throws {
         self.request = request
         url = request.url
         codec = request.codec
@@ -606,12 +657,15 @@ final class TakeWriter: @unchecked Sendable {
             AVVideoCodecKey: Self.codecType(codec),
             AVVideoWidthKey: width,
             AVVideoHeightKey: height,
-            AVVideoColorPropertiesKey: [
-                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
-                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
-                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
-            ],
+            // The source's own tags (709 HD, 601 SD unless it says otherwise), so the file is
+            // tagged as what's in it.
+            AVVideoColorPropertiesKey: color.writerProperties,
         ]
+        self.scan = scan
+        interlacedAsProgressive = scan.isInterlaced && !codec.isProRes
+        if codec.isProRes, scan.isInterlaced {
+            settings[AVVideoCompressionPropertiesKey] = scan.proResCompressionProperties
+        }
         if !codec.isProRes {
             var props: [String: Any] = [
                 AVVideoAverageBitRateKey: codec.targetBitRate(width: width, height: height, fps: videoRate.exact),
@@ -703,7 +757,7 @@ final class TakeWriter: @unchecked Sendable {
         if !started {
             // The code at the first frame: the code asked for at REC, plus the time since.
             started = true
-            startTimecode = Int(((request.startSeconds + (frame.host - request.startHost)) * timecodeRate.exact).rounded())
+            startTimecode = request.start.index(at: timecodeRate, after: frame.host - request.startHost)
         }
         guard let index = clock.place(at: frame.time) else { return }
         // Slots no frame arrived for get the previous picture again, so the file stays constant
@@ -814,7 +868,7 @@ final class TakeWriter: @unchecked Sendable {
         let take = RecorderTake(
             id: request.takeID, name: url.lastPathComponent, path: url.path, startFrame: startTimecode,
             frames: Int((Double(length) * timecodeRate.exact / videoRate.exact).rounded()), rate: timecodeRate,
-            videoFormat: RecorderFormat.videoFormat(height: height, rate: videoRate), codec: codec,
+            videoFormat: RecorderFormat.videoFormat(height: height, rate: videoRate, scan: scan), codec: codec,
             droppedFrames: clock.dropped)
         nonisolated(unsafe) let writer = writer
         writer.finishWriting {

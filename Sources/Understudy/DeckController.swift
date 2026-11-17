@@ -75,8 +75,8 @@ final class DeckController: ObservableObject, Identifiable {
     private var recorderIssuedNames: Set<String> = []
     /// Where the recorder's next take goes. Set by AppModel.
     var recorderFolder: (() -> URL)?
-    /// Show code (or, without it, the time of day) at a host time, as timecode-of-day seconds. Set by AppModel.
-    var recorderStartSeconds: ((Double) -> Double)?
+    /// Show code (or, without it, the time of day) at a host time. Set by AppModel.
+    var recorderStartCode: ((Double) -> RecorderStartCode)?
     /// Whether the recorder stamps timecode at the video rate (deck timecode setting). Set by AppModel.
     var recorderTimecodeAtVideoRate: (() -> Bool)?
 
@@ -501,7 +501,7 @@ final class DeckController: ObservableObject, Identifiable {
             connection = .connecting
             everConnected = false
         }
-        recorder?.open(source, dropFrame: dropFrame, folder: recorderFolder?())
+        recorder?.open(source, codec: settings.codec, dropFrame: dropFrame, folder: recorderFolder?())
     }
 
     private func detachRecorder() {
@@ -589,9 +589,9 @@ final class DeckController: ObservableObject, Identifiable {
         recorderIssuedNames.insert(name)
         recorderIssuedID = max(recorderIssuedID, takes.list.nextID - 1) + 1
         let host = HostClock.now()
-        let start = recorderStartSeconds?(host) ?? Double(RecorderFormat.timeOfDayIndex(Date(), rate: .fps30)) / 30
+        let start = recorderStartCode?(host) ?? .clock(Date())
         recorder.startTake(.init(url: folder.appendingPathComponent(name), takeID: recorderIssuedID, codec: recorderSettings.codec,
-                                 startSeconds: start, startHost: host,
+                                 start: start, startHost: host,
                                  timecodeAtVideoRate: recorderTimecodeAtVideoRate?() ?? true, dropFrame: recorderDropFrame))
     }
 

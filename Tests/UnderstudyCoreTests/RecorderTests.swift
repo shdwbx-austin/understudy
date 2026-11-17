@@ -102,6 +102,92 @@ struct RecorderTests {
         #expect(Timecode(frameIndex: index, rate: .fps25).description == "14:30:15:00")
     }
 
+    @Test func interlacedFormatsAreNamedByFieldRate() {
+        #expect(RecorderFormat.videoFormat(height: 1080, rate: .fps29_97DF, scan: .topFieldFirst) == "1080i5994")
+        #expect(RecorderFormat.videoFormat(height: 576, rate: .fps25, scan: .topFieldFirst) == "576i50")
+        #expect(RecorderFormat.videoFormat(height: 1080, rate: .fps30, scan: .bottomFieldFirst) == "1080i60")
+        #expect(RecorderFormat.videoFormat(height: 486, rate: .fps29_97, scan: .bottomFieldFirst) == "486i5994")
+        // No interlaced name for these: named progressive.
+        #expect(RecorderFormat.videoFormat(height: 1080, rate: .fps23_976, scan: .topFieldFirst) == "1080p2398")
+        #expect(RecorderFormat.videoFormat(height: 720, rate: .fps59_94, scan: .topFieldFirst) == "720p5994")
+        // Read back as the frame rate, the way a deck's interlaced format is.
+        for (rate, df) in [(FrameRate.fps25, false), (.fps29_97DF, true), (.fps29_97, false), (.fps30, false)] {
+            let name = RecorderFormat.videoFormat(height: 1080, rate: rate, scan: .topFieldFirst)
+            #expect(FrameRate.fromVideoFormat(name, dropFrame: df) == rate, "\(name)")
+        }
+        #expect(RecorderScan.topFieldFirst.isInterlaced && !RecorderScan.progressive.isInterlaced)
+    }
+
+    @Test func clockTimeLabelsReadTheClock() {
+        let t = 14.0 * 3600 + 30 * 60 + 15   // 14:30:15
+        // Non-drop fractional rates count nominal labels per second: the label is the clock time.
+        for rate in [FrameRate.fps23_976, .fps29_97, .fps59_94] {
+            #expect(Timecode(frameIndex: RecorderFormat.clockIndex(seconds: t, rate: rate), rate: rate).description == "14:30:15:00",
+                    "\(rate.rawValue)")
+        }
+        // Whole rates and drop-frame count real frames, which also reads the clock.
+        #expect(Timecode(frameIndex: RecorderFormat.clockIndex(seconds: t, rate: .fps25), rate: .fps25).description == "14:30:15:00")
+        let df = Timecode(frameIndex: RecorderFormat.clockIndex(seconds: t, rate: .fps29_97DF), rate: .fps29_97DF)
+        #expect(abs(df.frameIndex(at: .fps29_97DF) - Timecode("14:30:15;00")!.frameIndex(at: .fps29_97DF)) <= 1, "\(df)")
+        // Counting real frames at 29.97 non-drop would put the label 3.6 s an hour behind:
+        // 52 s behind by 14:30:15.
+        let behind = Timecode(frameIndex: Int((t * FrameRate.fps29_97.exact).rounded()), rate: .fps29_97)
+        #expect(behind.description.hasPrefix("14:29:22:"), "\(behind)")
+    }
+
+    @Test func startCodeIsShowCodeOrClock() {
+        let show = RecorderStartCode(seconds: Double(Timecode("01:00:00;00")!.frameIndex(at: .fps29_97DF)) / FrameRate.fps29_97DF.exact,
+                                     isClockTime: false)
+        #expect(Timecode(frameIndex: show.index(at: .fps29_97DF), rate: .fps29_97DF).display(dropFrame: true) == "01:00:00;00")
+        #expect(Timecode(frameIndex: show.index(at: .fps29_97DF, after: 1.001), rate: .fps29_97DF).display(dropFrame: true) == "01:00:01;00")
+        let clock = RecorderStartCode(seconds: 13 * 3600, isClockTime: true)
+        #expect(Timecode(frameIndex: clock.index(at: .fps29_97), rate: .fps29_97).description == "13:00:00:00")
+        #expect(Timecode(frameIndex: clock.index(at: .fps23_976, after: 2), rate: .fps23_976).description == "13:00:02:00")
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        let noon = calendar.date(from: DateComponents(year: 2026, month: 11, day: 16, hour: 12))!
+        #expect(RecorderStartCode.clock(noon, calendar: calendar) == RecorderStartCode(seconds: 43_200, isClockTime: true))
+    }
+
+    // MARK: Colour and pixel formats
+
+    @Test func untaggedColourFollowsHeight() {
+        #expect(RecorderColor.standard(height: 2160) == .rec709)
+        #expect(RecorderColor.standard(height: 1080) == .rec709)
+        #expect(RecorderColor.standard(height: 720) == .rec709)
+        #expect(RecorderColor.standard(height: 576) == .rec601PAL)
+        #expect(RecorderColor.standard(height: 486) == .rec601NTSC)
+        #expect(RecorderColor.standard(height: 480) == .rec601NTSC)
+        #expect(RecorderColor.rec601PAL.matrix == "ITU_R_601_4" && RecorderColor.rec601NTSC.primaries == "SMPTE_C")
+    }
+
+    @Test func bufferTagsWinWhereTheWriterCanCarryThem() {
+        // A capture card's own HDR tags are kept.
+        let hdr = RecorderColor.from(primaries: "ITU_R_2020", transfer: "ITU_R_2100_HLG", matrix: "ITU_R_2020", height: 2160)
+        #expect(hdr == RecorderColor(primaries: "ITU_R_2020", transfer: "ITU_R_2100_HLG", matrix: "ITU_R_2020"))
+        // An SD card that tags 709 is believed.
+        #expect(RecorderColor.from(primaries: "ITU_R_709_2", transfer: nil, matrix: "ITU_R_709_2", height: 486)
+                == RecorderColor(primaries: "ITU_R_709_2", transfer: "ITU_R_709_2", matrix: "ITU_R_709_2"))
+        // Missing or unknown tags come from the height.
+        #expect(RecorderColor.from(primaries: nil, transfer: nil, matrix: nil, height: 576) == .rec601PAL)
+        #expect(RecorderColor.from(primaries: "Unknown", transfer: "Linear?", matrix: "Weird", height: 1080) == .rec709)
+    }
+
+    @Test func captureFormatKeepsWhatProResCanUse() {
+        let f = RecorderPixelFormat.self
+        let card10 = [f.code("v210"), f.yuv422x10, f.yuv422, f.yuv420v]
+        #expect(f.choose(native: f.code("v210"), available: card10, proRes: true) == f.yuv422x10)
+        #expect(f.choose(native: f.yuv422, available: card10, proRes: true) == f.yuv422)
+        #expect(f.choose(native: f.code("v210"), available: card10, proRes: false) == f.yuv420v)
+        // A webcam with only 4:2:0 and YUY2.
+        let webcam = [f.yuv420v, f.yuv422yuvs, f.code("BGRA")]
+        #expect(f.choose(native: f.yuv420v, available: webcam, proRes: true) == f.yuv422yuvs)
+        #expect(f.choose(native: f.yuv420v, available: webcam, proRes: false) == f.yuv420v)
+        #expect(f.choose(native: 0, available: [f.code("BGRA")], proRes: false) == f.code("BGRA"))
+        #expect(f.choose(native: 0, available: [], proRes: true) == nil)
+        #expect(f.name(f.yuv422x10) == "x422" && f.name(f.yuv422) == "2vuy")
+    }
+
     // MARK: Frame clock
 
     @Test func steadyFramesWithJitterTakeEverySlot() {
@@ -272,6 +358,18 @@ struct RecorderTests {
         #expect(h.warnings == [RecorderWarning(.alarm, "DISK: 30 S LEFT")])
         h.freeBytes = 100_000_000_000
         #expect(h.warnings.isEmpty)
+    }
+
+    @Test func sourceNotesSayWhatWasLost() {
+        var h = RecorderHealth()
+        h.alphaDropped = true
+        h.sourceDeinterlaced = true
+        h.interlacedAsProgressive = true
+        #expect(h.warnings == [
+            RecorderWarning(.caution, "INTERLACED SOURCE RECORDED AS PROGRESSIVE: USE PRORES TO KEEP FIELDS"),
+            RecorderWarning(.note, "SOURCE SENDS SEPARATE FIELDS: RECORDED DE-INTERLACED"),
+            RecorderWarning(.note, "SOURCE ALPHA NOT RECORDED"),
+        ])
     }
 
     @Test func softwareEncoderIsANote() {

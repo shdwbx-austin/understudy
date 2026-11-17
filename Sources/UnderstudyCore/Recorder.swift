@@ -158,10 +158,22 @@ extension FrameRate {
 }
 
 public enum RecorderFormat {
-    /// A HyperDeck-style video format name, e.g. "1080p2997", so the rest of Understudy reads the
-    /// recorder's rate the same way it reads a deck's.
-    public static func videoFormat(height: Int, rate: FrameRate) -> String {
-        "\(height)p\(rate.formatDigits)"
+    /// A HyperDeck-style video format name, e.g. "1080p2997" or "1080i5994", so the rest of
+    /// Understudy reads the recorder's rate the same way it reads a deck's. Interlaced formats are
+    /// named by field rate, like the decks' (`rate` is always the frame rate); only 25, 29.97 and
+    /// 30 frames have interlaced names.
+    public static func videoFormat(height: Int, rate: FrameRate, scan: RecorderScan = .progressive) -> String {
+        if scan.isInterlaced, let fields = fieldRateDigits(rate) { return "\(height)i\(fields)" }
+        return "\(height)p\(rate.formatDigits)"
+    }
+
+    private static func fieldRateDigits(_ rate: FrameRate) -> String? {
+        switch rate {
+        case .fps25: return "50"
+        case .fps29_97, .fps29_97DF: return "5994"
+        case .fps30: return "60"
+        default: return nil
+        }
     }
 
     /// Timecode for a duration in frames (durations never drop labels).
@@ -179,8 +191,125 @@ public enum RecorderFormat {
     /// Time of day as a timecode frame index, for a take started with no show code (as a deck's
     /// internal clock would stamp it).
     public static func timeOfDayIndex(_ date: Date, rate: FrameRate, calendar: Calendar = .current) -> Int {
-        let midnight = calendar.startOfDay(for: date)
-        return Int(date.timeIntervalSince(midnight) * rate.exact)
+        clockIndex(seconds: date.timeIntervalSince(calendar.startOfDay(for: date)), rate: rate)
+    }
+
+    /// Timecode frame index whose label reads clock time `seconds` (since midnight). Drop-frame and
+    /// whole rates count real frames, which keeps their labels on the clock. Non-drop 23.976, 29.97
+    /// and 59.94 count `nominal` labels per labelled second, so the take starts on the clock's time
+    /// (counting real frames would put them 3.6 s an hour behind it).
+    public static func clockIndex(seconds: Double, rate: FrameRate) -> Int {
+        let perSecond = rate.isFractional && !rate.isDropFrame ? Double(rate.nominal) : rate.exact
+        return Int((seconds * perSecond).rounded())
+    }
+}
+
+/// What a take is stamped with at REC: show code, or (with none) the time of day.
+public struct RecorderStartCode: Equatable, Sendable {
+    /// Show code as real seconds since 00:00:00:00 (LTC frames ÷ LTC rate), or clock seconds since midnight.
+    public var seconds: Double
+    /// `seconds` is the time of day, not show code.
+    public var isClockTime: Bool
+
+    public init(seconds: Double, isClockTime: Bool) {
+        self.seconds = seconds
+        self.isClockTime = isClockTime
+    }
+
+    public static func clock(_ date: Date, calendar: Calendar = .current) -> RecorderStartCode {
+        RecorderStartCode(seconds: date.timeIntervalSince(calendar.startOfDay(for: date)), isClockTime: true)
+    }
+
+    /// Timecode frame index at `rate`, `elapsed` seconds after REC (when the first frame came in).
+    public func index(at rate: FrameRate, after elapsed: Double = 0) -> Int {
+        let t = seconds + elapsed
+        return isClockTime ? RecorderFormat.clockIndex(seconds: t, rate: rate) : Int((t * rate.exact).rounded())
+    }
+}
+
+// MARK: - Colour, scan and pixel formats
+
+/// A picture's colour tags, by their Core Video / AVFoundation names
+/// (kCVImageBufferColorPrimaries_ITU_R_709_2 is "ITU_R_709_2", and so on).
+public struct RecorderColor: Codable, Equatable, Sendable {
+    public var primaries: String
+    public var transfer: String
+    public var matrix: String
+
+    public init(primaries: String, transfer: String, matrix: String) {
+        self.primaries = primaries
+        self.transfer = transfer
+        self.matrix = matrix
+    }
+
+    public static let rec709 = RecorderColor(primaries: "ITU_R_709_2", transfer: "ITU_R_709_2", matrix: "ITU_R_709_2")
+    /// SD 525-line (NTSC family): SMPTE C primaries, BT.601 matrix.
+    public static let rec601NTSC = RecorderColor(primaries: "SMPTE_C", transfer: "ITU_R_709_2", matrix: "ITU_R_601_4")
+    /// SD 625-line (PAL family): EBU 3213 primaries, BT.601 matrix.
+    public static let rec601PAL = RecorderColor(primaries: "EBU_3213", transfer: "ITU_R_709_2", matrix: "ITU_R_601_4")
+
+    /// What an untagged picture is: Rec. 709 at 720 lines and up, BT.601 below (NDI's rule, and SD
+    /// video's), with PAL primaries for 576 lines and NTSC's otherwise.
+    public static func standard(height: Int) -> RecorderColor {
+        if height >= 720 { return .rec709 }
+        return height >= 576 ? .rec601PAL : .rec601NTSC
+    }
+
+    /// Tags the writer can carry into a file.
+    static let writablePrimaries: Set<String> = ["ITU_R_709_2", "SMPTE_C", "EBU_3213", "P3_D65", "ITU_R_2020"]
+    static let writableTransfer: Set<String> = ["ITU_R_709_2", "SMPTE_ST_2084_PQ", "ITU_R_2100_HLG"]
+    static let writableMatrix: Set<String> = ["ITU_R_709_2", "ITU_R_601_4", "ITU_R_2020"]
+
+    /// The tags a buffer carries, each one missing or unwritable taken from `standard(height:)`.
+    public static func from(primaries: String?, transfer: String?, matrix: String?, height: Int) -> RecorderColor {
+        let d = standard(height: height)
+        return RecorderColor(
+            primaries: primaries.flatMap { writablePrimaries.contains($0) ? $0 : nil } ?? d.primaries,
+            transfer: transfer.flatMap { writableTransfer.contains($0) ? $0 : nil } ?? d.transfer,
+            matrix: matrix.flatMap { writableMatrix.contains($0) ? $0 : nil } ?? d.matrix)
+    }
+}
+
+/// Progressive, or interlaced (both fields woven into each frame) and which field comes first.
+public enum RecorderScan: String, Codable, Sendable {
+    case progressive
+    /// Top (first spatial) line belongs to the earlier field: HD 1080i and PAL.
+    case topFieldFirst
+    /// NTSC-family SD (480i/486i) usually.
+    case bottomFieldFirst
+
+    public var isInterlaced: Bool { self != .progressive }
+}
+
+/// Which pixel format to ask a capture device for.
+public enum RecorderPixelFormat {
+    public static func code(_ s: String) -> UInt32 { s.utf8.reduce(0) { $0 << 8 | UInt32($1) } }
+
+    /// 8-bit 4:2:0 video range ('420v'): what the H.264/HEVC hardware encoders take as is.
+    public static let yuv420v = code("420v")
+    /// 8-bit 4:2:2 ('2vuy', UYVY).
+    public static let yuv422 = code("2vuy")
+    /// 8-bit 4:2:2 ('yuvs', YUY2).
+    public static let yuv422yuvs = code("yuvs")
+    /// 10-bit 4:2:2 biplanar video range ('x422').
+    public static let yuv422x10 = code("x422")
+    /// Formats a 10-bit source arrives in.
+    static let tenBit: Set<UInt32> = [code("v210"), code("x422"), code("x420"), code("x444"), code("p210"), code("p010")]
+
+    /// For ProRes keep 4:2:2, and 10 bits when the device sends them; for H.264/HEVC 4:2:0.
+    /// `native` is the device's own format, `available` what its output offers.
+    public static func choose(native: UInt32, available: [UInt32], proRes: Bool) -> UInt32? {
+        var wanted: [UInt32] = []
+        if proRes {
+            if tenBit.contains(native) { wanted.append(yuv422x10) }
+            wanted += [yuv422, yuv422yuvs]
+        }
+        wanted.append(yuv420v)
+        return wanted.first { available.contains($0) } ?? available.first
+    }
+
+    public static func name(_ code: UInt32) -> String {
+        String(bytes: [24, 16, 8, 0].map { UInt8((code >> $0) & 0xff) }, encoding: .ascii) ?? "\(code)"
     }
 }
 
@@ -366,6 +495,12 @@ public struct RecorderHealth: Equatable, Sendable {
     /// Expected rate before recording starts (for time left on disk).
     public var estimatedBytesPerSecond: Double?
     public var softwareEncoder = false
+    /// The source sends alpha; the codecs here have none, so it isn't recorded.
+    public var alphaDropped = false
+    /// The source is interlaced but the codec (H.264/HEVC) writes progressive frames.
+    public var interlacedAsProgressive = false
+    /// The source's fields reach the recorder de-interlaced (an NDI sender sending separate fields).
+    public var sourceDeinterlaced = false
 
     public init() {}
 
@@ -401,6 +536,15 @@ public struct RecorderHealth: Equatable, Sendable {
             } else if left < 600 {
                 out.append(.init(.caution, "DISK: \(Self.minutes(left)) LEFT"))
             }
+        }
+        if interlacedAsProgressive {
+            out.append(.init(.caution, "INTERLACED SOURCE RECORDED AS PROGRESSIVE: USE PRORES TO KEEP FIELDS"))
+        }
+        if sourceDeinterlaced {
+            out.append(.init(.note, "SOURCE SENDS SEPARATE FIELDS: RECORDED DE-INTERLACED"))
+        }
+        if alphaDropped {
+            out.append(.init(.note, "SOURCE ALPHA NOT RECORDED"))
         }
         if softwareEncoder {
             out.append(.init(.note, "SOFTWARE ENCODER: HEAVY ON THIS MAC"))
