@@ -346,7 +346,7 @@ private struct InterfacePicker: View {
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
-        .help("Which network to look for HyperDecks on")
+        .help("Which network to look for HyperDecks on. Deck control and FTP copies go out of this port too (Settings › Network › Deck control).")
         .onAppear { networks = DeckDiscovery.localNetworks() }
     }
 

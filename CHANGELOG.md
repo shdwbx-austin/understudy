@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **A network port for each kind of traffic.** Settings › Network has a port picker for deck control (HyperDeck control, finding decks and FTP backups), grandMA3, disguise, NDI and OSC in, so a show Mac on several networks sends each out of the right port. *Automatic (system routing)* is the default and behaves as before. Each picker shows the ports' addresses and subnets, says where the traffic goes now, and warns when the port has no link or IPv4 address, or a deck, console or Designer address isn't on its subnet. Connections are pinned to the port's interface; a port that's down or gone falls back to the system's routing (and says so) rather than stopping the show. NDI is limited to the port through its own adapter setting, for Understudy only, from the next launch.
+- **Deck control follows Assign decks › On:.** The network you look for decks on is now also the port deck control and FTP backups use. If you'd picked one and a deck is reached through a different port (a routed network), set Settings › Network › Deck control back to Automatic.
+- The status lines name the port in use: OSC in, the grandMA3 and disguise messages, the NDI line in View, and Backup.
+- **Fixed: Send to grandMA3 could hang** at "Sending to grandMA3…" when the console couldn't be reached at all (no route); it now stops with the reason.
+
 ## 0.13.1 — 2026-11-17
 
 - **Fixed: LTC out also sounded on channel 1.** With LTC on channel 3 of a 4-channel device (or Dante out's channel 3), the timecode also came out on channel 1, on top of the songs. Understudy now drives the device's full channel width, so each output lands only where it's routed; measured on a 4-channel Loopback device with songs on 1–2 or 3–4 and LTC on 1, 3 or 4.
