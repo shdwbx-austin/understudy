@@ -101,7 +101,42 @@ reference encoder here to check conformance against.
 3. **Longer term:** licence the NotchLC SDK and load it as an optional,
    user-supplied library.
 
-Nothing is built yet. This document is the feasibility step.
+## What was built (option 1)
+
+*Record › Transcode a Take to NotchLC…* (see the README) drives Media Encoder 2026/2027 with
+the Notch plugin. What testing turned up:
+
+- **The format is "NotchLC (Metal)"** in Media Encoder's format list. It has no presets of its
+  own, so `addFileToBatch(src, "NotchLC (Metal)", "", out)` uses the format's defaults. Understudy
+  finds the format by name ("NotchLC"), or uses an `.epr` the user saved.
+- **`--console es.processFile` only works when it starts Media Encoder.** While it's open, a
+  second launch is ignored, and Media Encoder has no AppleScript dictionary. So the first launch
+  runs a watcher (`app.scheduleTask`, every second) that runs job scripts dropped into a folder,
+  touches a heartbeat file, and stops the queue when a cancel file appears.
+- **Per-item events aren't per item.** Listeners added for one queued item also fire for later
+  items. So every listener writes to the status file of the current job, and Understudy runs
+  one job at a time. Stopping the queue sends no event, so the watcher writes "stopped" itself.
+  Progress arrives as 0–100.
+- **The plugin crashes Media Encoder on long output paths.** It's a stack buffer overflow in
+  the plugin's `createMovieFile`, seen with a ~240-character path and fine at ~75. Encodes go to
+  `$TMPDIR/understudy-nlc/<8 chars>.mov`.
+- **No timecode track.** The plugin writes video (`nclc`, at the source's exact timescale:
+  1001/30000 at 29.97) and an audio track, but no `tmcd`. Understudy copies the encode into
+  place with AVFoundation, as a passthrough (macOS can't decode NotchLC, and doesn't need to),
+  with the source's timecode sample added. Each track keeps its own timescale, because
+  AVAssetWriter's default of 1/600 s would turn 29.97 into 29.975.
+- **Notch's importer can't read NotchLC under a non-ASCII path.** Media Encoder silently gets
+  nothing, so a decode makes black 720×480 frames. This affects reading NotchLC back in Adobe
+  apps, not encoding (sources go through Adobe's own importers, and the output is a temp path).
+  The harness decodes from a plain path.
+- **Killing Media Encoder** (SIGTERM) brings up Adobe's crash reporter. Quit it with a script
+  (`app.quit()`).
+
+Verified by `scripts/notchlc-harness.sh` with 25, 29.97 and 59.94 clips (one under a non-ASCII
+path, the output under a long Dropbox-like path): codec, frame count, rate and timecode of the
+output, a decode back through Notch's importer (NotchLC → H.264 in Media Encoder) with every
+frame's burned-in counter in order, and Cancel. FFmpeg's NotchLC decoder wasn't used, because no FFmpeg is installed
+on the build Mac.
 
 ## Sources
 

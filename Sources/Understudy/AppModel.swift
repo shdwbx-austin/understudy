@@ -161,6 +161,7 @@ final class AppModel: ObservableObject {
     private var lastSeekSent = 0.0
     let showMachine = ShowMachine()
     let backup = TakeBackup()
+    let notchLC = NotchLCTranscoder()
     let confidence = ConfidenceMonitor()
     /// Capture devices and NDI sources the Understudy recorder can record from.
     let recorderSources = RecorderSources()
@@ -1580,5 +1581,56 @@ extension AppModel {
             backupIndex[name] = url.path
         }
         return backupIndex[file]
+    }
+}
+
+// MARK: - NotchLC transcodes
+
+extension AppModel {
+    /// One take's files (by offset, 0 = latest), one per connected deck, found where View finds
+    /// them: the project, then the backup folder, then the recorder's own folder. Each with where
+    /// its NotchLC transcode goes: a NotchLC folder beside the project's media for that deck (or
+    /// beside the file when no project is open), or a deck folder inside the chosen folder.
+    func notchLCItems(_ offset: Int) -> [NotchLCTranscoder.Item] {
+        activeDecks.compactMap { deck -> NotchLCTranscoder.Item? in
+            let name = settings.decks[deck.id].name.trimmingCharacters(in: .whitespaces)
+            guard let clip = deck.clip(takeOffset: offset) else { return nil }
+            let source = projects.videoPath(deck: name, file: clip.name)
+                ?? findBackup(clip.name)
+                ?? deck.recorderTakePath(clip.name)
+            guard let source else {
+                return .init(deckName: name, source: nil, destination: nil,
+                             missing: "\(clip.name) isn't on this Mac: back it up first (⌘B)")
+            }
+            let url = URL(fileURLWithPath: source)
+            let folder: URL
+            if let chosen = settings.notchLCFolder {
+                folder = NotchLC.chosenFolder(URL(fileURLWithPath: chosen, isDirectory: true), deck: name)
+            } else if let layout = projects.current {
+                folder = NotchLC.defaultFolder(mediaFolder: layout.objects(.video)
+                    .appendingPathComponent(ProjectManager.folderName(name), isDirectory: true))
+            } else {
+                folder = NotchLC.defaultFolder(mediaFolder: url.deletingLastPathComponent())
+            }
+            return .init(deckName: name, source: url, destination: NotchLC.outputURL(for: url, in: folder))
+        }
+    }
+
+    /// Transcodes one take (0 = latest) to NotchLC. Not while recording: the files are still growing.
+    func transcodeTake(_ offset: Int) {
+        guard mode != .record else { return }
+        notchLC.start(notchLCItems(offset), preset: settings.notchLCPreset)
+    }
+
+    func chooseNotchLCFolder() {
+        if let path = NotchLCTranscoder.chooseFolder(startingAt: settings.notchLCFolder ?? settings.backupFolder) {
+            settings.notchLCFolder = path
+        }
+    }
+
+    func chooseNotchLCPreset() {
+        if let path = NotchLCTranscoder.choosePreset(startingAt: settings.notchLCPreset) {
+            settings.notchLCPreset = path
+        }
     }
 }

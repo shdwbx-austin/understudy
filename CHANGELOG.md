@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Transcode to NotchLC.** *Record › Transcode a Take to NotchLC…* turns a take's files (off the decks, from the backup folder or the project, or recorded by the Understudy recorder) into NotchLC `.mov` test clips for disguise and other media servers. One action per take, plus where the files go: a `NotchLC` folder beside the project's media for each deck (or beside the files), or a folder you choose. Files are named like their sources and keep their frame rate, size and timecode. It runs in the background with progress per file and Cancel, one file at a time. The source files are never changed.
+- It needs **Adobe Media Encoder** with **Notch's free NotchLC plugin for Adobe** (macOS 13+, from notch.one/downloads): NotchLC has no free command-line encoder on macOS (FFmpeg only decodes it; Notch's own tools are Windows-only or licensed). The sheet says what's missing until both are installed. Understudy opens Media Encoder with a small watcher script and leaves it open. An optional Media Encoder preset (`.epr`) sets the quality. The options and why are in `docs/NOTCHLC.md`.
+- Works around two things in Notch's plugin (1.4.3): it crashes Media Encoder when the output path is long, so encodes go to a short temporary path first, and it writes no timecode, so the finished file gets the source's timecode track added as it's moved into place (no re-encode).
+- `scripts/notchlc-harness.sh` checks it end to end: generated 25, 29.97 and 59.94 clips through Media Encoder; each result's codec, frames, rate and timecode; a decode back through Notch's importer with every frame's counter in order; and Cancel.
+
 ## 0.13.0 — 2026-11-17
 
 - **Delete works.** Delete (or fn-Delete, or ⌘Delete) removes the selected markers, with ⌘Z to bring them back; Markers › Delete Selected Markers does the same.
