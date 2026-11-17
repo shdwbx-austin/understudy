@@ -286,8 +286,10 @@ final class VideoViewer: ObservableObject {
 
     // MARK: NDI
 
-    /// One NDI source per deck in the viewer, video or not; with no decks at all, one source
-    /// ("Understudy") so receivers can still find this Mac. Feeds without video send a test pattern.
+    /// One NDI source per deck feed, named after the deck ("Understudy ME 1"), video or not. A feed
+    /// stays up while NDI is on even when its deck goes offline or drops out of the take (it sends
+    /// the pattern meanwhile), so receivers bound to it by name keep it. With no decks at all there's
+    /// one source, "Understudy", so receivers can still find this Mac.
     struct Feed: Equatable {
         let deckID: Int
         let source: String
@@ -297,15 +299,27 @@ final class VideoViewer: ObservableObject {
 
     static let noDeckID = -1
 
+    /// Feeds that have been up since NDI went on: deck → source name.
+    private var keptFeeds: [Int: String] = [:]
+
+    static func source(for slot: Slot) -> String {
+        let name = slot.name.trimmingCharacters(in: .whitespaces)
+        return "Understudy " + (name.isEmpty ? "Deck \(slot.deckID + 1)" : name)
+    }
+
     var feeds: [Feed] {
-        if slots.isEmpty {
+        var list = slots.map { slot in
+            Feed(deckID: slot.deckID, source: Self.source(for: slot),
+                 note: slot.url == nil ? slot.status : playProblems[slot.deckID])
+        }
+        for (deck, source) in keptFeeds.sorted(by: { $0.key < $1.key })
+        where !list.contains(where: { $0.deckID == deck || $0.source == source }) {
+            list.append(Feed(deckID: deck, source: source, note: "No video from this deck right now"))
+        }
+        if list.isEmpty {
             return [Feed(deckID: Self.noDeckID, source: "Understudy", note: "No decks with takes yet")]
         }
-        return slots.map { slot in
-            let name = slot.name.trimmingCharacters(in: .whitespaces)
-            return Feed(deckID: slot.deckID, source: "Understudy " + (name.isEmpty ? "Deck \(slot.deckID + 1)" : name),
-                        note: slot.url == nil ? slot.status : playProblems[slot.deckID])
-        }
+        return list.sorted { $0.deckID < $1.deckID }
     }
 
     func refreshNDIStatus() {
@@ -330,6 +344,11 @@ final class VideoViewer: ObservableObject {
     private func rebuildSenders() {
         var senders: [Int: NDISender] = [:]
         var notes: [Int: NDIPump.Card] = [:]
+        if ndiEnabled {
+            for slot in slots { keptFeeds[slot.deckID] = Self.source(for: slot) }
+        } else {
+            keptFeeds = [:]
+        }
         if ndiEnabled {
             for feed in feeds {
                 let existing = pump.sender(for: feed.deckID)
