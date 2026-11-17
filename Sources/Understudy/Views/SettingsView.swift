@@ -372,8 +372,8 @@ private struct ShowControlSettings: View {
             TextField("Console IP", text: $model.settings.ma3Host, prompt: Text("e.g. 192.168.1.50"))
             TextField("OSC port", value: $model.settings.ma3Port, format: .number.grouping(.never))
             TextField("OSC prefix", text: $model.settings.ma3Prefix, prompt: Text("none"))
-            Stepper("Markers sequence \(model.settings.ma3Sequence)", value: $model.settings.ma3Sequence, in: 1...9999)
-            Stepper("Markers timecode show \(model.settings.ma3Timecode)", value: $model.settings.ma3Timecode, in: 1...9999)
+            Stepper("Markers sequence \(String(model.settings.ma3Sequence))", value: $model.settings.ma3Sequence, in: 1...9999)
+            Stepper("Markers timecode show \(String(model.settings.ma3Timecode))", value: $model.settings.ma3Timecode, in: 1...9999)
             Text("On the console: Menu › In & Out › OSC, add a line with Destination IP of this Mac, the port and prefix above, Mode UDP, and turn on Enable Input, Receive and Receive Command. Send to grandMA3 replaces the sequence and timecode show numbered here.")
                 .font(.caption).foregroundStyle(.secondary)
         }

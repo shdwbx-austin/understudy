@@ -158,7 +158,7 @@ struct MarkerOverlay: View {
             if lane == 0 && !clearsTags { lane = ends.dropFirst().firstIndex { $0 <= start } ?? max(ends.count, 1) }
             while ends.count <= lane { ends.append(-.infinity) }
             ends[lane] = end + 6
-            out[item.marker.id] = min(lane, 3)
+            out[item.marker.id] = lane
         }
         return out
     }
@@ -203,7 +203,9 @@ struct MarkerOverlay: View {
                         .allowsHitTesting(false)
                     // Label beside the tag, in small mono capitals; crowded ones stack downward.
                     // Arrayed hits have none: a run of them would be a wall of text.
-                    if !arrayed {
+                    // Past four lanes a label would land on another: it's left off (the marker
+                    // list has it), unless the marker is selected.
+                    if !arrayed, (lane[m.id] ?? 0) <= 3 || selected {
                     Text(m.displayName(in: timeline.markerTypes).uppercased())
                         .font(Theme.mono(9, bold: selected))
                         .tracking(0.8)
@@ -211,8 +213,9 @@ struct MarkerOverlay: View {
                         .lineLimit(1)
                         .fixedSize()
                         .padding(.horizontal, 3)
-                        .background(Theme.ink.opacity(0.75))
-                        .offset(x: x + 10, y: 24 + CGFloat(lane[m.id] ?? 0) * 15)
+                        .background(Theme.ink.opacity(selected ? 1 : 0.75))
+                        .zIndex(selected ? 1 : 0)
+                        .offset(x: x + 10, y: 24 + CGFloat(min(lane[m.id] ?? 0, 3)) * 15)
                         .allowsHitTesting(false)
                     }
                     // Tag: a square in the type's colour with its key. Drag to move, click to go.
@@ -706,18 +709,6 @@ struct MarkerList: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .background(
-            // Delete removes the selected markers (when no label is being edited).
-            Button("") {
-                guard editing == nil else { return }
-                if timeline.selectedMarkerIDs.count > 1 {
-                    timeline.removeMarkers(timeline.selectedMarkerIDs)
-                } else if let id = timeline.selectedMarkerID {
-                    timeline.removeMarker(id)
-                }
-            }
-            .keyboardShortcut(.delete, modifiers: []).opacity(0)
-        )
     }
 
     /// Done typing a label: back to the timeline's keys.
@@ -1014,11 +1005,16 @@ struct MarkerKeys: NSViewRepresentable {
     func updateNSView(_ view: Catcher, context: Context) { view.timeline = timeline }
 
     enum Key: Equatable { case next, previous, again, type(Int), loopIn, loopOut, loop, clearLoop, clear, quantize, name,
-                          copy, cut, paste, selectAll }
+                          copy, cut, paste, selectAll, delete }
 
     /// What a key press means, or nil to let it through. Layout-independent for [ and ]: their
     /// key positions (ANSI 33 and 30) count even where the layout puts other characters there.
     static func key(characters: String?, keyCode: UInt16, modifiers: NSEvent.ModifierFlags) -> Key? {
+        // Delete / forward delete (fn-Delete), alone or with ⌘ as in the Finder.
+        if keyCode == 51 || keyCode == 117,
+           modifiers.intersection([.control, .option, .shift]).isEmpty {
+            return .delete
+        }
         // ⌘C / ⌘X / ⌘V / ⌘A act on markers (text fields keep their own: they're skipped above).
         if modifiers.contains(.command), modifiers.intersection([.control, .option, .shift]).isEmpty {
             switch characters?.lowercased() ?? "" {
@@ -1081,6 +1077,8 @@ struct MarkerKeys: NSViewRepresentable {
                 case .cut: timeline.cutMarkers()
                 case .paste: timeline.pasteMarkers()
                 case .selectAll: timeline.selectSongMarkers()
+                case .delete:
+                    guard timeline.deleteSelectedMarkers() else { return event }
                 case .clear:
                     guard timeline.selectedMarkerIDs.count > 1 else { return event }
                     timeline.clearMarkerSelection()

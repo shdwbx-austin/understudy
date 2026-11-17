@@ -199,7 +199,7 @@ final class VideoViewer: ObservableObject {
         if !lib.isAvailable {
             ndiStatus = "NDI library not found (bundle libndi in the app, or install the NDI SDK/runtime)."
         } else if !ndiEnabled {
-            ndiStatus = "NDI off"
+            ndiStatus = ""   // the switch says it
         } else {
             let failed = feeds.filter { pump.sender(for: $0.deckID) == nil }
             if !failed.isEmpty {

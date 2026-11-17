@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **Delete works.** Delete (or fn-Delete, or ⌘Delete) removes the selected markers, with ⌘Z to bring them back; Markers › Delete Selected Markers does the same.
+- **Transport keys do what they say.** ← and → step a frame, ⇧← and ⇧→ a second, ⌥← and ⌥→ a song, space plays and pauses. Before, plain ← jumped a second and ⇧→ stepped a frame.
+- **A tidier song track.** The song's name and timecode sit along the bottom instead of under the markers, and marker labels that would land on each other are left off (the marker list has them; a selected marker's label always shows).
+- **Nothing wraps in a smaller window.** The header shortens "Open in window ⌘T" to "⌘T", the transport drops its LTC status and then the lead-in before anything wraps, and the footer drops AWAKE and the mark.
+- Smaller things: long messages (an import report) are two lines with the rest on hover; the Record screen's rate reads "30 FPS · FIXED" (or AUTO-DETECTED) instead of "30 · SET"; MA3 sequence and timecode numbers show as 1001, not 1,001; the NDI line no longer repeats "NDI off" beside its switch; the Timeline window says "no decks connected" instead of "driving the decks" when none are.
+
 ## 0.12.0 — 2026-11-16
 
 - **NDI shows up as soon as it's on.** Each deck in the viewer is an NDI source (*Understudy ME 1*…) whether or not its take has video, and with no decks at all there's one, *Understudy*. A feed with no video sends colour bars with its name, why there's no picture and a running clock; a paused or parked video keeps sending its frame, so a receiver that connects late still gets a picture. Understudy now also declares NDI's network service to macOS, so local network privacy doesn't hide the sources.
