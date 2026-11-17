@@ -112,6 +112,10 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var interfaces = NetworkInterfaceSettings()
     /// Folder that take backups are copied into (e.g. inside Dropbox); nil until chosen.
     public var backupFolder: String?
+    /// NotchLC transcodes go here (a subfolder per deck); nil = a NotchLC folder beside the media.
+    public var notchLCFolder: String?
+    /// A Media Encoder preset (.epr) for NotchLC; nil = the NotchLC format's defaults.
+    public var notchLCPreset: String?
     /// Confidence monitor: pictures of the decks from a capture device (e.g. a quad multiviewer).
     public var confidenceEnabled = false
     /// AVCaptureDevice unique ID; nil = first available.
@@ -200,6 +204,8 @@ public struct AppSettings: Codable, Equatable, Sendable {
         discoveryInterface = (try? c.decodeIfPresent(String.self, forKey: .discoveryInterface)) ?? d.discoveryInterface
         interfaces = (try? c.decodeIfPresent(NetworkInterfaceSettings.self, forKey: .interfaces)) ?? d.interfaces
         backupFolder = (try? c.decodeIfPresent(String.self, forKey: .backupFolder)) ?? d.backupFolder
+        notchLCFolder = (try? c.decodeIfPresent(String.self, forKey: .notchLCFolder)) ?? d.notchLCFolder
+        notchLCPreset = (try? c.decodeIfPresent(String.self, forKey: .notchLCPreset)) ?? d.notchLCPreset
         confidenceEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .confidenceEnabled)) ?? d.confidenceEnabled
         confidenceDeviceID = (try? c.decodeIfPresent(String.self, forKey: .confidenceDeviceID)) ?? d.confidenceDeviceID
         confidenceLayout = (try? c.decodeIfPresent(ConfidenceLayout.self, forKey: .confidenceLayout)) ?? d.confidenceLayout

@@ -192,6 +192,17 @@ Dante out and AES67 out keep their own **Network port** pickers on the Audio out
 - Backup is blocked while recording, and pressing **Record** cancels a backup in progress. Copying off a deck while it records isn't safe.
 - Clips are found by name in the deck's media folders (slots, cache, USB), up to three levels deep.
 
+## NotchLC test clips
+
+**Record › Transcode a Take to NotchLC…** turns the selected take's files (one per connected deck, from the project, the backup folder or the Understudy recorder) into NotchLC `.mov` files to load into disguise or another media server as test clips. The source files are only ever read.
+
+- **What it needs:** NotchLC can only be encoded on a Mac through **Adobe Media Encoder** (Creative Cloud) with **Notch's free NotchLC plugin for Adobe**. Get the macOS installer from Notch's downloads page (notch.one/downloads), install it, and quit Media Encoder if it was open. The sheet says what's missing until both are there. FFmpeg only decodes NotchLC, and Notch's other encoders are Windows-only or need a paid licence: see [docs/NOTCHLC.md](docs/NOTCHLC.md).
+- **How it runs:** Understudy opens Media Encoder (or uses the copy it opened earlier) and leaves it open, with a small watcher script inside it. Files are encoded one at a time in the background, with progress per file and **Cancel**, which stops Media Encoder's queue. If you opened Media Encoder yourself, quit it first so Understudy can start it with the watcher. If Media Encoder is busy with its own queue, the file fails with that message: let the queue finish, then transcode again.
+- **Where files go:** into a `NotchLC` folder beside the project's media for that deck (`objects/VideoFile/<deck>/NotchLC/`), or beside each file when no project is open, or into `<folder>/<deck>/` if you choose a folder. Each file is named like its source (`PGM_0003.mov`). A file that's already there is skipped (files only appear under their name once complete), so delete it to transcode again.
+- **Timecode and rate:** the frame rate and size follow the source. Notch's exporter doesn't write timecode, so Understudy copies the encoded file into place with the source's QuickTime timecode track added (no re-encode).
+- **Quality:** the NotchLC format's defaults. For another quality, save a preset in Media Encoder (Preset Browser → **+** → Create Encoding Preset, Format: NotchLC) and choose its `.epr` under **Preset**.
+- Blocked while recording (the files are still being written). Media Encoder writes each encode to a short path in the temporary folder first: Notch's plugin (1.4.3) crashes Media Encoder when the output path is long, as paths inside Dropbox projects often are. That needs room on the startup disk for the largest file.
+
 ## Understudy recorder (no HyperDeck)
 
 When a deck isn't there, a slot can record on the Mac instead: in **Assign decks**, switch the slot from **HYPERDECK** to **RECORDER**, choose a source and a codec, and Apply. It's a stand-in, not a replacement: it costs CPU, GPU and disk on the Mac that's also running the show, so use it in a pinch.
@@ -308,6 +319,7 @@ Runs on macOS 13+. Building needs Swift 6 (Xcode 16 or its Command Line Tools).
 ```sh
 ./scripts/test.sh          # core logic tests (Swift Testing; works without Xcode)
 ./scripts/network-harness.sh   # pins deck control, discovery, OSC in/out, disguise HTTP, curl and NDI to lo0 and en0 against stand-ins on 127.0.0.1 and 10.255.255.1; checks where the bytes go (temp store)
+./scripts/notchlc-harness.sh   # transcodes generated clips through Media Encoder + the NotchLC plugin; checks codec, frames, rate, timecode, decodes them back, and Cancel (temp store; needs AME and the plugin)
 ./scripts/recorder-harness.sh  # records from NDI loopbacks (BGRA, UYVY, SD interlaced), generated and 10-bit frames; checks frames, timecode, colour and field tags, decoded colours (temp store)
 swift run Understudy         # run unbundled while developing
 ./scripts/build-app.sh     # dist/Understudy.app + zip (ad-hoc signed)
