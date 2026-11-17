@@ -4,14 +4,10 @@ import Foundation
 import os
 import UnderstudyCore
 
-/// Applies a deck's input transform (log curve or .cube LUT) to its player item on the GPU: a Core
+/// Applies a deck's chosen .cube LUT to its player item on the GPU: a Core
 /// Image colour cube run by the item's video composition. The player layer on screen and the
 /// AVPlayerItemVideoOutput feeding NDI both get the converted frames, so the two always match.
 enum VideoGrade {
-    /// Built-in curves are baked to a cube this size (64³: well under a 10-bit step from the
-    /// exact maths).
-    static let builtInCubeSize = 64
-
     struct Cube: Sendable {
         let size: Int
         let data: Data
@@ -28,14 +24,13 @@ enum VideoGrade {
 
     private static let cache = OSAllocatedUnfairLock<[InputTransform: Cube]>(initialState: [:])
 
-    /// The cube for a transform (nil for none), read or baked once.
+    /// The cube for a transform (nil for none), read once.
     static func cube(for transform: InputTransform) throws -> Cube? {
         if transform == .none { return nil }
         if let hit = cache.withLock({ $0[transform] }) { return hit }
         let lut: CubeLUT
         switch transform {
         case .none: return nil
-        case .log(let curve): lut = LogToRec709(curve).cube(size: builtInCubeSize)
         case .lut(let path):
             do { lut = try CubeLUT.read(URL(fileURLWithPath: path)) } catch {
                 throw Failure.unreadable(URL(fileURLWithPath: path).lastPathComponent, error)

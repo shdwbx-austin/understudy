@@ -1,7 +1,7 @@
 import Foundation
 import UnderstudyCore
 
-/// Each deck's input transform (log curve or .cube LUT), kept in its deck settings so it's saved
+/// Each deck's .cube LUT (none unless the user picks one), kept in its deck settings so it's saved
 /// with the project, and handed to the viewer, which applies it on screen and on NDI.
 extension AppModel {
     func inputTransform(deck id: Int) -> InputTransform {

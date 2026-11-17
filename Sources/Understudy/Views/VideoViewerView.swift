@@ -138,8 +138,8 @@ struct PlayerLayerView: NSViewRepresentable {
     }
 }
 
-/// One menu per deck in the viewer: how its recordings become Rec.709 (None, a camera log curve,
-/// or a .cube LUT), for the picture here and on NDI alike. Saved with the deck in the project.
+/// One menu per deck in the viewer: None (as recorded, the default) or a .cube LUT the user
+/// loads, for the picture here and on NDI alike. Saved with the deck in the project.
 struct InputTransformMenus: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var viewer: VideoViewer
@@ -155,9 +155,6 @@ struct InputTransformMenus: View {
         let problem = viewer.gradeProblems[slot.deckID]
         return Menu {
             choice(.none, current, deck: slot.deckID)
-            Section("Log to Rec.709") {
-                ForEach(LogCurve.allCases) { choice(.log($0), current, deck: slot.deckID) }
-            }
             let luts = model.projectLUTs
             if !luts.isEmpty || current.lutPath != nil {
                 Section("LUTs") {
@@ -170,14 +167,15 @@ struct InputTransformMenus: View {
         } label: {
             HStack(spacing: 4) {
                 if problem != nil { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Theme.amber) }
-                Text("\(slot.name) · \(current.shortTitle)").lineLimit(1)
+                Text("\(slot.name) · \(current == .none ? "No LUT" : current.title)").lineLimit(1)
             }
             .font(Theme.grotesk(12, .light))
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
         .foregroundStyle(current == .none ? Theme.grey : Theme.paper)
-        .help(problem ?? "\(slot.name)'s input transform (\(current.title)), on screen and on NDI")
+        .help(problem ?? (current == .none ? "Apply a .cube LUT to \(slot.name), on screen and on NDI"
+                                           : "\(slot.name): LUT \(current.title), on screen and on NDI"))
     }
 
     private func choice(_ transform: InputTransform, _ current: InputTransform, deck: Int) -> some View {

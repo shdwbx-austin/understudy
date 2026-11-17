@@ -18,7 +18,7 @@ public struct DeckConfig: Codable, Equatable, Identifiable, Sendable {
     public var enabled = true
     /// Frames to fire `play` early. Positive = deck is slow to start.
     public var playOffsetFrames: Double = 0
-    /// How its recordings become Rec.709 in the viewer and on NDI (log curve or LUT).
+    /// A .cube LUT for its recordings in the viewer and on NDI (none by default).
     public var inputTransform: InputTransform = .none
 
     public init(id: Int, name: String, host: String, enabled: Bool = true, playOffsetFrames: Double = 0,
