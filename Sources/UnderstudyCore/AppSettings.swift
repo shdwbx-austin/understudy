@@ -112,6 +112,9 @@ public struct AppSettings: Codable, Equatable, Sendable {
     public var interfaces = NetworkInterfaceSettings()
     /// Folder that take backups are copied into (e.g. inside Dropbox); nil until chosen.
     public var backupFolder: String?
+    /// View plays takes from the backup folder where they are; with this on it also copies each
+    /// into the project's objects/VideoFile (when there's room).
+    public var copyTakesIntoProject = false
     /// NotchLC transcodes go here (a subfolder per deck); nil = a NotchLC folder beside the media.
     public var notchLCFolder: String?
     /// A Media Encoder preset (.epr) for NotchLC; nil = the NotchLC format's defaults.
@@ -206,6 +209,7 @@ public struct AppSettings: Codable, Equatable, Sendable {
         discoveryInterface = (try? c.decodeIfPresent(String.self, forKey: .discoveryInterface)) ?? d.discoveryInterface
         interfaces = (try? c.decodeIfPresent(NetworkInterfaceSettings.self, forKey: .interfaces)) ?? d.interfaces
         backupFolder = (try? c.decodeIfPresent(String.self, forKey: .backupFolder)) ?? d.backupFolder
+        copyTakesIntoProject = (try? c.decodeIfPresent(Bool.self, forKey: .copyTakesIntoProject)) ?? d.copyTakesIntoProject
         notchLCFolder = (try? c.decodeIfPresent(String.self, forKey: .notchLCFolder)) ?? d.notchLCFolder
         notchLCPreset = (try? c.decodeIfPresent(String.self, forKey: .notchLCPreset)) ?? d.notchLCPreset
         confidenceEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .confidenceEnabled)) ?? d.confidenceEnabled

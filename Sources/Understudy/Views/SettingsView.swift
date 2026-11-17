@@ -658,6 +658,11 @@ struct BackupFolderSettings: View {
             }
             Text("Takes are copied off the decks by FTP into dated folders here, one per deck. Choose a folder inside Dropbox and Dropbox syncs them.")
                 .font(.caption).foregroundStyle(.secondary)
+            Toggle("Copy takes into the project when viewed", isOn: $model.settings.copyTakesIntoProject)
+            Text(model.settings.copyTakesIntoProject
+                 ? "View also copies each take it plays from here into the project's objects/VideoFile, so the project holds its own media. A take is left where it is when the project's disk hasn't room for it."
+                 : "View plays takes from here as they are: nothing is copied, so the takes stay on this drive only. Keep it connected (and, in a synced folder, the files downloaded) to play them.")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 }
