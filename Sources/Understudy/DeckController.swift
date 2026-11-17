@@ -36,8 +36,11 @@ final class DeckController: ObservableObject, Identifiable {
         }
     }
 
-    /// Recording time left across mounted media, in seconds.
-    var mediaSecondsLeft: Int? { MediaTime.secondsLeft(slots) }
+    /// Recording time left across mounted media (the recorder: on its disk), in seconds.
+    var mediaSecondsLeft: Int? {
+        if isRecorder { return recorderStatus?.health.secondsLeft }
+        return MediaTime.secondsLeft(slots)
+    }
 
     /// Called when a recording on this deck ends (status left `record`).
     var onRecordingFinished: (() -> Void)?
@@ -57,6 +60,28 @@ final class DeckController: ObservableObject, Identifiable {
     /// A real transport status has been seen since launch.
     private var sawStatus = false
 
+    // MARK: Understudy recorder state
+
+    /// Set when this slot is the Understudy recorder rather than a HyperDeck.
+    private(set) var recorder: InternalRecorder?
+    @Published private(set) var recorderStatus: InternalRecorder.Status?
+    private var recorderTakes: RecorderTakeStore?
+    private var recorderSettings = RecorderSettings()
+    /// Record-while-code-runs: the name prefix to record under once show code rolls.
+    private var recorderArmedPrefix: String?
+    private var recorderDropFrame = false
+    /// Takes started but not yet in the list (ids and names are handed out once).
+    private var recorderIssuedID = 0
+    private var recorderIssuedNames: Set<String> = []
+    /// Where the recorder's next take goes. Set by AppModel.
+    var recorderFolder: (() -> URL)?
+    /// Show code (or, without it, the time of day) at a host time. Set by AppModel.
+    var recorderStartCode: ((Double) -> RecorderStartCode)?
+    /// Whether the recorder stamps timecode at the video rate (deck timecode setting). Set by AppModel.
+    var recorderTimecodeAtVideoRate: (() -> Bool)?
+
+    var isRecorder: Bool { recorder != nil }
+
     init(id: Int) {
         self.id = id
         maps = TakeMapStore(deckID: id)
@@ -68,6 +93,7 @@ final class DeckController: ObservableObject, Identifiable {
     // MARK: Connection
 
     func connect(host: String) {
+        detachRecorder()
         client?.disconnect()
         client = nil
         model = nil
@@ -100,6 +126,7 @@ final class DeckController: ObservableObject, Identifiable {
 
     /// Deliberate disconnect (slot switched off or emptied): not a fault.
     func disconnect() {
+        detachRecorder()
         client?.disconnect()
         client = nil
         connection = .disconnected
@@ -140,6 +167,7 @@ final class DeckController: ObservableObject, Identifiable {
 
     /// Reads configuration, device info and every media slot.
     func refreshSetup() {
+        guard !isRecorder else { return }
         sendQuietly(DeckSetupCommand.readConfiguration) { [weak self] r in
             if r.code == 211 { self?.config = r.fields }
         }
@@ -152,7 +180,7 @@ final class DeckController: ObservableObject, Identifiable {
 
     /// Re-reads every media slot (recording time left changes as the deck records).
     func refreshSlots() {
-        guard isConnected else { return }
+        guard isConnected, !isRecorder else { return }
         for id in 1...max(1, deviceInfo?.slotCount ?? 2) {
             sendQuietly(DeckSetupCommand.slotInfo(id)) { [weak self] r in
                 if r.code == 202, let slot = DeckSlotInfo(fields: r.fields) { self?.mergeSlot(slot) }
@@ -167,6 +195,7 @@ final class DeckController: ObservableObject, Identifiable {
 
     /// Sets one configuration value. `done` gets nil on success, or what went wrong.
     func apply(_ key: String, _ value: String, done: @escaping (String?) -> Void) {
+        guard !isRecorder else { done("The Understudy recorder has no deck settings."); return }
         guard client != nil else { done("Not connected."); return }
         request(DeckSetupCommand.set(key, value)) { [weak self] r, _, _ in
             guard let self else { return }
@@ -182,7 +211,7 @@ final class DeckController: ObservableObject, Identifiable {
     }
 
     /// Flashes the deck's front-panel button so it can be found in the rack.
-    func identify() { sendQuietly(DeckSetupCommand.identify) }
+    func identify() { if !isRecorder { sendQuietly(DeckSetupCommand.identify) } }
 
     /// Every command goes through here. A reply that arrives after this deck was re-pointed at
     /// another address (or disconnected) is delivered as "connection lost", so nothing from the
@@ -236,6 +265,7 @@ final class DeckController: ObservableObject, Identifiable {
     }
 
     func refreshTransport(_ done: (() -> Void)? = nil) {
+        guard !isRecorder else { done?(); return }
         request(HyperDeckCommand.transportInfo) { [weak self] response, _, _ in
             if response.isSuccess { self?.mergeTransport(response.fields) }
             done?()
@@ -243,6 +273,12 @@ final class DeckController: ObservableObject, Identifiable {
     }
 
     func refreshClips(_ done: (() -> Void)? = nil) {
+        if let recorderTakes {
+            clips = recorderTakes.clips
+            onClipsRefreshed?()
+            done?()
+            return
+        }
         request(HyperDeckCommand.clipsGet) { [weak self] response, _, _ in
             if response.isSuccess, let self {
                 self.clips = DeckClip.parse(response)
@@ -257,6 +293,10 @@ final class DeckController: ObservableObject, Identifiable {
     /// show code runs. Either way the deck stays in preview, so the live input passes through.
     func arm(prefix: String, mode: RecordMode, dropFrame: Bool) {
         resetChase()
+        if isRecorder {
+            armRecorder(prefix: prefix, mode: mode, dropFrame: dropFrame)
+            return
+        }
         send(HyperDeckCommand.stop)
         send(HyperDeckCommand.recordPrefix(prefix))
         switch mode {
@@ -279,6 +319,12 @@ final class DeckController: ObservableObject, Identifiable {
     /// STOP: halt transport, disarm, leave the deck in preview so the live feed passes through.
     func stopAll() {
         resetChase()
+        if isRecorder {
+            recorderArmedPrefix = nil
+            recorder?.stopTake()
+            refreshClips()
+            return
+        }
         send(HyperDeckCommand.stop)
         send(HyperDeckCommand.recordTrigger(timecodeRun: false))
         send(HyperDeckCommand.preview(true)) { [weak self] _ in self?.refreshClips() }
@@ -287,6 +333,13 @@ final class DeckController: ObservableObject, Identifiable {
     /// PLAY TC: disarm, switch the output to playback and report clip timecode.
     func enterPlayback(_ done: @escaping () -> Void) {
         resetChase()
+        if isRecorder {
+            // Nothing to play out: the View screen plays the recorder's files itself.
+            recorderArmedPrefix = nil
+            recorder?.stopTake()
+            refreshClips(done)
+            return
+        }
         send(HyperDeckCommand.stop)
         send(HyperDeckCommand.recordTrigger(timecodeRun: false))
         send(HyperDeckCommand.timecodeOutputClip)
@@ -295,6 +348,7 @@ final class DeckController: ObservableObject, Identifiable {
     }
 
     func cue(clipID: Int, frame: Int) {
+        guard !isRecorder else { return }
         send(HyperDeckCommand.stop)
         request(HyperDeckCommand.gotoClip(id: clipID, frame: frame)) { [weak self] response, _, _ in
             guard let self, response.isError else { return }
@@ -307,6 +361,7 @@ final class DeckController: ObservableObject, Identifiable {
     /// Fast pickup: stop, goto and play back to back. The deck rolls from the new frame about
     /// 70–95 ms after these go out (goto ~30 ms, then its start delay).
     func cueAndPlay(clipID: Int, frame: Int) {
+        guard !isRecorder else { return }
         send(HyperDeckCommand.stop)
         request(HyperDeckCommand.gotoClip(id: clipID, frame: frame)) { [weak self] response, _, _ in
             guard let self, response.isError else { return }
@@ -318,8 +373,16 @@ final class DeckController: ObservableObject, Identifiable {
         play()
     }
 
-    func play() { send(HyperDeckCommand.playSingleClip) }
-    func stopTransport() { send(HyperDeckCommand.stop) }
+    func play() { if !isRecorder { send(HyperDeckCommand.playSingleClip) } }
+
+    func stopTransport() {
+        if isRecorder {
+            recorderArmedPrefix = nil
+            recorder?.stopTake()
+        } else {
+            send(HyperDeckCommand.stop)
+        }
+    }
 
     func resetChase() {
         // A deck mid-chase must not run on unsupervised (input switch, rate change, new take).
@@ -370,6 +433,12 @@ final class DeckController: ObservableObject, Identifiable {
 
     /// Polls transport and hands back the deck timecode with the host time it was valid at.
     func poll(_ result: @escaping (Timecode, Double) -> Void) {
+        if let recorder {
+            // The newest recorded frame's code, valid half a frame after it was captured (deck
+            // readings are taken as mid-frame).
+            if let p = recorder.currentPosition() { result(p.timecode, p.host + 0.5 / p.rate.exact) }
+            return
+        }
         guard !pollInFlight, client != nil else { return }
         pollInFlight = true
         request(HyperDeckCommand.transportInfo) { [weak self] response, sentAt, receivedAt in
@@ -393,6 +462,156 @@ final class DeckController: ObservableObject, Identifiable {
         return freshError
     }
 
+    // MARK: Understudy recorder
+
+    /// Makes this slot the Understudy recorder, recording from `settings.source` (opened now, so
+    /// its picture and status show like a deck's input).
+    func attachRecorder(_ settings: RecorderSettings, dropFrame: Bool) {
+        client?.disconnect()
+        client = nil
+        let fresh = recorder == nil
+        if fresh {
+            transport = TransportInfo()
+            config = [:]
+            slots = []
+            deviceInfo = nil
+            everConnected = false
+            let recorder = InternalRecorder(deckName: "deck-\(id + 1)")
+            recorder.onStatus = { [weak self] status in
+                DispatchQueue.main.async { [self] in MainActor.assumeIsolated { self?.applyRecorder(status) } }
+            }
+            recorder.onTakeFinished = { [weak self] result in
+                DispatchQueue.main.async { [self] in MainActor.assumeIsolated { self?.recorderTakeFinished(result) } }
+            }
+            self.recorder = recorder
+            recorderTakes = RecorderTakeStore(deckID: id)
+        }
+        model = "Understudy recorder"
+        let sourceChanged = settings.source != recorderSettings.source || fresh
+        recorderSettings = settings
+        recorderDropFrame = dropFrame
+        clips = recorderTakes?.clips ?? []
+        guard let source = settings.source else {
+            recorder?.close()
+            connection = .disconnected
+            return
+        }
+        if sourceChanged {
+            if recorder?.isRecording == true { recorder?.stopTake() }
+            connection = .connecting
+            everConnected = false
+        }
+        recorder?.open(source, codec: settings.codec, dropFrame: dropFrame, folder: recorderFolder?())
+    }
+
+    private func detachRecorder() {
+        guard let recorder else { return }
+        recorder.close()
+        self.recorder = nil
+        recorderStatus = nil
+        recorderTakes = nil
+        recorderArmedPrefix = nil
+        recorderSettings = RecorderSettings()
+        model = nil
+        transport = TransportInfo()
+        clips = []
+    }
+
+    /// The recorder's file for a clip it made (for the viewer), if it's still there.
+    func recorderTakePath(_ clipName: String) -> String? { recorderTakes?.path(of: clipName) }
+
+    /// Status from the recorder, made to look like a deck's: connection, transport, input format.
+    private func applyRecorder(_ s: InternalRecorder.Status) {
+        guard recorder != nil else { return }
+        recorderStatus = s
+        var becameReady = false
+        switch s.state {
+        case .open:
+            if connection != .connected {
+                connection = .connected
+                everConnected = true
+                lastError = nil
+                becameReady = true
+            }
+        case .opening:
+            connection = .connecting
+        case .failed(let message):
+            lastError = message
+            connection = .failed(message)
+        case .closed:
+            if connection != .disconnected { connection = .disconnected }
+        }
+        var fields = ["status": s.recording ? "record" : "preview",
+                      "video format": s.lastVideoFormat ?? "none",
+                      "input video format": s.videoFormat ?? "none"]
+        if s.recording, let tc = s.timecode { fields["display timecode"] = tc.description }
+        mergeTransport(fields)
+        if !s.recording, transport.displayTimecode != nil { transport.displayTimecode = nil }
+        if becameReady {
+            refreshClips()
+            onReady?()
+        }
+    }
+
+    private func armRecorder(prefix: String, mode: RecordMode, dropFrame: Bool) {
+        recorderDropFrame = dropFrame
+        config["timecode preference"] = dropFrame ? "dropframe" : "nondropframe"
+        recorder?.setDropFrame(dropFrame)
+        recorder?.setFolder(recorderFolder?())
+        switch mode {
+        case .continuous:
+            recorderArmedPrefix = nil
+            startRecorderTake(prefix: prefix)
+        case .timecodeRun:
+            // Records while show code runs (see `recorderShowCode`), a new take each run, like a
+            // deck's timecode-run trigger.
+            recorderArmedPrefix = prefix
+        }
+    }
+
+    /// Record-while-code-runs: called every tick in Record with whether show code is rolling.
+    func recorderShowCode(rolling: Bool) {
+        guard let recorder, let prefix = recorderArmedPrefix else { return }
+        if rolling, !recorder.isRecording {
+            startRecorderTake(prefix: prefix)
+        } else if !rolling, recorder.isRecording {
+            recorder.stopTake()
+        }
+    }
+
+    private func startRecorderTake(prefix: String) {
+        guard let recorder, let takes = recorderTakes, let folder = recorderFolder?() else { return }
+        guard !recorder.isRecording else { return }
+        let fm = FileManager.default
+        let name = takes.list.nextName(prefix: prefix) { name in
+            recorderIssuedNames.contains(name) || fm.fileExists(atPath: folder.appendingPathComponent(name).path)
+        }
+        recorderIssuedNames.insert(name)
+        recorderIssuedID = max(recorderIssuedID, takes.list.nextID - 1) + 1
+        let host = HostClock.now()
+        let start = recorderStartCode?(host) ?? .clock(Date())
+        recorder.startTake(.init(url: folder.appendingPathComponent(name), takeID: recorderIssuedID, codec: recorderSettings.codec,
+                                 start: start, startHost: host,
+                                 timecodeAtVideoRate: recorderTimecodeAtVideoRate?() ?? true, dropFrame: recorderDropFrame))
+    }
+
+    private func recorderTakeFinished(_ result: Result<RecorderTake, RecorderError>) {
+        guard let takes = recorderTakes else { return }
+        switch result {
+        case .success(let take):
+            takes.add(take)
+            recorderIssuedNames.remove(take.name)
+            if take.droppedFrames > 0 {
+                lastError = "\(take.name): \(take.droppedFrames) frame\(take.droppedFrames == 1 ? "" : "s") dropped."
+            }
+        case .failure(let e):
+            lastError = e.message
+        }
+        // The new clip is listed now: let the take list and maps catch up.
+        refreshClips()
+        onRecordingFinished?()
+    }
+
     // MARK: Helpers
 
     func clip(takeOffset: Int) -> DeckClip? {
@@ -401,7 +620,9 @@ final class DeckController: ObservableObject, Identifiable {
     }
 
     func videoRate(dropFrame: Bool) -> FrameRate? {
-        guard let format = transport.videoFormat ?? transport.inputVideoFormat else { return nil }
+        // The recorder with no picture yet still knows the rate its takes were made at.
+        guard let format = transport.videoFormat ?? transport.inputVideoFormat ?? recorderTakes?.list.takes.last?.videoFormat
+        else { return nil }
         return FrameRate.fromVideoFormat(format, dropFrame: dropFrame)
     }
 }

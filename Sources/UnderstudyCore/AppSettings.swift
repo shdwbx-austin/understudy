@@ -18,13 +18,37 @@ public struct DeckConfig: Codable, Equatable, Identifiable, Sendable {
     public var enabled = true
     /// Frames to fire `play` early. Positive = deck is slow to start.
     public var playOffsetFrames: Double = 0
+    /// A HyperDeck at `host`, or Understudy recording on this Mac (`recorder`).
+    public var kind: DeckKind = .hyperdeck
+    /// Source and codec when `kind` is `.recorder`.
+    public var recorder = RecorderSettings()
 
-    public init(id: Int, name: String, host: String, enabled: Bool = true, playOffsetFrames: Double = 0) {
+    public init(id: Int, name: String, host: String, enabled: Bool = true, playOffsetFrames: Double = 0,
+                kind: DeckKind = .hyperdeck, recorder: RecorderSettings = RecorderSettings()) {
         self.id = id
         self.name = name
         self.host = host
         self.enabled = enabled
         self.playOffsetFrames = playOffsetFrames
+        self.kind = kind
+        self.recorder = recorder
+    }
+
+    public var isRecorder: Bool { kind == .recorder }
+
+    /// Something to connect to: an address for a HyperDeck, a source for the recorder.
+    public var isAssigned: Bool {
+        switch kind {
+        case .hyperdeck: return !host.trimmingCharacters(in: .whitespaces).isEmpty
+        case .recorder: return recorder.source != nil
+        }
+    }
+
+    /// The address a HyperDeck slot uses (nil for the recorder, which has none).
+    public var networkHost: String? {
+        guard kind == .hyperdeck else { return nil }
+        let h = host.trimmingCharacters(in: .whitespaces)
+        return h.isEmpty ? nil : h
     }
 
     public init(from decoder: Decoder) throws {
@@ -34,6 +58,8 @@ public struct DeckConfig: Codable, Equatable, Identifiable, Sendable {
         host = (try? c.decodeIfPresent(String.self, forKey: .host)) ?? ""
         enabled = (try? c.decodeIfPresent(Bool.self, forKey: .enabled)) ?? true
         playOffsetFrames = (try? c.decodeIfPresent(Double.self, forKey: .playOffsetFrames)) ?? 0
+        kind = (try? c.decodeIfPresent(DeckKind.self, forKey: .kind)) ?? .hyperdeck
+        recorder = (try? c.decodeIfPresent(RecorderSettings.self, forKey: .recorder)) ?? RecorderSettings()
     }
 }
 
