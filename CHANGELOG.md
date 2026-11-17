@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 — 2026-11-17
 
 - **Delete works.** Delete (or fn-Delete, or ⌘Delete) removes the selected markers, with ⌘Z to bring them back; Markers › Delete Selected Markers does the same.
 - **Transport keys do what they say.** ← and → step a frame, ⇧← and ⇧→ a second, ⌥← and ⌥→ a song, space plays and pauses. Before, plain ← jumped a second and ⇧→ stepped a frame.
