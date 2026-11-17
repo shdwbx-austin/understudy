@@ -22,7 +22,7 @@ extension AppModel {
     func useLUT(_ url: URL, deck id: Int) -> String? {
         guard settings.decks.indices.contains(id) else { return nil }
         do {
-            _ = try CubeLUT.read(url)
+            _ = try LUTFile.read(url)
         } catch {
             return "\(url.lastPathComponent) isn't a LUT Understudy can use. \(error.localizedDescription)"
         }

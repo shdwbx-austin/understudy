@@ -101,23 +101,74 @@ public struct PlaybackLUTSettings: Codable, Equatable, Sendable {
 
 // MARK: - .cube LUTs
 
-/// A 3D LUT, as in an Adobe/Resolve .cube file: `size`³ RGB entries, red changing fastest,
-/// over inputs 0–1. 1D LUTs and other input ranges are baked into this form when read.
-public struct CubeLUT: Equatable, Sendable {
-    public static let maxSize = 128
-    /// 1D LUTs become a 3D LUT this size.
-    public static let bakedSize = 33
+/// A .cube file (Adobe / Resolve): a 1D LUT, a 3D LUT, or Resolve's shaper (1D) followed by a 3D
+/// LUT, each over its own input range. Applied as they are: the shaper per channel, then the cube,
+/// nothing re-baked (so steep log toes in a 1D LUT stay exact).
+public struct LUTFile: Equatable, Sendable {
+    public static let max3DSize = 128
+    public static let max1DSize = 65536
 
     public var title: String?
-    public let size: Int
-    /// size³ × 3 floats, RGB, red fastest then green then blue.
-    public let values: [Float]
+    /// Applied first, per channel.
+    public var shaper: Table1D?
+    /// Then this, over `cubeDomain`.
+    public var cube: CubeLUT?
+    public var cubeDomain: Domain
 
-    public init(size: Int, values: [Float], title: String? = nil) {
-        precondition(values.count == size * size * size * 3)
-        self.size = size
-        self.values = values
+    public init(title: String? = nil, shaper: Table1D? = nil, cube: CubeLUT? = nil, cubeDomain: Domain = .unit) {
         self.title = title
+        self.shaper = shaper
+        self.cube = cube
+        self.cubeDomain = cubeDomain
+    }
+
+    /// An input range per channel.
+    public struct Domain: Equatable, Sendable {
+        public var min: [Double]
+        public var max: [Double]
+        public static let unit = Domain(min: [0, 0, 0], max: [1, 1, 1])
+        public init(min: [Double], max: [Double]) { self.min = min; self.max = max }
+        public var isUnit: Bool { self == .unit }
+        /// Per channel: value × scale + bias maps the range onto 0–1.
+        public var scale: [Double] { (0..<3).map { 1 / (max[$0] - min[$0]) } }
+        public var bias: [Double] { (0..<3).map { -min[$0] / (max[$0] - min[$0]) } }
+        func normalized(_ rgb: [Double]) -> [Double] { (0..<3).map { rgb[$0] * scale[$0] + bias[$0] } }
+    }
+
+    /// A 1D LUT: `size` RGB entries over `domain`, linearly interpolated, inputs clamped.
+    public struct Table1D: Equatable, Sendable {
+        public let size: Int
+        /// size × 3 floats, RGB.
+        public let values: [Float]
+        public var domain: Domain
+
+        public init(size: Int, values: [Float], domain: Domain = .unit) {
+            precondition(values.count == size * 3)
+            self.size = size
+            self.values = values
+            self.domain = domain
+        }
+
+        public func apply(_ rgb: [Double]) -> [Double] {
+            let t = domain.normalized(rgb)
+            return (0..<3).map { ch in
+                let pos = min(Swift.max(t[ch], 0), 1) * Double(size - 1)
+                let i = min(Int(pos), size - 2)
+                let f = pos - Double(i)
+                return Double(values[i * 3 + ch]) * (1 - f) + Double(values[(i + 1) * 3 + ch]) * f
+            }
+        }
+
+        /// RGB Float32 entries, the layout Core Image's CIColorCurves takes.
+        public func rgbData() -> Data { values.withUnsafeBufferPointer { Data(buffer: $0) } }
+    }
+
+    /// The whole file applied to one picture value (what the GPU does).
+    public func apply(_ rgb: [Double]) -> [Double] {
+        var v = rgb
+        if let shaper { v = shaper.apply(v) }
+        if let cube { v = cube.sample(cubeDomain.normalized(v)) }
+        return v
     }
 
     public enum ParseError: Error, Equatable, LocalizedError {
@@ -130,36 +181,43 @@ public struct CubeLUT: Equatable, Sendable {
         public var errorDescription: String? {
             switch self {
             case .noSize: return "Not a .cube LUT (no LUT_3D_SIZE or LUT_1D_SIZE)."
-            case .badSize(let n): return "LUT size \(n) isn't supported (3D: 2–\(CubeLUT.maxSize), 1D: 2–65536)."
+            case .badSize(let n): return "LUT size \(n) isn't supported (3D: 2–\(LUTFile.max3DSize), 1D: 2–\(LUTFile.max1DSize))."
             case .wrongCount(let e, let f): return "The LUT should have \(e) entries but has \(f)."
             case .badLine(let n, let text): return "Line \(n) isn't a LUT entry: \(text)"
-            case .badDomain: return "The LUT's input range (DOMAIN_MIN/MAX) is empty."
+            case .badDomain: return "The LUT's input range (DOMAIN_MIN/MAX or INPUT_RANGE) is empty."
             }
         }
     }
 
-    public static func read(_ url: URL) throws -> CubeLUT {
-        var lut = try parse(String(contentsOf: url, encoding: .utf8))
+    /// Reads a .cube file: UTF-8, or Latin-1 (older tools write that).
+    public static func read(_ url: URL) throws -> LUTFile {
+        let data = try Data(contentsOf: url)
+        guard let text = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .isoLatin1) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding)
+        }
+        var lut = try parse(text)
         if lut.title == nil { lut.title = url.deletingPathExtension().lastPathComponent }
         return lut
     }
 
-    /// Reads .cube text: TITLE, LUT_3D_SIZE / LUT_1D_SIZE, DOMAIN_MIN / DOMAIN_MAX,
-    /// LUT_3D_INPUT_RANGE / LUT_1D_INPUT_RANGE, # comments; other keywords are skipped.
-    public static func parse(_ text: String) throws -> CubeLUT {
+    /// Reads .cube text: TITLE, LUT_3D_SIZE / LUT_1D_SIZE (either or both: Resolve's shaper + 3D,
+    /// shaper entries first), DOMAIN_MIN / DOMAIN_MAX (the 3D LUT's range, or the 1D's when there's
+    /// no 3D), LUT_1D_INPUT_RANGE / LUT_3D_INPUT_RANGE, # comments; other keywords are skipped.
+    public static func parse(_ text: String) throws -> LUTFile {
         var title: String?
         var size3 = 0, size1 = 0
-        var domainMin = [0.0, 0, 0], domainMax = [1.0, 1, 1]
+        var domain: Domain?, range1: Domain?, range3: Domain?
         var values: [Float] = []
         var lineNumber = 0
+        func size(_ token: Substring?) -> Int? { token.flatMap { Int(String($0)) } }
         for raw in text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
             lineNumber += 1
             var line = Substring(raw)
             if let hash = line.firstIndex(of: "#") { line = line[..<hash] }
             line = line.drop { $0 == " " || $0 == "\t" }
             guard let first = line.first else { continue }
+            let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
             if first.isNumber || first == "-" || first == "+" || first == "." {
-                let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
                 let nums = parts.compactMap { Float($0) }
                 guard parts.count == 3, nums.count == 3, nums.allSatisfy(\.isFinite) else {
                     throw ParseError.badLine(lineNumber, String(line.prefix(60)))
@@ -167,65 +225,69 @@ public struct CubeLUT: Equatable, Sendable {
                 values += nums
                 continue
             }
-            let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
             let key = parts[0].uppercased()
-            let args = parts.dropFirst().compactMap { Double($0) }
+            let args = parts.dropFirst().compactMap { Double($0) }.filter(\.isFinite)
+            func bad() -> ParseError { .badLine(lineNumber, String(line.prefix(60))) }
             switch key {
             case "TITLE":
                 let rest = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
                 title = rest.trimmingCharacters(in: CharacterSet(charactersIn: "\""))
             case "LUT_3D_SIZE":
-                guard let n = args.first.map(Int.init) else { throw ParseError.badLine(lineNumber, String(line)) }
+                guard parts.count == 2, let n = size(parts.last) else { throw bad() }
                 size3 = n
             case "LUT_1D_SIZE":
-                guard let n = args.first.map(Int.init) else { throw ParseError.badLine(lineNumber, String(line)) }
+                guard parts.count == 2, let n = size(parts.last) else { throw bad() }
                 size1 = n
             case "DOMAIN_MIN":
-                guard args.count == 3 else { throw ParseError.badLine(lineNumber, String(line)) }
-                domainMin = args
+                guard args.count == 3 else { throw bad() }
+                domain = Domain(min: args, max: domain?.max ?? [1, 1, 1])
             case "DOMAIN_MAX":
-                guard args.count == 3 else { throw ParseError.badLine(lineNumber, String(line)) }
-                domainMax = args
-            case "LUT_3D_INPUT_RANGE", "LUT_1D_INPUT_RANGE":
-                guard args.count == 2 else { throw ParseError.badLine(lineNumber, String(line)) }
-                domainMin = [args[0], args[0], args[0]]
-                domainMax = [args[1], args[1], args[1]]
+                guard args.count == 3 else { throw bad() }
+                domain = Domain(min: domain?.min ?? [0, 0, 0], max: args)
+            case "LUT_1D_INPUT_RANGE", "LUT_3D_INPUT_RANGE":
+                guard args.count == 2 else { throw bad() }
+                let d = Domain(min: [args[0], args[0], args[0]], max: [args[1], args[1], args[1]])
+                if key == "LUT_1D_INPUT_RANGE" { range1 = d } else { range3 = d }
             default:
                 continue
             }
         }
-        guard (0..<3).allSatisfy({ domainMax[$0] > domainMin[$0] }) else { throw ParseError.badDomain }
-        let unitDomain = domainMin == [0, 0, 0] && domainMax == [1, 1, 1]
+        if size3 > 0, !(2...max3DSize).contains(size3) { throw ParseError.badSize(size3) }
+        if size1 > 0, !(2...max1DSize).contains(size1) { throw ParseError.badSize(size1) }
+        guard size1 > 0 || size3 > 0 else { throw ParseError.noSize }
+        let expected = size1 + size3 * size3 * size3
+        guard values.count == expected * 3 else { throw ParseError.wrongCount(expected: expected, found: values.count / 3) }
 
-        if size3 > 0 {
-            guard (2...maxSize).contains(size3) else { throw ParseError.badSize(size3) }
-            let expected = size3 * size3 * size3
-            guard values.count == expected * 3 else { throw ParseError.wrongCount(expected: expected, found: values.count / 3) }
-            let lut = CubeLUT(size: size3, values: values, title: title)
-            if unitDomain { return lut }
-            // Resample onto 0–1 inputs: each grid point looks up where it falls in the file's range.
-            return baked(size: size3, title: title) { rgb in
-                lut.sample((0..<3).map { (rgb[$0] - domainMin[$0]) / (domainMax[$0] - domainMin[$0]) })
-            }
-        }
+        // DOMAIN_* belongs to the 3D LUT when there is one, else to the 1D.
+        let domain3 = range3 ?? (size3 > 0 ? domain : nil) ?? .unit
+        let domain1 = range1 ?? (size3 > 0 ? nil : domain) ?? .unit
+        for d in [domain1, domain3] where !(0..<3).allSatisfy({ d.max[$0] > d.min[$0] }) { throw ParseError.badDomain }
+
+        var lut = LUTFile(title: title, cubeDomain: domain3)
         if size1 > 0 {
-            guard (2...65536).contains(size1) else { throw ParseError.badSize(size1) }
-            guard values.count == size1 * 3 else { throw ParseError.wrongCount(expected: size1, found: values.count / 3) }
-            return baked(size: bakedSize, title: title) { rgb in
-                (0..<3).map { ch in
-                    let t = (rgb[ch] - domainMin[ch]) / (domainMax[ch] - domainMin[ch])
-                    let pos = min(max(t, 0), 1) * Double(size1 - 1)
-                    let i = min(Int(pos), size1 - 2)
-                    let f = pos - Double(i)
-                    return Double(values[i * 3 + ch]) * (1 - f) + Double(values[(i + 1) * 3 + ch]) * f
-                }
-            }
+            lut.shaper = Table1D(size: size1, values: Array(values[0..<(size1 * 3)]), domain: domain1)
         }
-        throw ParseError.noSize
+        if size3 > 0 {
+            lut.cube = CubeLUT(size: size3, values: Array(values[(size1 * 3)...]))
+        }
+        return lut
+    }
+}
+
+/// A 3D LUT table: `size`³ RGB entries, red changing fastest, over inputs 0–1.
+public struct CubeLUT: Equatable, Sendable {
+    public let size: Int
+    /// size³ × 3 floats, RGB, red fastest then green then blue.
+    public let values: [Float]
+
+    public init(size: Int, values: [Float]) {
+        precondition(values.count == size * size * size * 3)
+        self.size = size
+        self.values = values
     }
 
     /// A LUT made by evaluating `transform` at each grid point.
-    public static func baked(size: Int, title: String? = nil, _ transform: ([Double]) -> [Double]) -> CubeLUT {
+    public static func baked(size: Int, _ transform: ([Double]) -> [Double]) -> CubeLUT {
         var values = [Float]()
         values.reserveCapacity(size * size * size * 3)
         let step = 1 / Double(size - 1)
@@ -236,7 +298,7 @@ public struct CubeLUT: Equatable, Sendable {
                 }
             }
         }
-        return CubeLUT(size: size, values: values, title: title)
+        return CubeLUT(size: size, values: values)
     }
 
     /// Trilinear lookup, inputs clamped to 0–1 (what the GPU does with it).

@@ -174,48 +174,83 @@ final class VideoViewer: ObservableObject {
     /// Applies the deck's transform again (its LUT file was loaded again).
     func regrade(deck: Int) { applyGrade(deck: deck) }
 
-    /// Puts the deck's transform on its current item (or takes it off), off the main thread
-    /// for reading the LUT; a newer change or another file wins over a late one.
+    /// Puts the deck's Playback LUT on its current item (or takes it off). The LUT file is read off
+    /// the main thread and checked even before a take loads, so a missing LUT shows at once; a
+    /// newer change or another file wins over a late one. Changing from one LUT to another swaps it
+    /// inside the running composition, so playback doesn't hitch.
     private func applyGrade(deck: Int) {
         gradeGeneration[deck, default: 0] += 1
         let generation = gradeGeneration[deck]
         gradeProblems[deck] = nil
-        guard let player = players[deck], let item = player.currentItem else { return }
+        let item = players[deck]?.currentItem
         let transform = transforms[deck] ?? .none
         if transform == .none {
-            if item.videoComposition != nil {
+            pump.setMetadata(Self.metadata(lut: nil, missing: nil), for: deck)
+            if let item, item.videoComposition != nil {
                 item.videoComposition = nil
                 redraw(deck)
             }
             return
         }
-        let asset = item.asset
         Task.detached(priority: .userInitiated) { [weak self] in
-            let result: Result<AVVideoComposition?, Error>
-            do {
-                if let cube = try VideoGrade.cube(for: transform) {
-                    result = .success(try await VideoGrade.composition(for: asset, cube: cube))
-                } else {
-                    result = .success(nil)
-                }
-            } catch {
-                result = .failure(error)
-            }
-            await self?.finishGrade(result, deck: deck, item: item, generation: generation)
+            let result = Result { try VideoGrade.chain(for: transform) }
+            await self?.finishGrade(result, transform: transform, deck: deck, item: item, generation: generation)
         }
     }
 
-    private func finishGrade(_ result: Result<AVVideoComposition?, Error>, deck: Int, item: AVPlayerItem, generation: Int?) {
-        guard gradeGeneration[deck] == generation, players[deck]?.currentItem === item else { return }
+    private func finishGrade(_ result: Result<VideoGrade.Chain?, Error>, transform: InputTransform, deck: Int,
+                             item: AVPlayerItem?, generation: Int?) {
+        guard gradeGeneration[deck] == generation else { return }
+        let current = item.flatMap { players[deck]?.currentItem === $0 ? $0 : nil }
         switch result {
-        case .success(let comp):
-            item.videoComposition = comp
-            redraw(deck)
         case .failure(let error):
-            item.videoComposition = nil
-            gradeProblems[deck] = error.localizedDescription
-            redraw(deck)
+            gradeProblems[deck] = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            pump.setMetadata(Self.metadata(lut: nil, missing: transform.title), for: deck)
+            if let current {
+                current.videoComposition = nil
+                redraw(deck)
+            }
+        case .success(let chain):
+            guard let chain else { return }
+            pump.setMetadata(Self.metadata(lut: chain.title, missing: nil), for: deck)
+            guard let current else { return }
+            do {
+                if let grader = VideoGrade.grader(of: current) {
+                    try grader.setChain(chain)
+                    redraw(deck)
+                    return
+                }
+                let grader = try VideoGrade.Grader(chain) { [weak self] problem in
+                    Task { @MainActor in self?.gradeProblems[deck] = problem }
+                }
+                let asset = current.asset
+                Task.detached(priority: .userInitiated) { [weak self] in
+                    let comp = try? await VideoGrade.composition(for: asset, grader: grader)
+                    await self?.finishComposition(comp, deck: deck, item: current, generation: generation)
+                }
+            } catch {
+                gradeProblems[deck] = error.localizedDescription
+                current.videoComposition = nil
+                redraw(deck)
+            }
         }
+    }
+
+    private func finishComposition(_ comp: AVVideoComposition?, deck: Int, item: AVPlayerItem, generation: Int?) {
+        guard gradeGeneration[deck] == generation, players[deck]?.currentItem === item else { return }
+        if comp == nil { gradeProblems[deck] = "Couldn't set up the LUT for this file; playing it as recorded" }
+        item.videoComposition = comp
+        redraw(deck)
+    }
+
+    /// Per-frame NDI metadata naming the Playback LUT, so receivers can tell.
+    static func metadata(lut: String?, missing: String?) -> String {
+        func esc(_ s: String) -> String {
+            s.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "\"", with: "&quot;")
+                .replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+        }
+        if let missing { return "<understudy_playback lut=\"none\" lut_missing=\"\(esc(missing))\"/>" }
+        return "<understudy_playback lut=\"\(esc(lut ?? "none"))\"/>"
     }
 
     /// A paused picture is drawn again with the new look (screen and NDI).
