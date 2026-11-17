@@ -2,7 +2,8 @@
 //  1. NDI loopback, BGRA (alpha) 1080p29.97 DF → H.264, ~10 s.
 //  2. NDI loopback, UYVY 1080p25 → HEVC: the 2vuy path (what Understudy's own NDI out sends).
 //  3. NDI loopback, UYVY 576i50 interleaved → ProRes 422: SD colour (BT.601) and fields; then a
-//     sender sending separate fields (NDI weaves them into interleaved frames for the receiver).
+//     sender sending separate fields (NDI weaves them into interleaved frames for the receiver);
+//     then a stand-in for this Mac's own Understudy output, which must be hidden and refused.
 //  4. Generated frames (no NDI) → ProRes 422 Proxy, across the 11:00 drop-frame minute.
 //  5. A 5-frame gap in the source: held frames, constant frame rate.
 //  6. 10-bit 4:2:2 (x422) → ProRes 422, stamped with the time of day at 29.97 non-drop.
@@ -217,11 +218,11 @@ let ndiReady = NDILibrary.shared.isAvailable
 if ndiReady { print("NDI: \(NDILibrary.shared.path ?? "?")") } else { check("NDI library", false, "set UNDERSTUDY_LIBNDI to libndi.dylib") }
 
 // 1. NDI BGRA (alpha) loopback → H.264.
-if ndiReady, let sender = NDISender(name: "Understudy Harness Bars") {
+if ndiReady, let sender = NDISender(name: "Recorder Harness Bars") {
     let rate = FrameRate.fps29_97DF, start = Timecode("01:00:00;00")!
     let pattern = NDITestPattern(title: "Harness", note: "NDI BGRA loopback")
     let stop = sendOverNDI(rate: rate) { if let f = pattern.frame() { sender.send(f, fps: rate.exact) } }
-    if let name = findNDI("Understudy Harness Bars"),
+    if let name = findNDI("Recorder Harness Bars"),
        let (take, warnings) = record(RecorderSource(kind: .ndi, id: name, name: name), codec: .h264, seconds: seconds,
                                      startTC: start, rate: rate, file: "Harness NDI_0001.mov") {
         check("NDI BGRA: alpha dropped is said", warnings.contains("SOURCE ALPHA NOT RECORDED"), warnings.sorted().joined(separator: ", "))
@@ -231,7 +232,7 @@ if ndiReady, let sender = NDISender(name: "Understudy Harness Bars") {
 }
 
 // 2. NDI UYVY 1080p25 → HEVC.
-if ndiReady, let sender = UYVYSender(name: "Understudy Harness UYVY") {
+if ndiReady, let sender = UYVYSender(name: "Recorder Harness UYVY") {
     let rate = FrameRate.fps25, start = Timecode("09:59:50:00")!
     let pattern = NDITestPattern(title: "Harness", note: "NDI UYVY loopback")
     let convert = PictureConverter(width: 1920, height: 1080, format: kCVPixelFormatType_422YpCbCr8, matrix: kCVImageBufferYCbCrMatrix_ITU_R_709_2)
@@ -239,7 +240,7 @@ if ndiReady, let sender = UYVYSender(name: "Understudy Harness UYVY") {
     let stop = sendOverNDI(rate: rate) {
         if let f = state.0.frame(), let u = state.1.convert(f) { sender.send(u, rate: rate, interleaved: false) }
     }
-    if let name = findNDI("Understudy Harness UYVY"),
+    if let name = findNDI("Recorder Harness UYVY"),
        let (take, warnings) = record(RecorderSource(kind: .ndi, id: name, name: name), codec: .hevc, seconds: 5,
                                      startTC: start, rate: rate, file: "Harness UYVY_0001.mov") {
         check("NDI UYVY: no alpha warning", !warnings.contains("SOURCE ALPHA NOT RECORDED"), warnings.sorted().joined(separator: ", "))
@@ -249,7 +250,7 @@ if ndiReady, let sender = UYVYSender(name: "Understudy Harness UYVY") {
 }
 
 // 3. NDI UYVY 576i50 interleaved (BT.601) → ProRes 422.
-if ndiReady, let sender = UYVYSender(name: "Understudy Harness SD") {
+if ndiReady, let sender = UYVYSender(name: "Recorder Harness SD") {
     let rate = FrameRate.fps25, start = Timecode("10:00:00:00")!
     let pattern = NDITestPattern(title: "Harness SD", note: "576i UYVY, BT.601")
     let convert = PictureConverter(width: 720, height: 576, format: kCVPixelFormatType_422YpCbCr8, matrix: kCVImageBufferYCbCrMatrix_ITU_R_601_4)
@@ -257,7 +258,7 @@ if ndiReady, let sender = UYVYSender(name: "Understudy Harness SD") {
     let stop = sendOverNDI(rate: rate) {
         if let f = state.0.frame(), let u = state.1.convert(f) { sender.send(u, rate: rate, interleaved: true) }
     }
-    if let name = findNDI("Understudy Harness SD"),
+    if let name = findNDI("Recorder Harness SD"),
        let (take, warnings) = record(RecorderSource(kind: .ndi, id: name, name: name), codec: .proRes422, seconds: 4,
                                      startTC: start, rate: rate, file: "Harness SD_0001.mov") {
         check("NDI SD: interlaced kept (no progressive warning with ProRes)",
@@ -272,7 +273,7 @@ if ndiReady, let sender = UYVYSender(name: "Understudy Harness SD") {
 // field frame's yres is the field's own height). NDI weaves them for the receiver, so the take is
 // 576i50 like the interleaved one. (If a receiver is ever handed separate fields, it reconnects
 // asking NDI to de-interlace and the status says so; NDI doesn't do that with UYVY_BGRA.)
-if ndiReady, let sender = UYVYSender(name: "Understudy Harness Fields") {
+if ndiReady, let sender = UYVYSender(name: "Recorder Harness Fields") {
     let rate = FrameRate.fps25, start = Timecode("10:30:00:00")!
     let pattern = NDITestPattern(title: "Harness fields", note: "576i as separate fields")
     let convert = PictureConverter(width: 720, height: 288, format: kCVPixelFormatType_422YpCbCr8, matrix: kCVImageBufferYCbCrMatrix_ITU_R_601_4)
@@ -281,7 +282,7 @@ if ndiReady, let sender = UYVYSender(name: "Understudy Harness Fields") {
         state.2.value += 1
         if let f = state.0.frame(), let u = state.1.convert(f) { sender.send(u, rate: rate, formatType: state.2.value % 2 == 0 ? 2 : 3) }
     }
-    if let name = findNDI("Understudy Harness Fields"),
+    if let name = findNDI("Recorder Harness Fields"),
        let (take, warnings) = record(RecorderSource(kind: .ndi, id: name, name: name), codec: .proRes422, seconds: 4,
                                      startTC: start, rate: rate, file: "Harness Fields_0001.mov") {
         print("  separate fields arrive as \(take.videoFormat); warnings: \(warnings.sorted().joined(separator: ", "))")
@@ -289,6 +290,33 @@ if ndiReady, let sender = UYVYSender(name: "Understudy Harness Fields") {
         await verify(take, expectStart: start, rate: rate, seconds: 4, label: "NDI separate fields",
                      Expect(format: "576i50", color: .rec601PAL, scan: .topFieldFirst))
     } else { check("NDI separate-fields take", false, "no take") }
+    stop()
+}
+
+// 3c. One of this Mac's own Understudy outputs ("Understudy ME 9" here, a stand-in): seen on the
+// network, but never offered, and refused if a slot names it.
+if ndiReady, let sender = NDISender(name: "Understudy ME 9") {
+    let pattern = NDITestPattern(title: "Own output", note: "stand-in for Understudy's NDI out")
+    let stop = sendOverNDI(rate: .fps25) { if let f = pattern.frame() { sender.send(f, fps: 25) } }
+    if let name = findNDI("(Understudy ME 9)") {
+        check("Own output: recognised as this Mac's", NDIFinder.isOwnOutput(name), name)
+        let listed = Box<[String]?>(nil)
+        NDIFinder.shared.list(wait: 1) { names in listed.value = names.filter { !NDIFinder.isOwnOutput($0) } }
+        for _ in 0..<60 where listed.value == nil { try? await Task.sleep(nanoseconds: 50_000_000) }
+        check("Own output: left out of the source list", listed.value.map { !$0.contains(name) } ?? false,
+              "list: \((listed.value ?? []).joined(separator: ", "))")
+        let recorder = InternalRecorder(deckName: "Harness own")
+        let state = Box(InternalRecorder.Status.State.closed)
+        recorder.onStatus = { s in state.value = s.state }
+        recorder.open(RecorderSource(kind: .ndi, id: name, name: name), codec: .h264, dropFrame: false, folder: out)
+        _ = wait(5) { if case .failed = state.value { return true }; return false }
+        if case .failed(let why) = state.value {
+            check("Own output: refused when a slot names it", why.contains("own NDI output"), why)
+        } else {
+            check("Own output: refused when a slot names it", false, "\(state.value)")
+        }
+        recorder.close()
+    } else { check("Own output source found", false, "never showed up") }
     stop()
 }
 
@@ -313,14 +341,17 @@ func writeDirect(_ file: String, codec: RecorderCodec, rate: FrameRate, start: R
                                     width: convert?.width ?? NDITestPattern.width, height: convert?.height ?? NDITestPattern.height,
                                     videoRate: rate, color: .rec709, scan: scan)
         inspect(writer)
+        // Paced at the frame rate, as a live source arrives (a gap is real time with no frames).
+        let began = Date()
         for n in 0..<count where !missing.contains(n) {
+            let due = Double(n) / rate.exact - Date().timeIntervalSince(began)
+            if due > 0 { Thread.sleep(forTimeInterval: due) }
             guard var buffer = pattern.frame() else { break }
             RecorderColor.rec709.attach(to: buffer)
             if let convert { guard let c = convert.convert(buffer) else { break }; buffer = c }
             scan.attach(to: buffer)
             let t = Double(n) / rate.exact
             writer.append(RecorderFrame(buffer: buffer, time: t, host: t, fps: rate.exact))
-            while !writer.isReady { Thread.sleep(forTimeInterval: 0.002) }   // offline: let the encoder keep up
         }
         let result = Box<Result<RecorderTake, RecorderError>?>(nil)
         writer.finish { result.value = $0 }

@@ -398,6 +398,11 @@ final class InternalRecorder: @unchecked Sendable {
         case .testPattern:
             done(.success(TestPatternFrameSource()))
         case .ndi:
+            // A saved or typed-in source that's this Mac's own Understudy output is refused.
+            guard !NDIFinder.isOwnOutput(ref.id) else {
+                done(.failure(.failed("\(ref.name) is Understudy's own NDI output on this Mac (the decks' footage through the Playback LUT). Choose the camera or switcher feed instead.")))
+                return
+            }
             done(.success(NDIFrameSource(sourceName: ref.id)))
         case .capture:
             @Sendable func pick() {

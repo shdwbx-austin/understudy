@@ -130,6 +130,11 @@ private struct SlotRow: View {
                     .font(Theme.mono(9, bold: true)).tracking(1.2).foregroundStyle(Theme.amber)
                     .padding(.leading, 44 + Theme.gutter)
             }
+            if config.isRecorder, let source = config.recorder.source, source.kind == .ndi, NDIFinder.isOwnOutput(source.id) {
+                Text("THAT'S UNDERSTUDY'S OWN NDI OUTPUT (DECK FOOTAGE THROUGH THE PLAYBACK LUT) — CHOOSE THE SOURCE ITSELF")
+                    .font(Theme.mono(9, bold: true)).tracking(1.2).foregroundStyle(Theme.amber)
+                    .padding(.leading, 44 + Theme.gutter)
+            }
             if config.isRecorder {
                 Text("RECORDS ON THIS MAC — A STAND-IN FOR A HYPERDECK: USES CPU, GPU AND DISK WHILE THE SHOW RUNS")
                     .font(Theme.mono(9)).tracking(1.2).foregroundStyle(Theme.grey)

@@ -20,7 +20,9 @@ final class RecorderSources: ObservableObject {
         searchingNDI = true
         NDIFinder.shared.list(wait: 1.5) { [weak self] names in
             guard let self else { return }
-            self.ndi = names.sorted().map { RecorderSource(kind: .ndi, id: $0, name: $0) }
+            // Understudy's own outputs on this Mac carry the Playback LUT and are copies of the
+            // decks' recordings: never offered.
+            self.ndi = names.filter { !NDIFinder.isOwnOutput($0) }.sorted().map { RecorderSource(kind: .ndi, id: $0, name: $0) }
             self.searchingNDI = false
         }
     }

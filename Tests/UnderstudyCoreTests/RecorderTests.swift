@@ -149,6 +149,23 @@ struct RecorderTests {
         #expect(RecorderStartCode.clock(noon, calendar: calendar) == RecorderStartCode(seconds: 43_200, isClockTime: true))
     }
 
+    @Test func ownUnderstudyOutputsAreRecognised() {
+        let here = ["Austins-MacBook-Pro-6.local", "Austins-MacBook-Pro-6"]
+        for name in ["AUSTINS-MACBOOK-PRO-6.LOCAL (Understudy ME 1)", "AUSTINS-MACBOOK-PRO-6 (Understudy)",
+                     "austins-macbook-pro-6.local. (Understudy AUX 1)"] {
+            #expect(RecorderSource.isOwnUnderstudyOutput(name, localHosts: here), "\(name)")
+        }
+        // Another Mac's Understudy, this Mac's other sources, and look-alikes are fine.
+        for name in ["SHOW-MINI.LOCAL (Understudy ME 1)", "AUSTINS-MACBOOK-PRO-6.LOCAL (Program)",
+                     "AUSTINS-MACBOOK-PRO-6.LOCAL (Understudyish)", "AUSTINS-MACBOOK-PRO-6.LOCAL (Recorder Harness Bars)",
+                     "Understudy ME 1", "(Understudy ME 1)"] {
+            #expect(!RecorderSource.isOwnUnderstudyOutput(name, localHosts: here), "\(name)")
+        }
+        #expect(!RecorderSource.isOwnUnderstudyOutput("X (Understudy)", localHosts: []))
+        let parts = RecorderSource.ndiParts("STUDIO (Cam (wide))")
+        #expect(parts?.host == "STUDIO" && parts?.source == "Cam (wide)")
+    }
+
     // MARK: Colour and pixel formats
 
     @Test func untaggedColourFollowsHeight() {

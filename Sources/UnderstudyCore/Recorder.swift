@@ -56,6 +56,33 @@ public struct RecorderSource: Codable, Hashable, Sendable {
     }
 }
 
+extension RecorderSource {
+    /// An NDI source name split into its machine and source parts: "STUDIO-MAC (Program)".
+    public static func ndiParts(_ name: String) -> (host: String, source: String)? {
+        guard let open = name.firstIndex(of: "("), name.hasSuffix(")"), open > name.startIndex else { return nil }
+        let host = name[..<open].trimmingCharacters(in: .whitespaces)
+        let source = name[name.index(after: open)..<name.index(before: name.endIndex)]
+        return host.isEmpty ? nil : (host, String(source))
+    }
+
+    /// One of this Mac's own Understudy NDI outputs ("Understudy", "Understudy ME 1", …): copies of
+    /// the decks' recordings with the Playback LUT applied, never something to record. `localHosts`
+    /// are this machine's names (NDI uses its host name; compared without case or ".local").
+    public static func isOwnUnderstudyOutput(_ ndiName: String, localHosts: [String]) -> Bool {
+        guard let parts = ndiParts(ndiName) else { return false }
+        guard parts.source == "Understudy" || parts.source.hasPrefix("Understudy ") else { return false }
+        let mine = Set(localHosts.map(normalizedHost).filter { !$0.isEmpty })
+        return mine.contains(normalizedHost(parts.host))
+    }
+
+    static func normalizedHost(_ h: String) -> String {
+        var s = h.trimmingCharacters(in: .whitespaces).uppercased()
+        while s.hasSuffix(".") { s.removeLast() }
+        if s.hasSuffix(".LOCAL") { s.removeLast(6) }
+        return s
+    }
+}
+
 /// What the recorder encodes to. H.264 and HEVC use the Mac's hardware encoder; ProRes uses the
 /// ProRes engine on Macs that have one (M1 Pro/Max/Ultra and later) and software elsewhere.
 public enum RecorderCodec: String, Codable, CaseIterable, Sendable, Identifiable {

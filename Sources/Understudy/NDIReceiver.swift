@@ -2,6 +2,7 @@ import CNDI
 import CoreVideo
 import Foundation
 import os
+import SystemConfiguration
 import UnderstudyCore
 
 /// NDI sources on the network (for the recorder's source list). One finder for the app's life;
@@ -15,6 +16,20 @@ final class NDIFinder: @unchecked Sendable {
     private let queue = DispatchQueue(label: "understudy.ndi.find", qos: .utility)
 
     var isAvailable: Bool { lib.findCreate != nil && lib.findSources != nil }
+
+    /// This Mac's names, as NDI might put them in front of its own sources.
+    static let localHosts: [String] = {
+        var names = [ProcessInfo.processInfo.hostName]
+        var buffer = [CChar](repeating: 0, count: 256)
+        if gethostname(&buffer, buffer.count) == 0 { names.append(String(cString: buffer)) }
+        if let local = SCDynamicStoreCopyLocalHostName(nil) as String? { names.append(local) }
+        return names
+    }()
+
+    /// Whether `name` is one of this Mac's own Understudy NDI outputs (see RecorderSource).
+    static func isOwnOutput(_ name: String) -> Bool {
+        RecorderSource.isOwnUnderstudyOutput(name, localHosts: localHosts)
+    }
 
     /// Calls `done` on the main queue with the source names (e.g. "STUDIO-MAC (Program)").
     func list(wait: Double = 1.0, done: @escaping @MainActor @Sendable ([String]) -> Void) {
