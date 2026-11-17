@@ -47,7 +47,24 @@ public struct ShowTargets: Codable, Equatable, Sendable {
     public var d3Track = ""
     public var d3Style: D3Push.Style = .notes
     public var d3TrackStart = "00:00:00:00"
+    public var markerExport = MarkerExportSetup()
     public init() {}
+
+    /// Every field optional, so a project saved before a field existed keeps the rest.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = ShowTargets()
+        ma3Host = (try? c.decodeIfPresent(String.self, forKey: .ma3Host)) ?? d.ma3Host
+        ma3Port = (try? c.decodeIfPresent(Int.self, forKey: .ma3Port)) ?? d.ma3Port
+        ma3Prefix = (try? c.decodeIfPresent(String.self, forKey: .ma3Prefix)) ?? d.ma3Prefix
+        ma3Sequence = (try? c.decodeIfPresent(Int.self, forKey: .ma3Sequence)) ?? d.ma3Sequence
+        ma3Timecode = (try? c.decodeIfPresent(Int.self, forKey: .ma3Timecode)) ?? d.ma3Timecode
+        d3Host = (try? c.decodeIfPresent(String.self, forKey: .d3Host)) ?? d.d3Host
+        d3Track = (try? c.decodeIfPresent(String.self, forKey: .d3Track)) ?? d.d3Track
+        d3Style = (try? c.decodeIfPresent(D3Push.Style.self, forKey: .d3Style)) ?? d.d3Style
+        d3TrackStart = (try? c.decodeIfPresent(String.self, forKey: .d3TrackStart)) ?? d.d3TrackStart
+        markerExport = (try? c.decodeIfPresent(MarkerExportSetup.self, forKey: .markerExport)) ?? d.markerExport
+    }
 }
 
 /// A project file (`<Name>.understudy`): everything about one show. Machine things (audio devices,

@@ -1238,11 +1238,6 @@ extension AppModel {
         return "Understudy · \(name)"
     }
 
-    /// Markers on the set (or all, if the set has none placed).
-    var markersToSend: [Marker] {
-        let placed = timeline.layout.placed(timeline.markers).map(\.marker)
-        return placed.isEmpty ? timeline.markers : placed
-    }
 
     func exportMarkersCSV() {
         let panel = NSSavePanel()
@@ -1258,47 +1253,67 @@ extension AppModel {
         }
     }
 
-    /// A grandMA3 plugin (XML + Lua) that builds the sequence and timecode show on the console.
+    /// The set, in order, as the exports see it.
+    var exportSongs: [ExportSong] { ExportSong.set(timeline.layout) }
+
+    /// What a grandMA3 export makes with the current setup.
+    func ma3Plan() -> MA3Plan {
+        MA3Plan.make(timeline.markers, songs: exportSongs, rate: ltcRate, types: timeline.markerTypes,
+                     settings: settings.markerExport.ma3, sequenceStart: settings.ma3Sequence,
+                     timecodeStart: settings.ma3Timecode, name: markerSetName)
+    }
+
+    /// The rows a disguise export writes with the current setup.
+    func d3Rows() -> (rows: [D3Row], outside: Int) {
+        let start = Timecode(settings.d3TrackStart).map { Double($0.frameIndex(at: ltcRate.ltcRate)) / ltcRate.ltcRate.exact } ?? 0
+        return D3Row.rows(timeline.markers, songs: exportSongs, rate: ltcRate, types: timeline.markerTypes,
+                          settings: settings.markerExport.d3, fallback: settings.d3Style,
+                          singleTrack: settings.d3Track.isEmpty ? nil : settings.d3Track, singleStart: start)
+    }
+
+    /// A grandMA3 plugin (XML + Lua) that builds the export on the console.
     func exportMA3Plugin() {
+        let plan = ma3Plan()
+        guard plan.markerCount > 0 else { linkMessage = "No markers to export."; return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "understudy_markers.xml"
         panel.allowedContentTypes = [.xml]
         panel.message = "Save the plugin into the console's plugins folder (or a USB stick), then import it in the Plugins pool."
         guard panel.runModal() == .OK, let url = panel.url else { return }
         let luaName = url.deletingPathExtension().lastPathComponent + ".lua"
-        let markers = markersToSend
-        let lua = MA3Deploy.pluginLua(markers, rate: ltcRate, sequence: settings.ma3Sequence, timecode: settings.ma3Timecode,
-                                      name: markerSetName, types: timeline.markerTypes)
+        let lua = MA3Deploy.pluginLua(plan)
         let xml = MA3Deploy.pluginXML(name: "Understudy markers", luaFile: luaName)
         do {
             try xml.write(to: url, atomically: true, encoding: .utf8)
             try lua.write(to: url.deletingLastPathComponent().appendingPathComponent(luaName), atomically: true, encoding: .utf8)
-            linkMessage = "MA3 plugin saved: \(url.lastPathComponent) + \(luaName) (\(markers.count) markers)."
+            linkMessage = "MA3 plugin saved: \(url.lastPathComponent) + \(luaName) (\(plan.markerCount) markers)."
         } catch {
             linkMessage = "Couldn't write the plugin: \(error.localizedDescription)"
         }
     }
 
-    /// Builds the markers on a grandMA3 over OSC: Sequence N (one cue each) and Timecode M (Goto events).
+    /// Builds the export on a grandMA3 over OSC. Adds to what's there; see `MA3Deploy`.
     func deployMarkersToMA3(confirm: Bool = true) {
-        let markers = markersToSend
-        guard !markers.isEmpty else { linkMessage = "No markers to send."; return }
+        let plan = ma3Plan()
+        guard plan.markerCount > 0 else { linkMessage = "No markers to send."; return }
         guard let sender = OSCSender(host: settings.ma3Host, port: settings.ma3Port) else {
             linkMessage = "Set the grandMA3's IP in Settings › Show control."
             return
         }
         if confirm {
             let alert = NSAlert()
-            alert.messageText = "Send \(markers.count) markers to grandMA3 at \(settings.ma3Host)?"
-            alert.informativeText = "This replaces Sequence \(settings.ma3Sequence) and Timecode \(settings.ma3Timecode) on the console."
+            alert.messageText = "Send \(plan.markerCount) markers to grandMA3 at \(settings.ma3Host)?"
+            alert.informativeText = MA3Deploy.summary(plan)
+                + "\n\nNothing Understudy didn't make is deleted or reassigned: taken pool numbers and executors are left alone"
+                + (plan.sequences.contains { $0.write == .override } ? ", and Override backs a sequence up before replacing its cues." : ".")
+                + (plan.warnings.isEmpty ? "" : "\n\n" + plan.warnings.joined(separator: "\n"))
             alert.addButton(withTitle: "Send")
             alert.addButton(withTitle: "Cancel")
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
-        let steps = MA3Deploy.steps(markers, rate: ltcRate, sequence: settings.ma3Sequence, timecode: settings.ma3Timecode,
-                                    name: markerSetName, types: timeline.markerTypes)
+        let steps = MA3Deploy.steps(plan)
         let address = settings.ma3Prefix.isEmpty ? "/cmd" : "/\(settings.ma3Prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/")))/cmd"
-        let (seq, tc) = (settings.ma3Sequence, settings.ma3Timecode)
+        let summary = MA3Deploy.summary(plan)
         linkBusy = true
         linkMessage = "Sending to grandMA3…"
         Task { @MainActor [weak self] in
@@ -1308,7 +1323,7 @@ extension AppModel {
                     if step.pause > 0 { try await Task.sleep(nanoseconds: UInt64(step.pause * 1e9)) }
                     if i % 10 == 0 { self?.linkMessage = "Sending to grandMA3… \(i + 1)/\(steps.count)" }
                 }
-                self?.linkMessage = "Sent \(markers.count) markers to grandMA3: Sequence \(seq) and Timecode \(tc). (OSC can't confirm; check the console.)"
+                self?.linkMessage = "Sent to grandMA3: \(summary) (OSC can't confirm; check the console's command line feedback.)"
             } catch {
                 self?.linkMessage = "grandMA3: \(error.localizedDescription)"
             }
@@ -1316,17 +1331,15 @@ extension AppModel {
         }
     }
 
-    /// Writes the markers onto a disguise track (notes, sections or CUE tags).
+    /// Writes the markers onto disguise tracks (by song name, or one track).
     func pushMarkersToD3() {
-        let markers = markersToSend
-        guard !markers.isEmpty else { linkMessage = "No markers to send."; return }
+        let (rows, _) = d3Rows()
+        guard !rows.isEmpty else { linkMessage = "No markers to send."; return }
         guard D3Client.base(settings.d3Host) != nil else {
             linkMessage = "Set the disguise machine's IP in Settings › Show control."
             return
         }
-        let start = Timecode(settings.d3TrackStart).map { Double($0.frameIndex(at: ltcRate.ltcRate)) / ltcRate.ltcRate.exact } ?? 0
-        let script = D3Push.script(markers, rate: ltcRate, trackName: settings.d3Track.isEmpty ? nil : settings.d3Track,
-                                   style: settings.d3Style, trackStartSeconds: start, types: timeline.markerTypes)
+        let script = D3Push.script(rows, rate: ltcRate)
         let host = settings.d3Host
         linkBusy = true
         linkMessage = "Sending to disguise…"
@@ -1336,12 +1349,7 @@ extension AppModel {
                 if let code = result.status?.code, code != 0 {
                     self?.linkMessage = "disguise: \(result.status?.message ?? "error \(code)")"
                 } else if let inner = D3Client.resultDictionary(result.returnValue) {
-                    let placed = inner["placed"] as? Int ?? 0
-                    let skipped = (inner["skipped"] as? [String]) ?? []
-                    let track = inner["track"] as? String ?? "?"
-                    let tags = inner["tcTags"] as? Int ?? 0
-                    self?.linkMessage = "disguise: \(placed) markers on “\(track)”" + (tags > 0 ? " (placed by its \(tags) TC tag\(tags == 1 ? "" : "s"))" : "")
-                        + (skipped.isEmpty ? "." : "; \(skipped.count) outside the track.")
+                    self?.linkMessage = Self.d3Report(inner)
                 } else {
                     self?.linkMessage = "disguise answered: \(result.returnValue ?? result.pythonLog ?? "no result")"
                 }
@@ -1350,6 +1358,22 @@ extension AppModel {
             }
             self?.linkBusy = false
         }
+    }
+
+    /// One line from the script's result.
+    nonisolated static func d3Report(_ r: [String: Any]) -> String {
+        let placed = r["placed"] as? Int ?? 0
+        let tracks = (r["tracks"] as? [String: Any])?.keys.sorted() ?? []
+        let missing = (r["missing"] as? [Any])?.compactMap { $0 as? String } ?? []
+        let skipped = (r["skipped"] as? [Any])?.count ?? 0
+        let kept = r["kept"] as? Int ?? 0
+        let tags = r["tcTags"] as? Int ?? 0
+        var s = "disguise: \(placed) markers on " + (tracks.count == 1 ? "“\(tracks[0])”" : "\(tracks.count) tracks")
+        if tags > 0 { s += " (placed by \(tags) TC tag\(tags == 1 ? "" : "s"))" }
+        if !missing.isEmpty { s += "; no track named " + missing.map { "“\($0)”" }.joined(separator: ", ") }
+        if skipped > 0 { s += "; \(skipped) outside the track" }
+        if kept > 0 { s += "; \(kept) existing note\(kept == 1 ? "" : "s") kept" }
+        return s + "."
     }
 }
 
@@ -1363,6 +1387,7 @@ extension AppModel {
         t.ma3Host = s.ma3Host; t.ma3Port = s.ma3Port; t.ma3Prefix = s.ma3Prefix
         t.ma3Sequence = s.ma3Sequence; t.ma3Timecode = s.ma3Timecode
         t.d3Host = s.d3Host; t.d3Track = s.d3Track; t.d3Style = s.d3Style; t.d3TrackStart = s.d3TrackStart
+        t.markerExport = s.markerExport
         return t
     }
 
@@ -1370,6 +1395,7 @@ extension AppModel {
         settings.ma3Host = t.ma3Host; settings.ma3Port = t.ma3Port; settings.ma3Prefix = t.ma3Prefix
         settings.ma3Sequence = t.ma3Sequence; settings.ma3Timecode = t.ma3Timecode
         settings.d3Host = t.d3Host; settings.d3Track = t.d3Track; settings.d3Style = t.d3Style; settings.d3TrackStart = t.d3TrackStart
+        settings.markerExport = t.markerExport
     }
 
     /// The open show as a project file.

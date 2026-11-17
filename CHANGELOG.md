@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Export Markers (⇧⌘E).** A sheet to set up where markers go, saved with the project. **grandMA3:** pick the marker types and songs; one sequence, a sequence per type, or a sequence per song and type (pool start plus a per-song offset); a page per song or one page, with an executor per type; use the sequence already on an executor; merge into it or override it; one timecode show or one per song; fire events a few frames early. *What it makes* lists it all before you send. **disguise:** each song's markers go on the track with its name (or one you type or fetch from Designer), and each marker type becomes notes, sections, sections + notes, CUE tags or nothing.
+- **Sending to grandMA3 no longer deletes anything that isn't Understudy's.** Before, Send replaced the sequence and timecode show numbered in Settings, whatever was there. Now pages are only created when missing, executors only assigned when empty, and a pool number or timecode show that Understudy didn't make is left alone (the command line says so). Merge only adds missing cues; Override backs the sequence up to a free pool number first. The OSC send and the plugin both run as Lua on the console, so the checks happen there.
+- **Sending to disguise doesn't overwrite.** A note already on the track at a marker's beat is kept, and a CUE tag only goes where there's none.
+
 ## 0.13.1 — 2026-11-17
 
 - **Fixed: LTC out also sounded on channel 1.** With LTC on channel 3 of a 4-channel device (or Dante out's channel 3), the timecode also came out on channel 1, on top of the songs. Understudy now drives the device's full channel width, so each output lands only where it's routed; measured on a 4-channel Loopback device with songs on 1–2 or 3–4 and LTC on 1, 3 or 4.

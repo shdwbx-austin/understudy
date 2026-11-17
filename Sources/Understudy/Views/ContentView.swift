@@ -39,6 +39,7 @@ struct ContentView: View {
         .frame(minWidth: 1100, minHeight: 760, alignment: .topLeading)
         .navigationTitle(model.projectName.map { "understudy — \($0)" } ?? "understudy")
         .modifier(MarkerTypesSheet(timeline: model.timeline))
+        .modifier(MarkerExportSheet(timeline: model.timeline))
         .background(Theme.ink)
         .foregroundStyle(Theme.paper)
         .preferredColorScheme(.dark)

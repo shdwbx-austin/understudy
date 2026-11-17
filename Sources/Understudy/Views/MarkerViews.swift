@@ -97,13 +97,16 @@ private struct MarkerChip: View {
     }
 }
 
-/// Export and send: CSV, grandMA3 (plugin file or straight over OSC), disguise (over the network).
+/// Export and send: the export sheet (types, songs, pages, executors, tracks), and quick sends
+/// with its saved setup: CSV, grandMA3 (plugin file or straight over OSC), disguise (over the network).
 struct MarkerMenu: View {
     @EnvironmentObject private var model: AppModel
     @ObservedObject var timeline: TimelineModel
 
     var body: some View {
         Menu {
+            Button("Export Markers…") { timeline.exportingMarkers = true }
+            Divider()
             Button("Send to grandMA3") { model.deployMarkersToMA3() }
                 .disabled(model.settings.ma3Host.isEmpty || timeline.markers.isEmpty)
             Button("Send to disguise") { model.pushMarkersToD3() }
