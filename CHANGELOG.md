@@ -7,6 +7,10 @@
 - Works around two things in Notch's plugin (1.4.3): it crashes Media Encoder when the output path is long, so encodes go to a short temporary path first, and it writes no timecode, so the finished file gets the source's timecode track added as it's moved into place (no re-encode).
 - `scripts/notchlc-harness.sh` checks it end to end: generated 25, 29.97 and 59.94 clips through Media Encoder; each result's codec, frames, rate and timecode; a decode back through Notch's importer with every frame's counter in order; and Cancel.
 
+## 0.13.1 — 2026-11-17
+
+- **Fixed: LTC out also sounded on channel 1.** With LTC on channel 3 of a 4-channel device (or Dante out's channel 3), the timecode also came out on channel 1, on top of the songs. Understudy now drives the device's full channel width, so each output lands only where it's routed; measured on a 4-channel Loopback device with songs on 1–2 or 3–4 and LTC on 1, 3 or 4.
+
 ## 0.13.0 — 2026-11-17
 
 - **Delete works.** Delete (or fn-Delete, or ⌘Delete) removes the selected markers, with ⌘Z to bring them back; Markers › Delete Selected Markers does the same.
