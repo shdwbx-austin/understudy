@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.1 — 2026-11-17
 
 - **View plays takes from the backup folder where they are.** Nothing is copied into the project unless you turn on Settings › Backup › *Copy takes into the project when viewed* (off by default), and then only when the project's disk has room (with 10 GB to spare); otherwise the take plays from the backup and View says why it wasn't copied. The picture says which day folder it's playing from.
 - **Fixed: View could play the wrong file, or a broken one, for a take.** Decks reuse clip names, so the backup folder can hold the same name in several day folders. View now takes the newest file with the take's name in that deck's folder (and a project copy only when it's that recording), and reads the folder afresh each time: before, it remembered the first file it found, so a take still downloading kept pointing at an older file of the same name.
