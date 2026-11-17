@@ -1,5 +1,6 @@
 // Records from synthetic sources with the Understudy recorder's engine and checks the files:
-//  1. NDI loopback, BGRA (alpha) 1080p29.97 DF → H.264, ~10 s.
+//  1. NDI loopback through Understudy's own sender (BGRX) 1080p29.97 DF → H.264, ~10 s; then a
+//     source with alpha (BGRA), recorded without it and said so.
 //  2. NDI loopback, UYVY 1080p25 → HEVC: the 2vuy path (what Understudy's own NDI out sends).
 //  3. NDI loopback, UYVY 576i50 interleaved → ProRes 422: SD colour (BT.601) and fields; then a
 //     sender sending separate fields (NDI weaves them into interleaved frames for the receiver);
@@ -217,16 +218,30 @@ func findNDI(_ name: String) -> String? {
 let ndiReady = NDILibrary.shared.isAvailable
 if ndiReady { print("NDI: \(NDILibrary.shared.path ?? "?")") } else { check("NDI library", false, "set UNDERSTUDY_LIBNDI to libndi.dylib") }
 
-// 1. NDI BGRA (alpha) loopback → H.264.
+// 1. NDI loopback through Understudy's own sender (opaque BGRX) → H.264.
 if ndiReady, let sender = NDISender(name: "Recorder Harness Bars") {
     let rate = FrameRate.fps29_97DF, start = Timecode("01:00:00;00")!
-    let pattern = NDITestPattern(title: "Harness", note: "NDI BGRA loopback")
+    let pattern = NDITestPattern(title: "Harness", note: "NDI BGRX loopback")
     let stop = sendOverNDI(rate: rate) { if let f = pattern.frame() { sender.send(f, fps: rate.exact) } }
     if let name = findNDI("Recorder Harness Bars"),
        let (take, warnings) = record(RecorderSource(kind: .ndi, id: name, name: name), codec: .h264, seconds: seconds,
                                      startTC: start, rate: rate, file: "Harness NDI_0001.mov") {
+        check("NDI BGRX: no alpha warning", !warnings.contains("SOURCE ALPHA NOT RECORDED"), warnings.sorted().joined(separator: ", "))
+        await verify(take, expectStart: start, rate: rate, seconds: seconds, label: "NDI BGRX H.264", Expect(format: "1080p2997"))
+    } else { check("NDI BGRX take", false, "no take") }
+    stop()
+}
+
+// 1b. A source with alpha (BGRA, as a graphics feed sends): recorded without it, and said so.
+if ndiReady, let sender = UYVYSender(name: "Recorder Harness Alpha", fourCC: NDIReceiver.fourCCBGRA) {
+    let rate = FrameRate.fps25, start = Timecode("01:30:00:00")!
+    let pattern = NDITestPattern(title: "Harness", note: "NDI BGRA (alpha) loopback")
+    let stop = sendOverNDI(rate: rate) { if let f = pattern.frame() { sender.send(f, rate: rate, interleaved: false) } }
+    if let name = findNDI("Recorder Harness Alpha"),
+       let (take, warnings) = record(RecorderSource(kind: .ndi, id: name, name: name), codec: .h264, seconds: 3,
+                                     startTC: start, rate: rate, file: "Harness Alpha_0001.mov") {
         check("NDI BGRA: alpha dropped is said", warnings.contains("SOURCE ALPHA NOT RECORDED"), warnings.sorted().joined(separator: ", "))
-        await verify(take, expectStart: start, rate: rate, seconds: seconds, label: "NDI BGRA H.264", Expect(format: "1080p2997"))
+        await verify(take, expectStart: start, rate: rate, seconds: 3, label: "NDI BGRA (alpha) H.264", Expect(format: "1080p25"))
     } else { check("NDI BGRA take", false, "no take") }
     stop()
 }
@@ -338,7 +353,7 @@ func writeDirect(_ file: String, codec: RecorderCodec, rate: FrameRate, start: R
     do {
         let writer = try TakeWriter(request: .init(url: url, takeID: 1, codec: codec, start: start, startHost: 0,
                                                    timecodeAtVideoRate: true, dropFrame: rate.isDropFrame),
-                                    width: convert?.width ?? NDITestPattern.width, height: convert?.height ?? NDITestPattern.height,
+                                    width: convert?.width ?? pattern.width, height: convert?.height ?? pattern.height,
                                     videoRate: rate, color: .rec709, scan: scan)
         inspect(writer)
         // Paced at the frame rate, as a live source arrives (a gap is real time with no frames).

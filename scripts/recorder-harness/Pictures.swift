@@ -43,13 +43,15 @@ final class PictureConverter {
     }
 }
 
-/// Sends UYVY (2vuy buffers) over NDI, progressive or interleaved: what a camera, a switcher or
-/// Understudy's own NDI out (BGRX/UYVY) sends.
+/// Sends UYVY (2vuy buffers) over NDI, progressive or interleaved, as a camera or switcher does;
+/// or, with `fourCC` BGRA, BGRA buffers as a source with alpha (a graphics feed).
 final class UYVYSender: @unchecked Sendable {
     private let instance: OpaquePointer?
     private let lib = NDILibrary.shared
+    let fourCC: UInt32
 
-    init?(name: String) {
+    init?(name: String, fourCC: UInt32 = NDIReceiver.fourCCUYVY) {
+        self.fourCC = fourCC
         guard let create = lib.sendCreate else { return nil }
         instance = name.withCString { n in
             var settings = cndi_send_create_t(p_ndi_name: n, p_groups: nil, clock_video: false, clock_audio: false)
@@ -73,7 +75,7 @@ final class UYVYSender: @unchecked Sendable {
         var frame = cndi_video_frame_v2_t()
         frame.xres = Int32(w)
         frame.yres = Int32(h)
-        frame.FourCC = NDIReceiver.fourCCUYVY
+        frame.FourCC = fourCC
         frame.frame_rate_N = n
         frame.frame_rate_D = d
         frame.picture_aspect_ratio = 16.0 / 9.0
