@@ -20,6 +20,12 @@ final class TakeMapStore {
         var pending: [Pending] = []
         var inProgress: TakeMap?
         var inProgressExistingClipKeys: Set<String> = []
+        /// The deck's clip list as it last reported it, and the address (or "recorder") it came
+        /// from: View shows the deck's takes from it while the deck is offline.
+        var lastClips: [DeckClip] = []
+        var lastClipsHost: String?
+        /// The deck's video format as it last reported it (for an offline deck's frame rate).
+        var lastVideoFormat: String?
 
         init() {}
 
@@ -29,6 +35,9 @@ final class TakeMapStore {
             pending = (try? c.decodeIfPresent([Pending].self, forKey: .pending)) ?? []
             inProgress = try? c.decodeIfPresent(TakeMap.self, forKey: .inProgress)
             inProgressExistingClipKeys = (try? c.decodeIfPresent(Set<String>.self, forKey: .inProgressExistingClipKeys)) ?? []
+            lastClips = (try? c.decodeIfPresent([DeckClip].self, forKey: .lastClips)) ?? []
+            lastClipsHost = try? c.decodeIfPresent(String.self, forKey: .lastClipsHost)
+            lastVideoFormat = try? c.decodeIfPresent(String.self, forKey: .lastVideoFormat)
         }
     }
 
@@ -71,6 +80,25 @@ final class TakeMapStore {
     static func key(for clip: DeckClip) -> String { "\(clip.name)|\(clip.start)|\(clip.duration)" }
 
     func map(for clip: DeckClip) -> TakeMap? { contents.maps[Self.key(for: clip)] }
+
+    /// Keeps the clip list a deck just reported (an empty one, e.g. no card in, isn't kept).
+    func rememberClips(_ clips: [DeckClip], host: String) {
+        guard !clips.isEmpty, clips != contents.lastClips || host != contents.lastClipsHost else { return }
+        contents.lastClips = clips
+        contents.lastClipsHost = host
+        write()
+    }
+
+    func rememberVideoFormat(_ format: String) {
+        guard format != contents.lastVideoFormat else { return }
+        contents.lastVideoFormat = format
+        write()
+    }
+
+    /// The last clip list from the deck at `host`, or none if it came from another address.
+    func rememberedClips(host: String) -> [DeckClip] {
+        contents.lastClipsHost == host ? contents.lastClips : []
+    }
 
     /// A new recording started; remember which clips it can't be.
     func startRecording(existingClips: [DeckClip]) {

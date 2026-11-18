@@ -55,3 +55,16 @@ struct TakeFileLookupTests {
         #expect(!old.copyTakesIntoProject)
     }
 }
+
+@Suite("Remembered clip lists")
+struct RememberedClipTests {
+    @Test func deckClipsRoundTrip() throws {
+        // An offline deck's takes come from the clip list it last reported, saved as JSON.
+        let clips = [DeckClip(id: 1, start: Timecode(hours: 13, minutes: 0, seconds: 0, frames: 0),
+                              duration: Timecode(hours: 0, minutes: 0, seconds: 10, frames: 0), name: "_ME_1_0001.mov"),
+                     DeckClip(id: 2, start: Timecode(hours: 14, minutes: 0, seconds: 0, frames: 0),
+                              duration: Timecode(hours: 0, minutes: 37, seconds: 30, frames: 12), name: "_ME_1_0010.mov")]
+        let back = try JSONDecoder().decode([DeckClip].self, from: JSONEncoder().encode(clips))
+        #expect(back == clips)
+    }
+}

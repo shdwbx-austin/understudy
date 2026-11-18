@@ -152,7 +152,7 @@ struct NotchLCView: View {
     }
 
     private var canStart: Bool {
-        transcoder.setup.ready && model.mode != .record && !model.takes.isEmpty && !model.activeDecks.isEmpty
+        transcoder.setup.ready && model.mode != .record && !model.takes.isEmpty && !model.viewDecks.isEmpty
     }
 
     private var destinationText: String {
