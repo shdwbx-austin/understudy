@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.2 — 2026-11-18
 
 - **View works with the decks offline.** Each deck remembers the clip list (and video format) it last reported, so its takes stay in View when it's switched off or unplugged, and play from the project or the backup folder, locked to the timeline as before. The picture says *deck offline*; a take that isn't on this Mac says to connect the deck to back it up. NotchLC transcodes find offline decks' takes the same way.
 - **An unplugged backup drive is named.** When the backup folder's drive isn't connected, View says so (*The backup folder isn't connected (Extreme Pro)*) instead of asking you to back the take up.
