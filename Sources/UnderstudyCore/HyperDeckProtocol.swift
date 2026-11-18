@@ -144,7 +144,7 @@ public struct TransportInfo: Equatable, Sendable {
     }
 }
 
-public struct DeckClip: Equatable, Sendable, Identifiable {
+public struct DeckClip: Equatable, Sendable, Identifiable, Codable {
     public var id: Int
     public var start: Timecode
     public var duration: Timecode

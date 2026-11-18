@@ -113,7 +113,6 @@ final class AppModel: ObservableObject {
         if viewerViews == 1 { loadViewerTake() }
     }
     func viewerDisappeared() { viewerViews = max(0, viewerViews - 1) }
-    /// Backup files by name, so a take's recordings are found without searching the drive each time.
     /// AES67 out (test), when on.
     private var aes67: AES67Sender?
     private var aes67State: TimelineModel.RenderState?
@@ -194,6 +193,8 @@ final class AppModel: ObservableObject {
         startAudio()
         viewer.onNDIEnabled = { [weak self] in self?.loadViewerTake() }
         syncViewerTransforms()
+        // Takes from decks offline at launch (their last clip lists), so View has them at once.
+        rebuildTakes()
         if viewer.ndiEnabled { loadViewerTake() }
         // Interface unplugged, replugged or arriving after launch: re-read devices and reopen.
         AudioDeviceCatalog.observeDevices { [weak self] in
@@ -265,6 +266,18 @@ final class AppModel: ObservableObject {
 
     var activeDecks: [DeckController] {
         decks.filter { settings.decks[$0.id].enabled && $0.isConnected }
+    }
+
+    /// Decks whose takes View can show: connected ones, and offline ones by the clip list they
+    /// last reported from the address they're set to (their files play from the project or backup).
+    var viewDecks: [DeckController] {
+        decks.filter { settings.decks[$0.id].enabled && ($0.isConnected || !$0.viewClips(address: viewAddress($0)).isEmpty) }
+    }
+
+    /// The address a deck's remembered clip list must have come from.
+    func viewAddress(_ deck: DeckController) -> String {
+        let config = settings.decks[deck.id]
+        return config.isRecorder ? "recorder" : config.host.trimmingCharacters(in: .whitespaces)
     }
 
     // MARK: Modes
@@ -402,6 +415,8 @@ final class AppModel: ObservableObject {
             guard let self, let deck else { return }
             self.deckReady(deck)
         }
+        // A deck going offline keeps its takes in View (from the clips it last reported).
+        deck.onConnectionChanged = { [weak self] in self?.rebuildTakes() }
     }
 
     // MARK: Deck list
@@ -605,12 +620,15 @@ final class AppModel: ObservableObject {
     }
 
     private func rebuildTakes() {
-        guard let reference = activeDecks.first(where: { !$0.clips.isEmpty }) else {
+        // A connected deck's list, else an offline deck's last one (View plays its files).
+        let reference = activeDecks.first(where: { !$0.clips.isEmpty })
+            ?? viewDecks.first(where: { !$0.viewClips(address: viewAddress($0)).isEmpty })
+        guard let reference else {
             takes = []
             if viewerVisible || viewer.ndiEnabled { loadViewerTake() }
             return
         }
-        takes = reference.clips.reversed().enumerated().map { offset, clip in
+        takes = reference.viewClips(address: viewAddress(reference)).reversed().enumerated().map { offset, clip in
             Take(offset: offset, clipID: clip.id, start: clip.start, duration: clip.duration,
                  name: clip.name, logged: reference.maps.map(for: clip).map { !$0.isEmpty })
         }
@@ -621,7 +639,7 @@ final class AppModel: ObservableObject {
         if mode == .timeline { sentSeek = -1; parkedSeek = [:] }
         if viewerVisible || viewer.ndiEnabled { loadViewerTake() }
         // A new recording: put the set in the order it played, if asked (once per take).
-        if timeline.autoOrderFromTakes, let latest = takes.first, latest.clipID != lastAutoOrderedClip,
+        if timeline.autoOrderFromTakes, !activeDecks.isEmpty, let latest = takes.first, latest.clipID != lastAutoOrderedClip,
            latest.logged == true {
             lastAutoOrderedClip = latest.clipID
             orderSetByTake(0)
@@ -1120,10 +1138,12 @@ final class AppModel: ObservableObject {
     }
 
     private func playbackContext(_ deck: DeckController) -> PlaybackContext? {
-        let logged = deck.clip(takeOffset: selectedTake).flatMap { deck.maps.map(for: $0) }
+        // An offline deck's take comes from the clip list it last reported (View plays its files).
+        let take = deck.viewClip(takeOffset: selectedTake, address: viewAddress(deck))
+        let logged = take.flatMap { deck.maps.map(for: $0) }
         // Read deck timecode the way the deck counted when this take was recorded.
         let dropFrame = logged?.deckDropFrame ?? deckDropFrame(deck)
-        guard let clip = deck.clip(takeOffset: selectedTake),
+        guard let clip = take,
               let video = deck.videoRate(dropFrame: dropFrame),
               let tcRate = deckTimecodeRate(deck, dropFrame: dropFrame)
         else { return nil }
@@ -1595,22 +1615,23 @@ extension AppModel {
     /// folder), else the Understudy recorder's file. With Copy takes into the project on, a backup
     /// is also copied in, if the project's disk has room.
     func loadViewerTake() {
-        let decksWithTakes = activeDecks.prefix(VideoViewer.maxSlots)
+        let decksWithTakes = viewDecks.prefix(VideoViewer.maxSlots)
         let backups = backupFiles()
         var slots: [VideoViewer.Slot] = []
         for deck in decksWithTakes {
             let name = settings.decks[deck.id].name.trimmingCharacters(in: .whitespaces)
-            guard let clip = deck.clip(takeOffset: selectedTake) else {
-                slots.append(.init(deckID: deck.id, name: name, clipName: nil, url: nil, status: "No take on this deck"))
+            let offline = deck.isConnected ? "" : " · deck offline"
+            guard let clip = deck.viewClip(takeOffset: selectedTake, address: viewAddress(deck)) else {
+                slots.append(.init(deckID: deck.id, name: name, clipName: nil, url: nil, status: "No take on this deck" + offline))
                 continue
             }
             if let found = takeFile(clip.name, deck: name, backups: backups) {
                 let url = URL(fileURLWithPath: found.path)
                 if found.inProject {
-                    slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: url, status: "In the project"))
+                    slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: url, status: "In the project" + offline))
                     continue
                 }
-                let from = "From the backup" + (found.day.map { " · \($0)" } ?? "")
+                let from = "From the backup" + (found.day.map { " · \($0)" } ?? "") + offline
                 guard settings.copyTakesIntoProject, let project = projects.current else {
                     slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: url, status: from))
                     continue
@@ -1636,12 +1657,25 @@ extension AppModel {
             } else if let recorded = deck.recorderTakePath(clip.name) {
                 slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: URL(fileURLWithPath: recorded),
                                    status: "Recorded on this Mac"))
+            } else if let missing = backupFolderMissing {
+                slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: nil,
+                                   status: "The backup folder isn't connected (\(missing)): plug in its drive to play \(clip.name)" + offline))
+            } else if !deck.isConnected {
+                slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: nil,
+                                   status: "\(clip.name) isn't on this Mac, and the deck is offline: connect it to back the take up (⌘B)"))
             } else {
                 slots.append(.init(deckID: deck.id, name: name, clipName: clip.name, url: nil,
                                    status: settings.backupFolder == nil ? "Back up this take first (⌘B)" : "\(clip.name) isn't in the backup yet: back it up (⌘B)"))
             }
         }
         viewer.load(slots)
+    }
+
+    /// The backup folder's drive (or folder) when it's set but not there, e.g. "Extreme Pro".
+    private var backupFolderMissing: String? {
+        guard let folder = settings.backupFolder, !FileManager.default.fileExists(atPath: folder) else { return nil }
+        let parts = URL(fileURLWithPath: folder).pathComponents
+        return parts.count > 2 && parts[1] == "Volumes" ? parts[2] : (folder as NSString).abbreviatingWithTildeInPath
     }
 
     /// The take's file: the project's copy or a backup, whichever is this deck's newest.
@@ -1688,9 +1722,9 @@ extension AppModel {
     /// beside the file when no project is open), or a deck folder inside the chosen folder.
     func notchLCItems(_ offset: Int) -> [NotchLCTranscoder.Item] {
         let backups = backupFiles()
-        return activeDecks.compactMap { deck -> NotchLCTranscoder.Item? in
+        return viewDecks.compactMap { deck -> NotchLCTranscoder.Item? in
             let name = settings.decks[deck.id].name.trimmingCharacters(in: .whitespaces)
-            guard let clip = deck.clip(takeOffset: offset) else { return nil }
+            guard let clip = deck.viewClip(takeOffset: offset, address: viewAddress(deck)) else { return nil }
             let source = takeFile(clip.name, deck: name, backups: backups)?.path
                 ?? deck.recorderTakePath(clip.name)
             guard let source else {

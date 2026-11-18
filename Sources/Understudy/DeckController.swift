@@ -6,7 +6,11 @@ final class DeckController: ObservableObject, Identifiable {
     let id: Int
     let maps: TakeMapStore
 
-    @Published private(set) var connection: HyperDeckClient.State = .disconnected
+    @Published private(set) var connection: HyperDeckClient.State = .disconnected {
+        didSet { if (oldValue == .connected) != (connection == .connected) { onConnectionChanged?() } }
+    }
+    /// The address this deck was last pointed at (trimmed); "recorder" for the Understudy recorder.
+    private(set) var host = ""
     @Published private(set) var model: String?
     @Published private(set) var transport = TransportInfo()
     @Published private(set) var clips: [DeckClip] = []
@@ -52,6 +56,8 @@ final class DeckController: ObservableObject, Identifiable {
     var onReady: (() -> Void)?
     /// Called after every clip list refresh.
     var onClipsRefreshed: (() -> Void)?
+    /// Connected or lost the connection.
+    var onConnectionChanged: (() -> Void)?
     /// Log show code against recordings (continuous record mode).
     var buildsTakeMaps = false
 
@@ -110,6 +116,7 @@ final class DeckController: ObservableObject, Identifiable {
         pollInFlight = false
         everConnected = false   // a new address starts clean
         let trimmed = host.trimmingCharacters(in: .whitespaces)
+        self.host = trimmed
         guard !trimmed.isEmpty else {
             connection = .disconnected
             return
@@ -261,6 +268,7 @@ final class DeckController: ObservableObject, Identifiable {
     private func mergeTransport(_ fields: [String: String]) {
         let wasRecording = transport.status == .record
         transport.merge(fields)
+        if let format = transport.videoFormat { maps.rememberVideoFormat(format) }
         guard transport.status != .unknown else { return }
         let isRecording = transport.status == .record
         let firstStatus = !sawStatus
@@ -297,6 +305,7 @@ final class DeckController: ObservableObject, Identifiable {
     func refreshClips(_ done: (() -> Void)? = nil) {
         if let recorderTakes {
             clips = recorderTakes.clips
+            maps.rememberClips(clips, host: "recorder")
             onClipsRefreshed?()
             done?()
             return
@@ -304,6 +313,7 @@ final class DeckController: ObservableObject, Identifiable {
         request(HyperDeckCommand.clipsGet) { [weak self] response, _, _ in
             if response.isSuccess, let self {
                 self.clips = DeckClip.parse(response)
+                self.maps.rememberClips(self.clips, host: self.host)
                 self.onClipsRefreshed?()
             }
             done?()
@@ -513,6 +523,8 @@ final class DeckController: ObservableObject, Identifiable {
         recorderSettings = settings
         recorderDropFrame = dropFrame
         clips = recorderTakes?.clips ?? []
+        host = "recorder"
+        maps.rememberClips(clips, host: "recorder")
         guard let source = settings.source else {
             recorder?.close()
             connection = .disconnected
@@ -641,9 +653,23 @@ final class DeckController: ObservableObject, Identifiable {
         return clips.indices.contains(index) ? clips[index] : nil
     }
 
+    /// Takes to view: the deck's clips while it's connected, else the list it last reported from
+    /// `address` (its configured address, or "recorder"), so its files can be watched offline.
+    func viewClips(address: String) -> [DeckClip] {
+        isConnected ? clips : maps.rememberedClips(host: address)
+    }
+
+    func viewClip(takeOffset: Int, address: String) -> DeckClip? {
+        let list = viewClips(address: address)
+        let index = list.count - 1 - takeOffset
+        return list.indices.contains(index) ? list[index] : nil
+    }
+
     func videoRate(dropFrame: Bool) -> FrameRate? {
         // The recorder with no picture yet still knows the rate its takes were made at.
+        // Offline, the format it last reported, so View can still place its takes.
         guard let format = transport.videoFormat ?? transport.inputVideoFormat ?? recorderTakes?.list.takes.last?.videoFormat
+                ?? (isConnected ? nil : maps.contents.lastVideoFormat)
         else { return nil }
         return FrameRate.fromVideoFormat(format, dropFrame: dropFrame)
     }
